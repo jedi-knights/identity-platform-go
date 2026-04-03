@@ -49,8 +49,8 @@ jobs:
         uses: paulhatch/semantic-version@v5.4.0
         with:
           tag_prefix: "${{ matrix.service }}/v"
-          major_pattern: "/^feat(\\(.+\\))?!:|^BREAKING CHANGE/"
-          minor_pattern: "/^feat(\\(.+\\))?:/"
+          major_pattern: "^feat(\\(.+\\))?!:|^BREAKING CHANGE"
+          minor_pattern: "^feat(\\(.+\\))?:"
           version_format: "${major}.${minor}.${patch}"
           search_commit_body: true
           bump_each_commit: false
