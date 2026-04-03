@@ -1,0 +1,122 @@
+version: "3"
+
+tasks:
+  default:
+    desc: Run lint and tests
+    deps: [lint, test]
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run ./...
+
+  format:
+    desc: Format code with gofmt and goimports
+    cmds:
+      - gofmt -l -w .
+      - goimports -w .
+
+  test:
+    desc: Run all tests
+    deps: [test:unit, test:integration]
+
+  test:unit:
+    desc: Run unit tests
+    cmds:
+      - go test -tags unit ./... -race -count=1 -coverprofile=coverage.out
+
+  test:integration:
+    desc: Run integration tests
+    cmds:
+      - go test -tags integration ./... -race -count=1
+
+  build:
+    desc: Build all services
+    deps:
+      - build:auth-server
+      - build:identity-service
+      - build:client-registry-service
+      - build:token-introspection-service
+      - build:authorization-policy-service
+      - build:example-resource-service
+
+  build:auth-server:
+    desc: Build auth-server service
+    cmds:
+      - go build -o bin/auth-server ./services/auth-server/...
+
+  build:identity-service:
+    desc: Build identity-service
+    cmds:
+      - go build -o bin/identity-service ./services/identity-service/...
+
+  build:client-registry-service:
+    desc: Build client-registry-service
+    cmds:
+      - go build -o bin/client-registry-service ./services/client-registry-service/...
+
+  build:token-introspection-service:
+    desc: Build token-introspection-service
+    cmds:
+      - go build -o bin/token-introspection-service ./services/token-introspection-service/...
+
+  build:authorization-policy-service:
+    desc: Build authorization-policy-service
+    cmds:
+      - go build -o bin/authorization-policy-service ./services/authorization-policy-service/...
+
+  build:example-resource-service:
+    desc: Build example-resource-service
+    cmds:
+      - go build -o bin/example-resource-service ./services/example-resource-service/...
+
+  run:auth-server:
+    desc: Run auth-server service
+    cmds:
+      - go run ./services/auth-server/...
+
+  run:identity-service:
+    desc: Run identity-service
+    cmds:
+      - go run ./services/identity-service/...
+
+  run:client-registry-service:
+    desc: Run client-registry-service
+    cmds:
+      - go run ./services/client-registry-service/...
+
+  run:token-introspection-service:
+    desc: Run token-introspection-service
+    cmds:
+      - go run ./services/token-introspection-service/...
+
+  run:authorization-policy-service:
+    desc: Run authorization-policy-service
+    cmds:
+      - go run ./services/authorization-policy-service/...
+
+  run:example-resource-service:
+    desc: Run example-resource-service
+    cmds:
+      - go run ./services/example-resource-service/...
+
+  mocks:
+    desc: Generate mocks
+    cmds:
+      - go generate ./...
+
+  tidy:
+    desc: Sync go work and tidy all modules
+    cmds:
+      - go work sync
+      - |
+        find . -name "go.mod" -not -path "*/vendor/*" | while read modfile; do
+          dir=$(dirname "$modfile")
+          echo "Tidying $dir"
+          (cd "$dir" && go mod tidy)
+        done
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf bin/

@@ -1,0 +1,14 @@
+go 1.24
+
+use (
+	./libs/errors
+	./libs/httputil
+	./libs/logging
+	./libs/testutil
+	./services/auth-server
+	./services/authorization-policy-service
+	./services/client-registry-service
+	./services/example-resource-service
+	./services/identity-service
+	./services/token-introspection-service
+)

@@ -1,0 +1,39 @@
+run:
+  timeout: 5m
+  go: "1.24"
+
+linters:
+  enable:
+    - gofmt
+    - govet
+    - errcheck
+    - staticcheck
+    - gosimple
+    - ineffassign
+    - unused
+    - misspell
+    - gocyclo
+    - godot
+    - goimports
+  disable:
+    - exhaustruct
+    - exhaustive
+    - funlen
+    - wsl
+    - nlreturn
+    - godox
+    - paralleltest
+    - testpackage
+    - varnamelen
+
+linters-settings:
+  gocyclo:
+    min-complexity: 7
+  goimports:
+    local-prefixes: github.com/ocrosby/identity-platform-go
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
