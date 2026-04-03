@@ -30,7 +30,7 @@ linters-settings:
   gocyclo:
     min-complexity: 7
   goimports:
-    local-prefixes: github.com/canonical/identity-platform-go
+    local-prefixes: github.com/ocrosby/identity-platform-go
 
 issues:
   exclude-rules:
