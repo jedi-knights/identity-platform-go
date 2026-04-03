@@ -36,6 +36,22 @@ func NewHandler(
 }
 
 // Token handles POST /oauth/token.
+//
+// @Summary      Issue access token
+// @Description  Issues an OAuth2 access token using the specified grant type (RFC 6749)
+// @Tags         oauth
+// @Accept       application/x-www-form-urlencoded
+// @Produce      json
+// @Param        grant_type    formData  string  true  "OAuth2 grant type"
+// @Param        client_id     formData  string  true  "Client identifier"
+// @Param        client_secret formData  string  true  "Client secret"
+// @Param        scope         formData  string  false "Space-delimited list of scopes"
+// @Param        code          formData  string  false "Authorization code"
+// @Param        code_verifier formData  string  false "PKCE code verifier"
+// @Param        redirect_uri  formData  string  false "Redirect URI"
+// @Success      200  {object}  domain.GrantResponse
+// @Failure      400  {object}  httputil.ErrorResponse
+// @Router       /oauth/token [post]
 func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid form data"))
@@ -73,6 +89,13 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 }
 
 // Authorize handles GET /oauth/authorize (stub).
+//
+// @Summary      Authorization endpoint
+// @Description  Authorization endpoint - not yet implemented
+// @Tags         oauth
+// @Produce      json
+// @Success      200  {object}  map[string]string
+// @Router       /oauth/authorize [get]
 func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, map[string]string{
 		"message": "authorization endpoint - not yet implemented",
@@ -80,6 +103,17 @@ func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 }
 
 // Introspect handles POST /oauth/introspect.
+//
+// @Summary      Introspect token
+// @Description  Validates and returns metadata for a token per RFC 7662
+// @Tags         oauth
+// @Accept       application/x-www-form-urlencoded
+// @Produce      json
+// @Param        token  formData  string  true  "Token to introspect"
+// @Success      200  {object}  application.IntrospectResponse
+// @Failure      400  {object}  httputil.ErrorResponse
+// @Failure      500  {object}  httputil.ErrorResponse
+// @Router       /oauth/introspect [post]
 func (h *Handler) Introspect(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid form data"))
@@ -103,6 +137,16 @@ func (h *Handler) Introspect(w http.ResponseWriter, r *http.Request) {
 }
 
 // Revoke handles POST /oauth/revoke.
+//
+// @Summary      Revoke token
+// @Description  Revokes a token per RFC 7009
+// @Tags         oauth
+// @Accept       application/x-www-form-urlencoded
+// @Produce      json
+// @Param        token  formData  string  true  "Token to revoke"
+// @Success      200  "Token revoked"
+// @Failure      400  {object}  httputil.ErrorResponse
+// @Router       /oauth/revoke [post]
 func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid form data"))
@@ -124,6 +168,13 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 }
 
 // Health handles GET /health.
+//
+// @Summary      Health check
+// @Description  Returns service health status
+// @Tags         health
+// @Produce      json
+// @Success      200  {object}  map[string]string
+// @Router       /health [get]
 func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

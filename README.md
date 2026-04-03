@@ -16,6 +16,7 @@ A production-style **OAuth 2.0 / OIDC** reference platform built in Go, demonstr
 - [Configuration](#configuration)
 - [API Reference](#api-reference)
 - [Testing](#testing)
+- [Swagger / API Documentation](#swagger--api-documentation)
 - [Project Structure](#project-structure)
 - [Architecture Decision Records](#architecture-decision-records)
 - [License](#license)
@@ -142,6 +143,7 @@ Located in `libs/`, these are independent Go modules shared across services:
 
 - **Go 1.24+**
 - **[Task](https://taskfile.dev/)** (task runner) - optional but recommended
+- **[swag](https://github.com/swaggo/swag)** (Swagger doc generation) - optional, needed only for `task swagger`
 
 ### Run a Service
 
@@ -312,6 +314,44 @@ task clean       # Remove build artifacts
 
 ---
 
+## Swagger / API Documentation
+
+Every service ships with interactive [Swagger UI](https://swagger.io/tools/swagger-ui/) documentation, powered by [swaggo/swag](https://github.com/swaggo/swag). Start a service and open its Swagger UI in your browser:
+
+| Service                      | Swagger UI URL                                        |
+|------------------------------|-------------------------------------------------------|
+| auth-server                  | [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html) |
+| identity-service             | [http://localhost:8081/swagger/index.html](http://localhost:8081/swagger/index.html) |
+| client-registry-service      | [http://localhost:8082/swagger/index.html](http://localhost:8082/swagger/index.html) |
+| token-introspection-service  | [http://localhost:8083/swagger/index.html](http://localhost:8083/swagger/index.html) |
+| authorization-policy-service | [http://localhost:8084/swagger/index.html](http://localhost:8084/swagger/index.html) |
+| example-resource-service     | [http://localhost:8085/swagger/index.html](http://localhost:8085/swagger/index.html) |
+
+### Regenerating Swagger Docs
+
+If you modify handler annotations or request/response types, regenerate the docs:
+
+```bash
+# All services at once
+task swagger
+
+# Or a single service
+task swagger:auth-server
+task swagger:identity-service
+task swagger:client-registry-service
+task swagger:token-introspection-service
+task swagger:authorization-policy-service
+task swagger:example-resource-service
+```
+
+This requires the `swag` CLI tool:
+
+```bash
+go install github.com/swaggo/swag/cmd/swag@latest
+```
+
+---
+
 ## Project Structure
 
 ```
@@ -333,6 +373,7 @@ identity-platform-go/
 └── services/
     ├── auth-server/                 # OAuth2 authorization server
     │   ├── cmd/main.go
+    │   ├── docs/                    # Generated Swagger specs
     │   └── internal/
     │       ├── adapters/            # HTTP handlers, in-memory repos
     │       ├── application/         # Grant strategies, token service

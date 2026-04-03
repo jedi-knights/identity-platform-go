@@ -100,6 +100,52 @@ tasks:
     cmds:
       - go run ./services/example-resource-service/...
 
+  swagger:
+    desc: Generate Swagger docs for all services
+    deps:
+      - swagger:auth-server
+      - swagger:identity-service
+      - swagger:client-registry-service
+      - swagger:token-introspection-service
+      - swagger:authorization-policy-service
+      - swagger:example-resource-service
+
+  swagger:auth-server:
+    desc: Generate Swagger docs for auth-server
+    dir: services/auth-server
+    cmds:
+      - swag init --generalInfo cmd/main.go --dir ./,./internal/adapters/inbound/http,./internal/application,./internal/domain --output ./docs --parseDependency
+
+  swagger:identity-service:
+    desc: Generate Swagger docs for identity-service
+    dir: services/identity-service
+    cmds:
+      - swag init --generalInfo cmd/main.go --dir ./,./internal/adapters/inbound/http,./internal/application,./internal/domain --output ./docs --parseDependency
+
+  swagger:client-registry-service:
+    desc: Generate Swagger docs for client-registry-service
+    dir: services/client-registry-service
+    cmds:
+      - swag init --generalInfo cmd/main.go --dir ./,./internal/adapters/inbound/http,./internal/application,./internal/domain --output ./docs --parseDependency
+
+  swagger:token-introspection-service:
+    desc: Generate Swagger docs for token-introspection-service
+    dir: services/token-introspection-service
+    cmds:
+      - swag init --generalInfo cmd/main.go --dir ./,./internal/adapters/inbound/http,./internal/application,./internal/domain --output ./docs --parseDependency
+
+  swagger:authorization-policy-service:
+    desc: Generate Swagger docs for authorization-policy-service
+    dir: services/authorization-policy-service
+    cmds:
+      - swag init --generalInfo cmd/main.go --dir ./,./internal/adapters/inbound/http,./internal/application,./internal/domain --output ./docs --parseDependency
+
+  swagger:example-resource-service:
+    desc: Generate Swagger docs for example-resource-service
+    dir: services/example-resource-service
+    cmds:
+      - swag init --generalInfo cmd/main.go --dir ./,./internal/adapters/inbound/http,./internal/application,./internal/domain --output ./docs --parseDependency
+
   mocks:
     desc: Generate mocks
     cmds:

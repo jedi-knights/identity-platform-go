@@ -18,6 +18,14 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/observability"
 )
 
+// @title           Example Resource Service API
+// @version         1.0
+// @description     Protected resource API demonstrating JWT authentication and scope enforcement.
+// @host            localhost:8085
+// @BasePath        /
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

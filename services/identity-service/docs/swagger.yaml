@@ -1,0 +1,122 @@
+basePath: /
+definitions:
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    type: object
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.LoginResponse:
+    properties:
+      email:
+        type: string
+      name:
+        type: string
+      user_id:
+        type: string
+    type: object
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.RegisterRequest:
+    properties:
+      email:
+        type: string
+      name:
+        type: string
+      password:
+        type: string
+    type: object
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.RegisterResponse:
+    properties:
+      email:
+        type: string
+      name:
+        type: string
+      user_id:
+        type: string
+    type: object
+  httputil.ErrorResponse:
+    properties:
+      code:
+        type: string
+      error:
+        type: string
+    type: object
+host: localhost:8081
+info:
+  contact: {}
+  description: User registration and authentication service.
+  title: Identity Service API
+  version: "1.0"
+paths:
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates a user with email and password
+      parameters:
+      - description: Login credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.LoginResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Authenticate user
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Registers a new user with email, password, and name
+      parameters:
+      - description: Registration data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.RegisterResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Register new user
+      tags:
+      - auth
+  /health:
+    get:
+      description: Returns service health status
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
+swagger: "2.0"
