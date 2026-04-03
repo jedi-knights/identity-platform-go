@@ -18,6 +18,11 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/observability"
 )
 
+// @title           Token Introspection Service API
+// @version         1.0
+// @description     JWT token validation and metadata extraction per RFC 7662.
+// @host            localhost:8083
+// @BasePath        /
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

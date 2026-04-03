@@ -18,6 +18,11 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/observability"
 )
 
+// @title           Authorization Policy Service API
+// @version         1.0
+// @description     Fine-grained RBAC authorization policy evaluation.
+// @host            localhost:8084
+// @BasePath        /
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

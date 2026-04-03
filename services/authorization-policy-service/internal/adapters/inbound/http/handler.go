@@ -22,6 +22,16 @@ func NewHandler(evaluator ports.PolicyEvaluator, logger logging.Logger) *Handler
 }
 
 // Evaluate handles POST /evaluate.
+//
+// @Summary      Evaluate authorization policy
+// @Description  Evaluates RBAC policies for a subject against a resource and action
+// @Tags         policy
+// @Accept       json
+// @Produce      json
+// @Param        request  body      application.EvaluationRequest   true  "Evaluation request"
+// @Success      200      {object}  application.EvaluationResponse
+// @Failure      400      {object}  httputil.ErrorResponse
+// @Router       /evaluate [post]
 func (h *Handler) Evaluate(w http.ResponseWriter, r *http.Request) {
 	var req application.EvaluationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -40,6 +50,13 @@ func (h *Handler) Evaluate(w http.ResponseWriter, r *http.Request) {
 }
 
 // Health handles GET /health.
+//
+// @Summary      Health check
+// @Description  Returns service health status
+// @Tags         health
+// @Produce      json
+// @Success      200  {object}  map[string]string
+// @Router       /health [get]
 func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

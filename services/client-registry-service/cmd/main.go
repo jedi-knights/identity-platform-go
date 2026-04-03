@@ -18,6 +18,11 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/observability"
 )
 
+// @title           Client Registry Service API
+// @version         1.0
+// @description     OAuth2 client registration, management, and credential validation.
+// @host            localhost:8082
+// @BasePath        /
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

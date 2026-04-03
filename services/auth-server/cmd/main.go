@@ -18,6 +18,11 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/observability"
 )
 
+// @title           Auth Server API
+// @version         1.0
+// @description     OAuth2 Authorization Server - token issuance, introspection, and revocation.
+// @host            localhost:8080
+// @BasePath        /
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

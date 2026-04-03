@@ -1,0 +1,232 @@
+basePath: /
+definitions:
+  github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.CreateClientRequest:
+    properties:
+      grant_types:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+      redirect_uris:
+        items:
+          type: string
+        type: array
+      scopes:
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.CreateClientResponse:
+    properties:
+      client_id:
+        type: string
+      client_secret:
+        type: string
+      grant_types:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+      redirect_uris:
+        items:
+          type: string
+        type: array
+      scopes:
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.GetClientResponse:
+    properties:
+      active:
+        type: boolean
+      client_id:
+        type: string
+      grant_types:
+        items:
+          type: string
+        type: array
+      name:
+        type: string
+      redirect_uris:
+        items:
+          type: string
+        type: array
+      scopes:
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.ValidateClientRequest:
+    properties:
+      client_id:
+        type: string
+      client_secret:
+        type: string
+    type: object
+  github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.ValidateClientResponse:
+    properties:
+      valid:
+        type: boolean
+    type: object
+  httputil.ErrorResponse:
+    properties:
+      code:
+        type: string
+      error:
+        type: string
+    type: object
+host: localhost:8082
+info:
+  contact: {}
+  description: OAuth2 client registration, management, and credential validation.
+  title: Client Registry Service API
+  version: "1.0"
+paths:
+  /clients:
+    get:
+      description: Returns all registered OAuth2 clients (secrets excluded)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.GetClientResponse'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: List all registered clients
+      tags:
+      - clients
+    post:
+      consumes:
+      - application/json
+      description: Creates a new OAuth2 client with generated credentials
+      parameters:
+      - description: Client registration data
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.CreateClientRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.CreateClientResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Register a new OAuth client
+      tags:
+      - clients
+  /clients/{id}:
+    delete:
+      description: Deletes an OAuth2 client by ID
+      parameters:
+      - description: Client ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Client deleted
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Delete a client
+      tags:
+      - clients
+    get:
+      description: Returns details for a specific OAuth2 client by ID
+      parameters:
+      - description: Client ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.GetClientResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Get a specific client
+      tags:
+      - clients
+  /clients/validate:
+    post:
+      consumes:
+      - application/json
+      description: Checks whether the provided client ID and secret are valid
+      parameters:
+      - description: Client credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.ValidateClientRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.ValidateClientResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Validate client credentials
+      tags:
+      - clients
+  /health:
+    get:
+      description: Returns service health status
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
+swagger: "2.0"

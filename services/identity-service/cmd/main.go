@@ -18,6 +18,11 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/observability"
 )
 
+// @title           Identity Service API
+// @version         1.0
+// @description     User registration and authentication service.
+// @host            localhost:8081
+// @BasePath        /
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

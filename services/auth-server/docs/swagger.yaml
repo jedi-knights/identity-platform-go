@@ -1,0 +1,181 @@
+basePath: /
+definitions:
+  github_com_ocrosby_identity-platform-go_services_auth-server_internal_application.IntrospectResponse:
+    properties:
+      active:
+        type: boolean
+      client_id:
+        type: string
+      exp:
+        type: integer
+      iat:
+        type: integer
+      scope:
+        type: string
+      sub:
+        type: string
+      token_type:
+        type: string
+    type: object
+  github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.GrantResponse:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        type: integer
+      refresh_token:
+        type: string
+      scope:
+        type: string
+      token_type:
+        type: string
+    type: object
+  httputil.ErrorResponse:
+    properties:
+      code:
+        type: string
+      error:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: OAuth2 Authorization Server - token issuance, introspection, and revocation.
+  title: Auth Server API
+  version: "1.0"
+paths:
+  /health:
+    get:
+      description: Returns service health status
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
+  /oauth/authorize:
+    get:
+      description: Authorization endpoint - not yet implemented
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Authorization endpoint
+      tags:
+      - oauth
+  /oauth/introspect:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Validates and returns metadata for a token per RFC 7662
+      parameters:
+      - description: Token to introspect
+        in: formData
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_auth-server_internal_application.IntrospectResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Introspect token
+      tags:
+      - oauth
+  /oauth/revoke:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Revokes a token per RFC 7009
+      parameters:
+      - description: Token to revoke
+        in: formData
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Token revoked
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Revoke token
+      tags:
+      - oauth
+  /oauth/token:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Issues an OAuth2 access token using the specified grant type (RFC
+        6749)
+      parameters:
+      - description: OAuth2 grant type
+        in: formData
+        name: grant_type
+        required: true
+        type: string
+      - description: Client identifier
+        in: formData
+        name: client_id
+        required: true
+        type: string
+      - description: Client secret
+        in: formData
+        name: client_secret
+        required: true
+        type: string
+      - description: Space-delimited list of scopes
+        in: formData
+        name: scope
+        type: string
+      - description: Authorization code
+        in: formData
+        name: code
+        type: string
+      - description: PKCE code verifier
+        in: formData
+        name: code_verifier
+        type: string
+      - description: Redirect URI
+        in: formData
+        name: redirect_uri
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.GrantResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Issue access token
+      tags:
+      - oauth
+swagger: "2.0"
