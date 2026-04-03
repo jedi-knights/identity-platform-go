@@ -1,0 +1,27 @@
+# Build outputs
+bin/
+dist/
+*.exe
+*.test
+*.out
+
+# Dependencies
+vendor/
+
+# Environment files
+.env
+.env.local
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+__debug_bin
+
+# Task runner cache
+.task/
