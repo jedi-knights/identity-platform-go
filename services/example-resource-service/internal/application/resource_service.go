@@ -2,6 +2,8 @@ package application
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -41,8 +43,13 @@ func (s *ResourceService) CreateResource(_ context.Context, req CreateResourceRe
 		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "name is required")
 	}
 
+	id, err := generateResourceID()
+	if err != nil {
+		return nil, fmt.Errorf("generating resource id: %w", err)
+	}
+
 	resource := &domain.Resource{
-		ID:          fmt.Sprintf("res-%d", time.Now().UnixNano()),
+		ID:          id,
 		Name:        req.Name,
 		Description: req.Description,
 		OwnerID:     req.OwnerID,
@@ -54,4 +61,12 @@ func (s *ResourceService) CreateResource(_ context.Context, req CreateResourceRe
 	}
 
 	return resource, nil
+}
+
+func generateResourceID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generating resource id: %w", err)
+	}
+	return "res-" + hex.EncodeToString(b), nil
 }

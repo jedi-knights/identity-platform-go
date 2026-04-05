@@ -61,6 +61,20 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 	grantType := domain.GrantType(r.FormValue("grant_type"))
 	clientID := r.FormValue("client_id")
 	clientSecret := r.FormValue("client_secret")
+
+	if grantType == "" {
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "grant_type is required"))
+		return
+	}
+	if clientID == "" {
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "client_id is required"))
+		return
+	}
+	if clientSecret == "" {
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "client_secret is required"))
+		return
+	}
+
 	scopeStr := r.FormValue("scope")
 
 	var scopes []string
@@ -192,12 +206,24 @@ func (a *tokenIssuerAdapter) IssueToken(ctx context.Context, req domain.GrantReq
 	return a.registry.Handle(ctx, req)
 }
 
-// tokenIntrospectorAdapter adapts TokenService to the TokenIntrospector port.
-type tokenIntrospectorAdapter struct {
-	svc *application.TokenService
+// introspectorSvc is the narrow interface required by tokenIntrospectorAdapter.
+// Defining it here (at the adapter boundary) keeps the adapter decoupled from
+// the concrete application.TokenService type.
+type introspectorSvc interface {
+	Introspect(ctx context.Context, raw string) (*application.IntrospectResponse, error)
 }
 
-func NewTokenIntrospectorAdapter(svc *application.TokenService) ports.TokenIntrospector {
+// revokerSvc is the narrow interface required by tokenRevokerAdapter.
+type revokerSvc interface {
+	Revoke(ctx context.Context, raw string) error
+}
+
+// tokenIntrospectorAdapter adapts any introspectorSvc to the TokenIntrospector port.
+type tokenIntrospectorAdapter struct {
+	svc introspectorSvc
+}
+
+func NewTokenIntrospectorAdapter(svc introspectorSvc) ports.TokenIntrospector {
 	return &tokenIntrospectorAdapter{svc: svc}
 }
 
@@ -205,12 +231,12 @@ func (a *tokenIntrospectorAdapter) Introspect(ctx context.Context, raw string) (
 	return a.svc.Introspect(ctx, raw)
 }
 
-// tokenRevokerAdapter adapts TokenService to the TokenRevoker port.
+// tokenRevokerAdapter adapts any revokerSvc to the TokenRevoker port.
 type tokenRevokerAdapter struct {
-	svc *application.TokenService
+	svc revokerSvc
 }
 
-func NewTokenRevokerAdapter(svc *application.TokenService) ports.TokenRevoker {
+func NewTokenRevokerAdapter(svc revokerSvc) ports.TokenRevoker {
 	return &tokenRevokerAdapter{svc: svc}
 }
 

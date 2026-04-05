@@ -1,5 +1,3 @@
-//go:build unit
-
 package application_test
 
 import (
@@ -12,7 +10,7 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 )
 
-// --- Manual mock for ClientRepository ---
+// Manual mock for ClientRepository.
 type mockClientRepo struct {
 	clients map[string]*domain.Client
 }
@@ -34,7 +32,7 @@ func (m *mockClientRepo) Save(c *domain.Client) error {
 	return nil
 }
 
-// --- Manual mock for TokenRepository ---
+// Manual mock for TokenRepository.
 type mockTokenRepo struct {
 	tokens map[string]*domain.Token
 }
@@ -61,7 +59,7 @@ func (m *mockTokenRepo) Delete(raw string) error {
 	return nil
 }
 
-// --- Manual mock for TokenGenerator ---
+// Manual mock for TokenGenerator.
 type mockTokenGen struct{}
 
 func (m *mockTokenGen) Generate(_ context.Context, _ *domain.Token) (string, error) {

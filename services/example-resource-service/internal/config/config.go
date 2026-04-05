@@ -58,5 +58,21 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unmarshalling config: %w", err)
 	}
 
+	if err := validateSigningKey(cfg.JWT.SigningKey); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
+}
+
+func validateSigningKey(key string) error {
+	insecureDefaults := []string{"change-me-in-production", "default-signing-key"}
+	for _, d := range insecureDefaults {
+		if key == d {
+			return fmt.Errorf("jwt.signing_key is insecure default; set RESOURCE_JWT_SIGNING_KEY to a random value of at least 32 characters")
+		}
+	}
+	if len(key) < 32 {
+		return fmt.Errorf("jwt.signing_key must be at least 32 characters; set RESOURCE_JWT_SIGNING_KEY")
+	}
+	return nil
 }

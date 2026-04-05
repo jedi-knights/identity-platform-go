@@ -2,6 +2,8 @@ package httputil
 
 import (
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
@@ -17,7 +19,9 @@ type ErrorResponse struct {
 func WriteJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Error("failed to encode JSON response", "error", err)
+	}
 }
 
 // WriteError writes a JSON error response derived from err.
@@ -37,21 +41,5 @@ func WriteError(w http.ResponseWriter, err error) {
 
 // asAppErr is a helper that attempts to unwrap err into *apperrors.AppError.
 func asAppErr(err error, target **apperrors.AppError) bool {
-	if err == nil {
-		return false
-	}
-	// Walk the chain manually since we can't import errors here without cycle.
-	type unwrapper interface{ Unwrap() error }
-	for e := err; e != nil; {
-		if ae, ok := e.(*apperrors.AppError); ok {
-			*target = ae
-			return true
-		}
-		u, ok := e.(unwrapper)
-		if !ok {
-			break
-		}
-		e = u.Unwrap()
-	}
-	return false
+	return errors.As(err, target)
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -129,13 +130,7 @@ func (s *TokenService) Introspect(ctx context.Context, raw string) (*IntrospectR
 		return &IntrospectResponse{Active: false}, nil
 	}
 
-	scopeStr := ""
-	for i, sc := range token.Scopes {
-		if i > 0 {
-			scopeStr += " "
-		}
-		scopeStr += sc
-	}
+	scopeStr := strings.Join(token.Scopes, " ")
 
 	return &IntrospectResponse{
 		Active:    true,
@@ -164,14 +159,13 @@ type IntrospectResponse struct {
 }
 
 // generateID generates a random token ID.
-func generateID() string {
+func generateID() (string, error) {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generating id: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // TokenTTL is the default token time-to-live.
 const TokenTTL = time.Hour
-
-// ensure generateID is used to avoid lint errors when callers add IDs themselves.
-var _ = generateID

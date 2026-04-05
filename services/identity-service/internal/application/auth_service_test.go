@@ -1,5 +1,3 @@
-//go:build unit
-
 package application_test
 
 import (
@@ -7,11 +5,12 @@ import (
 	"fmt"
 	"testing"
 
+	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/domain"
 )
 
-// --- Manual mock for UserRepository ---
+// Manual mock for UserRepository.
 type mockUserRepo struct {
 	byID    map[string]*domain.User
 	byEmail map[string]*domain.User
@@ -27,7 +26,7 @@ func newMockUserRepo() *mockUserRepo {
 func (m *mockUserRepo) FindByID(id string) (*domain.User, error) {
 	u, ok := m.byID[id]
 	if !ok {
-		return nil, fmt.Errorf("not found: %s", id)
+		return nil, apperrors.New(apperrors.ErrCodeNotFound, fmt.Sprintf("not found: %s", id))
 	}
 	return u, nil
 }
@@ -35,7 +34,7 @@ func (m *mockUserRepo) FindByID(id string) (*domain.User, error) {
 func (m *mockUserRepo) FindByEmail(email string) (*domain.User, error) {
 	u, ok := m.byEmail[email]
 	if !ok {
-		return nil, fmt.Errorf("not found: %s", email)
+		return nil, apperrors.New(apperrors.ErrCodeNotFound, fmt.Sprintf("not found: %s", email))
 	}
 	return u, nil
 }
@@ -52,7 +51,7 @@ func (m *mockUserRepo) Update(u *domain.User) error {
 	return nil
 }
 
-// --- Manual mock for PasswordHasher ---
+// Manual mock for PasswordHasher.
 type mockHasher struct{}
 
 func (h *mockHasher) Hash(password string) (string, error) {
