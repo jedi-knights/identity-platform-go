@@ -6,6 +6,7 @@ import (
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
 	"github.com/ocrosby/identity-platform-go/libs/logging"
+
 	// imported for swagger doc generation
 	_ "github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/ports"

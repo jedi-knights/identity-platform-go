@@ -1,12 +1,12 @@
 package domain
 
-// Permission represents a specific action on a resource
+// Permission represents a specific action on a resource.
 type Permission struct {
 	Resource string
 	Action   string
 }
 
-// Role represents a named set of permissions
+// Role represents a named set of permissions.
 type Role struct {
 	Name        string
 	Permissions []Permission

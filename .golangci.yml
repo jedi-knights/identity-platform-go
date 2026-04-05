@@ -31,6 +31,12 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
+      - path: docs/docs\.go
+        linters:
+          - godot
+      - source: "// @"
+        linters:
+          - godot
 
 formatters:
   enable:

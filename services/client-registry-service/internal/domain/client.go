@@ -2,7 +2,7 @@ package domain
 
 import "time"
 
-// OAuthClient represents a registered OAuth2 client
+// OAuthClient represents a registered OAuth2 client.
 type OAuthClient struct {
 	ID           string
 	Secret       string
@@ -15,7 +15,7 @@ type OAuthClient struct {
 	Active       bool
 }
 
-// ClientRepository defines persistence for OAuth clients
+// ClientRepository defines persistence for OAuth clients.
 type ClientRepository interface {
 	FindByID(id string) (*OAuthClient, error)
 	Save(client *OAuthClient) error

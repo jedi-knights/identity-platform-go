@@ -22,7 +22,7 @@ type ServerConfig struct {
 
 type JWTConfig struct {
 	SigningKey string `mapstructure:"signing_key"`
-	Issuer    string `mapstructure:"issuer"`
+	Issuer     string `mapstructure:"issuer"`
 }
 
 type TokenConfig struct {
