@@ -1,7 +1,10 @@
+//go:build unit
+
 package jwt_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -22,11 +25,27 @@ func makeToken(t *testing.T, key []byte, claims gojwt.MapClaims) string {
 }
 
 type validateCase struct {
-	name        string
-	token       func() string
-	wantActive  bool
-	wantSubject string
-	wantScope   string
+	name            string
+	token           func() string
+	wantActive      bool
+	wantSubject     string
+	wantScope       string
+	wantRoles       []string
+	wantPermissions []string
+}
+
+func assertStringField(t *testing.T, got, want, name string) {
+	t.Helper()
+	if want != "" && got != want {
+		t.Errorf("%s = %q, want %q", name, got, want)
+	}
+}
+
+func assertSliceField(t *testing.T, got, want []string, name string) {
+	t.Helper()
+	if len(want) > 0 && !slices.Equal(got, want) {
+		t.Errorf("%s = %v, want %v", name, got, want)
+	}
 }
 
 func assertValidateResult(t *testing.T, result *domain.IntrospectionResult, tc validateCase) {
@@ -37,12 +56,10 @@ func assertValidateResult(t *testing.T, result *domain.IntrospectionResult, tc v
 	if result.Active != tc.wantActive {
 		t.Errorf("Active = %v, want %v", result.Active, tc.wantActive)
 	}
-	if tc.wantSubject != "" && result.Subject != tc.wantSubject {
-		t.Errorf("Subject = %q, want %q", result.Subject, tc.wantSubject)
-	}
-	if tc.wantScope != "" && result.Scope != tc.wantScope {
-		t.Errorf("Scope = %q, want %q", result.Scope, tc.wantScope)
-	}
+	assertStringField(t, result.Subject, tc.wantSubject, "Subject")
+	assertStringField(t, result.Scope, tc.wantScope, "Scope")
+	assertSliceField(t, result.Roles, tc.wantRoles, "Roles")
+	assertSliceField(t, result.Permissions, tc.wantPermissions, "Permissions")
 }
 
 func TestValidator_Validate(t *testing.T) {
@@ -94,6 +111,25 @@ func TestValidator_Validate(t *testing.T) {
 			name:       "empty token returns active=false",
 			token:      func() string { return "" },
 			wantActive: false,
+		},
+		{
+			name: "token with roles and permissions passes them through",
+			token: func() string {
+				return makeToken(t, signingKey, gojwt.MapClaims{
+					"sub":         "user-rbac",
+					"client_id":   "rbac-client",
+					"scope":       "read",
+					"exp":         time.Now().Add(time.Hour).Unix(),
+					"iat":         time.Now().Unix(),
+					"iss":         "identity-platform",
+					"roles":       []string{"admin", "editor"},
+					"permissions": []string{"articles:read", "articles:write"},
+				})
+			},
+			wantActive:      true,
+			wantSubject:     "user-rbac",
+			wantRoles:       []string{"admin", "editor"},
+			wantPermissions: []string{"articles:read", "articles:write"},
 		},
 	}
 

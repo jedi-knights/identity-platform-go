@@ -8,10 +8,19 @@ import (
 	"github.com/spf13/viper"
 )
 
+// DatabaseConfig holds the connection URL for the PostgreSQL persistence adapter.
+// When URL is empty, the service falls back to in-memory storage.
+type DatabaseConfig struct {
+	URL string `mapstructure:"url"` // RESOURCE_DATABASE_URL
+}
+
 type Config struct {
-	Server ServerConfig `mapstructure:"server"`
-	Log    LogConfig    `mapstructure:"log"`
-	JWT    JWTConfig    `mapstructure:"jwt"`
+	Server        ServerConfig        `mapstructure:"server"`
+	Log           LogConfig           `mapstructure:"log"`
+	JWT           JWTConfig           `mapstructure:"jwt"`
+	Introspection IntrospectionConfig `mapstructure:"introspection"`
+	Database      DatabaseConfig      `mapstructure:"database"`
+	Policy        PolicyConfig        `mapstructure:"policy"`
 }
 
 type ServerConfig struct {
@@ -29,6 +38,18 @@ type JWTConfig struct {
 	SigningKey string `mapstructure:"signing_key"`
 }
 
+// IntrospectionConfig holds the URL for token-introspection-service.
+// When URL is empty, the service falls back to local JWT validation.
+type IntrospectionConfig struct {
+	URL string `mapstructure:"url"` // RESOURCE_INTROSPECTION_URL
+}
+
+// PolicyConfig holds the URL for authorization-policy-service.
+// When URL is empty, policy evaluation is skipped and scope alone gates access.
+type PolicyConfig struct {
+	URL string `mapstructure:"url"` // RESOURCE_POLICY_URL
+}
+
 func Load() (*Config, error) {
 	v := viper.New()
 
@@ -38,6 +59,9 @@ func Load() (*Config, error) {
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.environment", "development")
 	v.SetDefault("jwt.signing_key", "")
+	v.SetDefault("introspection.url", "")
+	v.SetDefault("database.url", "")
+	v.SetDefault("policy.url", "")
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
@@ -60,8 +84,11 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unmarshalling config: %w", err)
 	}
 
-	if err := validateSigningKey(cfg.JWT.SigningKey); err != nil {
-		return nil, err
+	// Signing key is required only when introspection service is not configured.
+	if cfg.Introspection.URL == "" {
+		if err := validateSigningKey(cfg.JWT.SigningKey); err != nil {
+			return nil, err
+		}
 	}
 	return &cfg, nil
 }

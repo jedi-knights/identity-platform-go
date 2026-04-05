@@ -21,7 +21,10 @@ func NewRouter(h *Handler, logger logging.Logger) http.Handler {
 		httpSwagger.URL("/swagger/doc.json"),
 	))
 
-	// Apply middleware chain (Chain of Responsibility pattern).
+	// Apply middleware chain outermost-first: Recovery → Logging → TraceID → handler.
+	// Outermost runs first on the way in and last on the way out, so Recovery wraps
+	// everything (catches panics from inner middleware too) and TraceID runs closest
+	// to the handler (trace ID is available in all log lines).
 	return httputil.RecoveryMiddleware(logger)(
 		httputil.LoggingMiddleware(logger)(
 			httputil.TraceIDMiddleware(mux),

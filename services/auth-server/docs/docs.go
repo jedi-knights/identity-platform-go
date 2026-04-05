@@ -87,7 +87,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_auth-server_internal_application.IntrospectResponse"
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.IntrospectResponse"
                         }
                     },
                     "400": {
@@ -218,7 +218,27 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "github_com_ocrosby_identity-platform-go_services_auth-server_internal_application.IntrospectResponse": {
+        "github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.GrantResponse": {
+            "type": "object",
+            "properties": {
+                "access_token": {
+                    "type": "string"
+                },
+                "expires_in": {
+                    "type": "integer"
+                },
+                "refresh_token": {
+                    "type": "string"
+                },
+                "scope": {
+                    "type": "string"
+                },
+                "token_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.IntrospectResponse": {
             "type": "object",
             "properties": {
                 "active": {
@@ -237,26 +257,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "sub": {
-                    "type": "string"
-                },
-                "token_type": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.GrantResponse": {
-            "type": "object",
-            "properties": {
-                "access_token": {
-                    "type": "string"
-                },
-                "expires_in": {
-                    "type": "integer"
-                },
-                "refresh_token": {
-                    "type": "string"
-                },
-                "scope": {
                     "type": "string"
                 },
                 "token_type": {

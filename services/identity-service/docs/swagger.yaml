@@ -1,13 +1,13 @@
 basePath: /
 definitions:
-  github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.LoginRequest:
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.LoginRequest:
     properties:
       email:
         type: string
       password:
         type: string
     type: object
-  github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.LoginResponse:
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.LoginResponse:
     properties:
       email:
         type: string
@@ -16,7 +16,7 @@ definitions:
       user_id:
         type: string
     type: object
-  github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.RegisterRequest:
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.RegisterRequest:
     properties:
       email:
         type: string
@@ -25,7 +25,7 @@ definitions:
       password:
         type: string
     type: object
-  github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.RegisterResponse:
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.RegisterResponse:
     properties:
       email:
         type: string
@@ -59,14 +59,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.LoginRequest'
+          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.LoginRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.LoginResponse'
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.LoginResponse'
         "400":
           description: Bad Request
           schema:
@@ -89,14 +89,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.RegisterRequest'
+          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.RegisterRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.RegisterResponse'
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.RegisterResponse'
         "400":
           description: Bad Request
           schema:

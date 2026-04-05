@@ -51,6 +51,133 @@ func (f *fakeRoleRepo) Save(_ context.Context, r *domain.Role) error {
 	return nil
 }
 
+// assertSubjectPermissions validates that result contains exactly the expected roles and
+// permissions. Permissions are compared as a set because deduplication order is not
+// guaranteed. Extracted from TestPolicyService_GetSubjectPermissions to keep its
+// cyclomatic complexity within the project limit of 7.
+func assertSubjectPermissions(t *testing.T, result *domain.SubjectPermissions, subjectID string, wantRoles, wantPermissions []string) {
+	t.Helper()
+	if result.SubjectID != subjectID {
+		t.Errorf("SubjectID = %q, want %q", result.SubjectID, subjectID)
+	}
+	if len(result.Roles) != len(wantRoles) {
+		t.Errorf("Roles = %v, want %v", result.Roles, wantRoles)
+	}
+	gotPerms := make(map[string]struct{}, len(result.Permissions))
+	for _, p := range result.Permissions {
+		gotPerms[p] = struct{}{}
+	}
+	for _, want := range wantPermissions {
+		if _, ok := gotPerms[want]; !ok {
+			t.Errorf("permission %q missing from result %v", want, result.Permissions)
+		}
+	}
+	if len(result.Permissions) != len(wantPermissions) {
+		t.Errorf("len(Permissions) = %d, want %d: got %v", len(result.Permissions), len(wantPermissions), result.Permissions)
+	}
+}
+
+func TestPolicyService_GetSubjectPermissions(t *testing.T) {
+	adminRole := &domain.Role{
+		Name: "admin",
+		Permissions: []domain.Permission{
+			{Resource: "articles", Action: "read"},
+			{Resource: "articles", Action: "write"},
+		},
+	}
+	readerRole := &domain.Role{
+		Name: "reader",
+		Permissions: []domain.Permission{
+			{Resource: "articles", Action: "read"},
+		},
+	}
+
+	tests := []struct {
+		name            string
+		setupPolicy     func(*fakePolicyRepo)
+		setupRole       func(*fakeRoleRepo)
+		subjectID       string
+		wantRoles       []string
+		wantPermissions []string
+		wantErr         bool
+	}{
+		{
+			name:            "returns empty permissions when subject has no policy",
+			setupPolicy:     func(*fakePolicyRepo) {},
+			setupRole:       func(*fakeRoleRepo) {},
+			subjectID:       "unknown-subject",
+			wantRoles:       []string{},
+			wantPermissions: []string{},
+		},
+		{
+			name: "returns permissions for subject with single role",
+			setupPolicy: func(r *fakePolicyRepo) {
+				r.policies["user-123"] = &domain.Policy{SubjectID: "user-123", Roles: []string{"reader"}}
+			},
+			setupRole:       func(r *fakeRoleRepo) { r.roles["reader"] = readerRole },
+			subjectID:       "user-123",
+			wantRoles:       []string{"reader"},
+			wantPermissions: []string{"articles:read"},
+		},
+		{
+			name: "returns deduplicated permissions for subject with multiple roles",
+			setupPolicy: func(r *fakePolicyRepo) {
+				r.policies["user-multi"] = &domain.Policy{SubjectID: "user-multi", Roles: []string{"reader", "admin"}}
+			},
+			setupRole: func(r *fakeRoleRepo) {
+				r.roles["reader"] = readerRole
+				r.roles["admin"] = adminRole
+			},
+			subjectID:       "user-multi",
+			wantRoles:       []string{"reader", "admin"},
+			wantPermissions: []string{"articles:read", "articles:write"},
+		},
+		{
+			name: "skips undefined roles and returns empty permissions",
+			setupPolicy: func(r *fakePolicyRepo) {
+				r.policies["user-ghost"] = &domain.Policy{SubjectID: "user-ghost", Roles: []string{"nonexistent"}}
+			},
+			setupRole:       func(*fakeRoleRepo) {},
+			subjectID:       "user-ghost",
+			wantRoles:       []string{"nonexistent"},
+			wantPermissions: []string{},
+		},
+		{
+			name: "returns empty permissions when subject has no roles",
+			setupPolicy: func(r *fakePolicyRepo) {
+				r.policies["user-empty"] = &domain.Policy{SubjectID: "user-empty", Roles: []string{}}
+			},
+			setupRole:       func(*fakeRoleRepo) {},
+			subjectID:       "user-empty",
+			wantRoles:       []string{},
+			wantPermissions: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policyRepo := newFakePolicyRepo()
+			roleRepo := newFakeRoleRepo()
+			tt.setupPolicy(policyRepo)
+			tt.setupRole(roleRepo)
+
+			svc := application.NewPolicyService(policyRepo, roleRepo)
+			result, err := svc.GetSubjectPermissions(context.Background(), tt.subjectID)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assertSubjectPermissions(t, result, tt.subjectID, tt.wantRoles, tt.wantPermissions)
+		})
+	}
+}
+
 func TestPolicyService_Evaluate(t *testing.T) {
 	adminRole := &domain.Role{
 		Name: "admin",

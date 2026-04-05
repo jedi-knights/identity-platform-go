@@ -1,0 +1,46 @@
+# Build outputs
+bin/
+dist/
+
+# Test artifacts
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Dependencies
+vendor/
+
+# Environment / secrets — never bake into images
+.env
+.env.local
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+__debug_bin
+
+# Task runner cache
+.task/
+
+# Git internals
+.git/
+.gitignore
+.githooks/
+
+# CI/CD
+.github/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation (not needed at runtime)
+docs/
+*.md

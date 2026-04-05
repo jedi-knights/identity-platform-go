@@ -8,6 +8,10 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/domain"
 )
 
+// Compile-time interface checks.
+var _ domain.PolicyRepository = (*PolicyRepository)(nil)
+var _ domain.RoleRepository = (*RoleRepository)(nil)
+
 // PolicyRepository is an in-memory PolicyRepository implementation.
 type PolicyRepository struct {
 	mu       sync.RWMutex

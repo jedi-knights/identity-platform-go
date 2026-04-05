@@ -49,20 +49,26 @@ func TraceIDMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// responseWriter wraps http.ResponseWriter to capture the status code.
+// responseWriter wraps http.ResponseWriter to capture the status code and track
+// whether the response header has been committed.
 type responseWriter struct {
 	http.ResponseWriter
-	status int
+	status      int
+	wroteHeader bool
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.status = code
+	rw.wroteHeader = true
 	rw.ResponseWriter.WriteHeader(code)
 }
 
 func (rw *responseWriter) Write(b []byte) (int, error) {
-	if rw.status == 0 {
-		rw.status = http.StatusOK
+	if !rw.wroteHeader {
+		// Explicitly call WriteHeader(200) through the wrapper so that both the
+		// wrapper state (status, wroteHeader) and the underlying ResponseWriter
+		// are committed via a single canonical path.
+		rw.WriteHeader(http.StatusOK)
 	}
 	return rw.ResponseWriter.Write(b)
 }
@@ -78,8 +84,10 @@ func LoggingMiddleware(logger Logger) func(http.Handler) http.Handler {
 			traceID := logging.TraceIDFromContext(ctx)
 
 			next.ServeHTTP(rw, r)
-			if rw.status == 0 {
-				// A handler that never called WriteHeader implicitly sent 200 OK.
+			if !rw.wroteHeader {
+				// A handler that wrote nothing (no Write or WriteHeader call) will
+				// have the net/http server default to 200. Record that here so the
+				// log entry always carries a meaningful status and never logs 0.
 				rw.status = http.StatusOK
 			}
 
@@ -110,7 +118,7 @@ func RecoveryMiddleware(logger Logger) func(http.Handler) http.Handler {
 					traceID := logging.TraceIDFromContext(ctx)
 					logger.With("trace_id", traceID, "panic", fmt.Sprintf("%v", rec)).
 						Error("recovered from panic")
-					if rw.status == 0 {
+					if !rw.wroteHeader {
 						http.Error(rw, "internal server error", http.StatusInternalServerError)
 					}
 				}
