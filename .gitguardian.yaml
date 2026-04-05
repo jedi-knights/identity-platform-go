@@ -1,0 +1,6 @@
+version: 2
+
+# Files containing intentional placeholder values that are not real secrets.
+# .env.example is a template — all values are documentation-only stubs.
+paths-ignore:
+  - ".env.example"
