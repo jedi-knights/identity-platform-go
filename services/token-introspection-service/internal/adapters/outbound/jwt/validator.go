@@ -1,6 +1,7 @@
 package jwt
 
 import (
+	"context"
 	"errors"
 
 	gojwt "github.com/golang-jwt/jwt/v5"
@@ -49,7 +50,7 @@ func claimsToResult(claims *jwtClaims) *domain.IntrospectionResult {
 	return result
 }
 
-func (v *Validator) Validate(raw string) (*domain.IntrospectionResult, error) {
+func (v *Validator) Validate(_ context.Context, raw string) (*domain.IntrospectionResult, error) {
 	token, err := gojwt.ParseWithClaims(raw, &jwtClaims{}, v.keyFunc)
 	if err != nil {
 		if errors.Is(err, gojwt.ErrTokenExpired) {

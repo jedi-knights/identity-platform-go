@@ -1,5 +1,7 @@
 package domain
 
+import "context"
+
 // IntrospectionResult is the result of token introspection (RFC 7662).
 type IntrospectionResult struct {
 	Active    bool     `json:"active"`
@@ -14,5 +16,5 @@ type IntrospectionResult struct {
 
 // TokenValidator defines how tokens are validated (Strategy pattern).
 type TokenValidator interface {
-	Validate(raw string) (*IntrospectionResult, error)
+	Validate(ctx context.Context, raw string) (*IntrospectionResult, error)
 }

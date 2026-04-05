@@ -102,6 +102,7 @@ func (h *Handler) GetResource(w http.ResponseWriter, r *http.Request) {
 // @Failure      401      {object}  httputil.ErrorResponse
 // @Router       /resources [post]
 func (h *Handler) CreateResource(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	var req application.CreateResourceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))

@@ -33,6 +33,7 @@ func NewHandler(evaluator ports.PolicyEvaluator, logger logging.Logger) *Handler
 // @Failure      400      {object}  httputil.ErrorResponse
 // @Router       /evaluate [post]
 func (h *Handler) Evaluate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	var req application.EvaluationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
