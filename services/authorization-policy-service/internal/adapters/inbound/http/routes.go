@@ -14,6 +14,7 @@ func NewRouter(h *Handler, logger logging.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /evaluate", h.Evaluate)
+	mux.HandleFunc("GET /subjects/{subjectID}/permissions", h.GetSubjectPermissions)
 	mux.HandleFunc("GET /health", h.Health)
 	mux.Handle("GET /swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),

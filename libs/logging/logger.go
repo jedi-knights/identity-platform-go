@@ -5,6 +5,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
+	"sync"
 )
 
 // Logger defines the structured logging interface.
@@ -18,12 +20,23 @@ type Logger interface {
 
 // Config holds configuration for creating a Logger.
 type Config struct {
+	// Level sets the minimum log level. Accepted values (case-insensitive): "debug",
+	// "info", "warn", "error". An empty string defaults to "info". Unrecognised
+	// values default to "info" and log a warning at construction time.
 	Level       string
 	Format      string // "json" or "text"
 	ServiceName string
 	Environment string
 	Output      io.Writer // nil defaults to os.Stdout
 }
+
+// fallbackMu guards fallbackOutput against concurrent access.
+// Both must be used together: call fallbackMu.RLock/RUnlock to read and
+// fallbackMu.Lock/Unlock to replace (tests only — production never writes).
+var (
+	fallbackMu     sync.RWMutex
+	fallbackOutput io.Writer = os.Stdout
+)
 
 type contextKey int
 
@@ -51,13 +64,19 @@ func WithContext(ctx context.Context, l Logger) context.Context {
 }
 
 // FromContext returns the Logger stored in the context.
-// If no logger is present it constructs a default info-level text logger.
-// Prefer injecting loggers explicitly rather than relying on this fallback.
+// If no logger is present it constructs a default info-level text logger that
+// writes to os.Stdout and carries a "logger_source":"fallback" attribute so
+// that fallback log lines are distinguishable in production output. Tests
+// should always inject a logger explicitly via [WithContext] so that output can
+// be captured — the fallback's output is not observable through any buffer.
 func FromContext(ctx context.Context) Logger {
 	if l, ok := ctx.Value(loggerKey).(Logger); ok {
 		return l
 	}
-	return NewLogger(Config{Level: "info", Format: "text"})
+	fallbackMu.RLock()
+	w := fallbackOutput
+	fallbackMu.RUnlock()
+	return NewLogger(Config{Level: "info", Format: "text", Output: w}).With("logger_source", "fallback")
 }
 
 // slogLogger wraps *slog.Logger and always includes service/environment fields.
@@ -100,10 +119,10 @@ func NewLogger(config Config) Logger {
 	return l
 }
 
-// parseLogLevel converts a level string to slog.Level.
+// parseLogLevel converts a level string to slog.Level (case-insensitive).
 // Returns (level, true) on success, (LevelInfo, false) for unknown values.
 func parseLogLevel(level string) (slog.Level, bool) {
-	switch level {
+	switch strings.ToLower(level) {
 	case "debug":
 		return slog.LevelDebug, true
 	case "warn":

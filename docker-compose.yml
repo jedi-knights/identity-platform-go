@@ -1,0 +1,293 @@
+# Identity Platform — local development stack
+#
+# All services use the single Dockerfile at the repo root.
+# The SERVICE_NAME build arg selects which service to compile.
+#
+# Required: copy .env.example to .env and fill in the values before running.
+#
+#   cp .env.example .env
+#   docker compose up --build
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # postgres — shared relational store for identity-service, client-registry-service,
+  # authorization-policy-service, and example-resource-service.
+  # Each service owns its own database; no cross-service foreign keys.
+  # auth-server does not use PostgreSQL — it uses Redis for token storage.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # redis — token store for auth-server and token-introspection-service.
+  # Enables revocation to propagate immediately across replicas rather than
+  # relying on in-process in-memory storage that is lost on restart.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ---------------------------------------------------------------------------
+  # auth-server — OAuth2 token issuance, introspection, revocation
+  # Endpoints: POST /oauth/token  POST /oauth/introspect  POST /oauth/revoke
+  #
+  # Inter-service dependencies:
+  #   AUTH_CLIENT_REGISTRY_URL — delegates client credential validation and
+  #     metadata lookup to client-registry-service instead of the in-memory
+  #     fallback. Token endpoint client_credentials flow uses this.
+  #   AUTH_IDENTITY_SERVICE_URL — delegates user credential verification for
+  #     the authorization_code flow to identity-service.
+  #   AUTH_REDIS_URL — token store for issued and revoked tokens; enables
+  #     revocation to propagate without in-process state.
+  # ---------------------------------------------------------------------------
+  auth-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: auth-server
+    image: identity-platform/auth-server:local
+    ports:
+      - "8080:8080"
+    environment:
+      AUTH_SERVER_HOST: "0.0.0.0"
+      AUTH_SERVER_PORT: "8080"
+      AUTH_JWT_SIGNING_KEY: ${JWT_SIGNING_KEY}
+      AUTH_JWT_ISSUER: "identity-platform"
+      AUTH_TOKEN_TTL_SECONDS: "3600"
+      AUTH_LOG_LEVEL: "info"
+      AUTH_LOG_FORMAT: "json"
+      AUTH_LOG_ENVIRONMENT: "development"
+      # Seed a test client on startup so you can request tokens immediately.
+      # Test client id is "test-client"; secret is DEV_CLIENT_SECRET.
+      AUTH_DEV_SEED_CLIENTS: "true"
+      AUTH_DEV_CLIENT_SECRET: ${DEV_CLIENT_SECRET}
+      # Wire to external services for proper bounded context separation.
+      AUTH_CLIENT_REGISTRY_URL: "http://client-registry-service:8082"
+      AUTH_IDENTITY_SERVICE_URL: "http://identity-service:8081"
+      AUTH_REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
+    depends_on:
+      client-registry-service:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # identity-service — user registration and authentication
+  # Endpoints: POST /auth/register  POST /auth/login
+  # ---------------------------------------------------------------------------
+  identity-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: identity-service
+    image: identity-platform/identity-service:local
+    ports:
+      - "8081:8081"
+    environment:
+      IDENTITY_SERVER_HOST: "0.0.0.0"
+      IDENTITY_SERVER_PORT: "8081"
+      IDENTITY_LOG_LEVEL: "info"
+      IDENTITY_LOG_FORMAT: "json"
+      IDENTITY_LOG_ENVIRONMENT: "development"
+      IDENTITY_DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/identity_service?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8081/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # client-registry-service — OAuth2 client CRUD and credential validation
+  # Endpoints: POST/GET /clients  GET/DELETE /clients/{id}  POST /clients/validate
+  # ---------------------------------------------------------------------------
+  client-registry-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: client-registry-service
+    image: identity-platform/client-registry-service:local
+    ports:
+      - "8082:8082"
+    environment:
+      CLIENT_SERVER_HOST: "0.0.0.0"
+      CLIENT_SERVER_PORT: "8082"
+      CLIENT_LOG_LEVEL: "info"
+      CLIENT_LOG_FORMAT: "json"
+      CLIENT_LOG_ENVIRONMENT: "development"
+      CLIENT_DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/client_registry?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8082/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # token-introspection-service — standalone JWT validation (RFC 7662)
+  # Must share JWT_SIGNING_KEY with auth-server to validate tokens it issues.
+  # Endpoint: POST /introspect
+  # ---------------------------------------------------------------------------
+  token-introspection-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: token-introspection-service
+    image: identity-platform/token-introspection-service:local
+    ports:
+      - "8083:8083"
+    environment:
+      INTROSPECT_SERVER_HOST: "0.0.0.0"
+      INTROSPECT_SERVER_PORT: "8083"
+      INTROSPECT_JWT_SIGNING_KEY: ${JWT_SIGNING_KEY}
+      INTROSPECT_LOG_LEVEL: "info"
+      INTROSPECT_LOG_FORMAT: "json"
+      INTROSPECT_LOG_ENVIRONMENT: "development"
+      INTROSPECT_REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8083/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # authorization-policy-service — RBAC policy evaluation
+  # Endpoint: POST /evaluate
+  #
+  # Inter-service dependencies:
+  #   POLICY_REDIS_URL — caches evaluation results in Redis with a 60-second TTL,
+  #     dramatically reducing PostgreSQL load at high request rates. When unset,
+  #     every /evaluate call hits the database directly.
+  # ---------------------------------------------------------------------------
+  authorization-policy-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: authorization-policy-service
+    image: identity-platform/authorization-policy-service:local
+    ports:
+      - "8084:8084"
+    environment:
+      POLICY_SERVER_HOST: "0.0.0.0"
+      POLICY_SERVER_PORT: "8084"
+      POLICY_LOG_LEVEL: "info"
+      POLICY_LOG_FORMAT: "json"
+      POLICY_LOG_ENVIRONMENT: "development"
+      POLICY_DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/authorization_policy?sslmode=disable"
+      POLICY_REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8084/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # example-resource-service — JWT-protected API (requires read/write scopes)
+  # Endpoints: GET/POST /resources  GET /resources/{id}
+  #
+  # Inter-service dependencies:
+  #   RESOURCE_INTROSPECTION_URL — delegates token validation to
+  #     token-introspection-service (RFC 7662). This means revoked tokens are
+  #     correctly rejected on every request instead of remaining valid until
+  #     expiry (the fallback local JWT validation path).
+  #   RESOURCE_POLICY_URL — delegates authorization decisions to
+  #     authorization-policy-service after scope validation. Scope gates the
+  #     token capability; policy gates the subject's RBAC permission. When
+  #     unset, scope alone determines access.
+  # ---------------------------------------------------------------------------
+  example-resource-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: example-resource-service
+    image: identity-platform/example-resource-service:local
+    ports:
+      - "8085:8085"
+    environment:
+      RESOURCE_SERVER_HOST: "0.0.0.0"
+      RESOURCE_SERVER_PORT: "8085"
+      # JWT_SIGNING_KEY is only needed as a fallback when RESOURCE_INTROSPECTION_URL
+      # is not set. It is kept here so the service starts correctly if the introspection
+      # service is temporarily unavailable during development.
+      RESOURCE_JWT_SIGNING_KEY: ${JWT_SIGNING_KEY}
+      RESOURCE_LOG_LEVEL: "info"
+      RESOURCE_LOG_FORMAT: "json"
+      RESOURCE_LOG_ENVIRONMENT: "development"
+      # Delegate token validation to token-introspection-service for revocation support.
+      RESOURCE_INTROSPECTION_URL: "http://token-introspection-service:8083"
+      # Delegate authorization to authorization-policy-service for RBAC enforcement.
+      RESOURCE_POLICY_URL: "http://authorization-policy-service:8084"
+      RESOURCE_DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/example_resource?sslmode=disable"
+    depends_on:
+      token-introspection-service:
+        condition: service_healthy
+      authorization-policy-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8085/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  postgres-data:
+  redis-data:

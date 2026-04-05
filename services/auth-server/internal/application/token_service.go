@@ -4,12 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-
+	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
+	"github.com/ocrosby/identity-platform-go/libs/jwtutil"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 )
 
@@ -23,14 +24,6 @@ type TokenValidator interface {
 	Validate(ctx context.Context, raw string) (*domain.Token, error)
 }
 
-// JWTClaims are the JWT claims for an access token.
-// Scope is a space-delimited string per RFC 9068 §2.2.3.1.
-type JWTClaims struct {
-	jwt.RegisteredClaims
-	ClientID string `json:"client_id"`
-	Scope    string `json:"scope"`
-}
-
 // JWTTokenGenerator generates JWT tokens (Strategy).
 type JWTTokenGenerator struct {
 	signingKey []byte
@@ -42,20 +35,18 @@ func NewJWTTokenGenerator(signingKey []byte, issuer string) *JWTTokenGenerator {
 }
 
 func (g *JWTTokenGenerator) Generate(_ context.Context, token *domain.Token) (string, error) {
-	claims := JWTClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    g.issuer,
-			Subject:   token.Subject,
-			ExpiresAt: jwt.NewNumericDate(token.ExpiresAt),
-			IssuedAt:  jwt.NewNumericDate(token.IssuedAt),
-			ID:        token.ID,
-		},
-		ClientID: token.ClientID,
-		Scope:    strings.Join(token.Scopes, " "),
-	}
-
-	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return t.SignedString(g.signingKey)
+	claims := jwtutil.NewClaims(jwtutil.ClaimsConfig{
+		Issuer:      g.issuer,
+		Subject:     token.Subject,
+		TokenID:     token.ID,
+		ClientID:    token.ClientID,
+		Scope:       strings.Join(token.Scopes, " "),
+		Roles:       token.Roles,
+		Permissions: token.Permissions,
+		IssuedAt:    token.IssuedAt,
+		ExpiresAt:   token.ExpiresAt,
+	})
+	return jwtutil.Sign(claims, g.signingKey)
 }
 
 // JWTTokenValidator validates JWT tokens (Strategy).
@@ -68,23 +59,13 @@ func NewJWTTokenValidator(signingKey []byte, tokenRepo domain.TokenRepository) *
 	return &JWTTokenValidator{signingKey: signingKey, tokenRepo: tokenRepo}
 }
 
-func (v *JWTTokenValidator) Validate(ctx context.Context, raw string) (*domain.Token, error) {
-	token, err := jwt.ParseWithClaims(raw, &JWTClaims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
-		return v.signingKey, nil
-	})
+func (v *JWTTokenValidator) Validate(_ context.Context, raw string) (*domain.Token, error) {
+	claims, err := jwtutil.Parse(raw, v.signingKey)
 	if err != nil {
-		// All errors from jwt.ParseWithClaims with a static local keyFunc are
-		// token-validation failures (expired, bad signature, malformed), not
-		// infrastructure errors. Callers should treat this as {active:false}.
+		// All errors from jwtutil.Parse with a local key are token-validation failures
+		// (expired, bad signature, malformed), not infrastructure errors.
+		// Callers should treat this as {active:false}.
 		return nil, fmt.Errorf("invalid token: %w", err)
-	}
-
-	claims, ok := token.Claims.(*JWTClaims)
-	if !ok || !token.Valid {
-		return nil, fmt.Errorf("invalid token claims")
 	}
 
 	return &domain.Token{
@@ -101,12 +82,15 @@ func (v *JWTTokenValidator) Validate(ctx context.Context, raw string) (*domain.T
 
 // TokenService handles token introspection and revocation.
 type TokenService struct {
-	tokenRepo domain.TokenRepository
-	validator TokenValidator
+	tokenRepo        domain.TokenRepository
+	refreshTokenRepo domain.RefreshTokenRepository
+	validator        TokenValidator
 }
 
-func NewTokenService(tokenRepo domain.TokenRepository, validator TokenValidator) *TokenService {
-	return &TokenService{tokenRepo: tokenRepo, validator: validator}
+// NewTokenService creates a TokenService.
+// refreshTokenRepo may be nil — when nil, revocation only attempts access token deletion.
+func NewTokenService(tokenRepo domain.TokenRepository, refreshTokenRepo domain.RefreshTokenRepository, validator TokenValidator) *TokenService {
+	return &TokenService{tokenRepo: tokenRepo, refreshTokenRepo: refreshTokenRepo, validator: validator}
 }
 
 func (s *TokenService) Introspect(ctx context.Context, raw string) (*domain.IntrospectResponse, error) {
@@ -119,6 +103,14 @@ func (s *TokenService) Introspect(ctx context.Context, raw string) (*domain.Intr
 
 	if token.IsExpiredAt(time.Now()) {
 		return &domain.IntrospectResponse{Active: false}, nil
+	}
+
+	// Check the token store — if not present, the token was revoked.
+	if _, err := s.tokenRepo.FindByRaw(ctx, raw); err != nil {
+		if errors.Is(err, domain.ErrTokenNotFound) {
+			return &domain.IntrospectResponse{Active: false}, nil
+		}
+		return nil, fmt.Errorf("checking token store: %w", err)
 	}
 
 	scopeStr := strings.Join(token.Scopes, " ")
@@ -134,8 +126,25 @@ func (s *TokenService) Introspect(ctx context.Context, raw string) (*domain.Intr
 	}, nil
 }
 
+// Revoke revokes the presented token, attempting deletion from both the access token
+// and refresh token stores (RFC 7009 §2 — revoke related tokens).
+// Not-found errors are treated as idempotent success per RFC 7009 §2.2.
 func (s *TokenService) Revoke(ctx context.Context, raw string) error {
-	return s.tokenRepo.Delete(ctx, raw)
+	// Attempt to revoke as access token; idempotent — not found is not an error.
+	// The Redis adapter returns apperrors.ErrCodeNotFound for missing tokens;
+	// the in-memory adapter returns domain.ErrTokenNotFound. Accept both.
+	if err := s.tokenRepo.Delete(ctx, raw); err != nil &&
+		!errors.Is(err, domain.ErrTokenNotFound) &&
+		!apperrors.IsNotFound(err) {
+		return fmt.Errorf("revoking access token: %w", err)
+	}
+	// Attempt to revoke as refresh token; idempotent.
+	if s.refreshTokenRepo != nil {
+		if err := s.refreshTokenRepo.Delete(ctx, raw); err != nil && !errors.Is(err, domain.ErrRefreshTokenNotFound) {
+			return fmt.Errorf("revoking refresh token: %w", err)
+		}
+	}
+	return nil
 }
 
 // generateID generates a random token ID.

@@ -50,7 +50,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.authenticator.Login(r.Context(), req)
 	if err != nil {
 		var ae *apperrors.AppError
-		if !errors.As(err, &ae) || ae.Code == apperrors.ErrCodeInternal {
+		if !errors.As(err, &ae) || ae.Code() == apperrors.ErrCodeInternal {
 			h.logger.Error("login failed", "error", err.Error())
 		}
 		httputil.WriteError(w, err)
@@ -81,7 +81,10 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.registrar.Register(r.Context(), req)
 	if err != nil {
-		h.logger.Error("registration failed", "error", err.Error())
+		var ae *apperrors.AppError
+		if !errors.As(err, &ae) || ae.Code() == apperrors.ErrCodeInternal {
+			h.logger.Error("registration failed", "error", err.Error())
+		}
 		httputil.WriteError(w, err)
 		return
 	}
