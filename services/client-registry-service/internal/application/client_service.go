@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/domain"
 )
 
@@ -22,6 +23,13 @@ func NewClientService(repo domain.ClientRepository) *ClientService {
 }
 
 func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClientRequest) (*domain.CreateClientResponse, error) {
+	if req.Name == "" {
+		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "name is required")
+	}
+	if len(req.GrantTypes) == 0 {
+		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "at least one grant type is required")
+	}
+
 	id, err := generateHex(16)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate client ID: %w", err)

@@ -126,18 +126,18 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request) (domain.GrantRequ
 
 // writeTokenError maps an application error to an RFC 6749-compliant OAuth2 error response.
 func writeTokenError(w http.ResponseWriter, err error) {
-	if apperrors.HTTPStatus(err) >= 500 {
-		writeOAuthError(w, "server_error", "an internal error occurred", http.StatusInternalServerError)
-		return
-	}
-	errMsg := err.Error()
 	switch {
-	case strings.Contains(errMsg, "client not found") || strings.Contains(errMsg, "invalid client credentials"):
+	case apperrors.HTTPStatus(err) >= 500:
+		writeOAuthError(w, "server_error", "an internal error occurred", http.StatusInternalServerError)
+	case apperrors.IsUnauthorized(err):
 		writeOAuthError(w, "invalid_client", "client authentication failed", http.StatusUnauthorized)
-	case strings.Contains(errMsg, "scope not allowed"):
-		writeOAuthError(w, "invalid_scope", "the requested scope is invalid", http.StatusBadRequest)
-	case strings.Contains(errMsg, "grant type not allowed") || strings.Contains(errMsg, "unsupported grant type"):
-		writeOAuthError(w, "unsupported_grant_type", "grant type not supported", http.StatusBadRequest)
+	case apperrors.IsForbidden(err):
+		// Could be invalid_scope or unauthorized_client — use message to distinguish
+		if strings.Contains(err.Error(), "scope") {
+			writeOAuthError(w, "invalid_scope", "the requested scope is invalid", http.StatusBadRequest)
+		} else {
+			writeOAuthError(w, "unsupported_grant_type", "grant type not supported", http.StatusBadRequest)
+		}
 	default:
 		writeOAuthError(w, "invalid_request", "the request is invalid", http.StatusBadRequest)
 	}
