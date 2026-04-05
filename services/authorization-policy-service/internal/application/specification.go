@@ -2,12 +2,12 @@ package application
 
 import "github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/domain"
 
-// Specification is the interface for permission specifications (Specification pattern)
+// Specification is the interface for permission specifications (Specification pattern).
 type Specification interface {
 	IsSatisfiedBy(roles []string) bool
 }
 
-// PermissionSpecification checks if any role grants the required permission
+// PermissionSpecification checks if any role grants the required permission.
 type PermissionSpecification struct {
 	roleRepo domain.RoleRepository
 	resource string

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 )
 

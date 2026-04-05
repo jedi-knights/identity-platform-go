@@ -1,6 +1,6 @@
 package domain
 
-// IntrospectionResult is the result of token introspection (RFC 7662)
+// IntrospectionResult is the result of token introspection (RFC 7662).
 type IntrospectionResult struct {
 	Active    bool     `json:"active"`
 	ClientID  string   `json:"client_id,omitempty"`
@@ -12,7 +12,7 @@ type IntrospectionResult struct {
 	Issuer    string   `json:"iss,omitempty"`
 }
 
-// TokenValidator defines how tokens are validated (Strategy pattern)
+// TokenValidator defines how tokens are validated (Strategy pattern).
 type TokenValidator interface {
 	Validate(raw string) (*IntrospectionResult, error)
 }

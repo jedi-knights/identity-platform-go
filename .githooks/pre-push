@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Pre-push hook — runs lint across all modules before pushing.
+# Install: git config core.hooksPath .githooks
+#
+# Requires golangci-lint v2.x built with the same Go version as go.work declares.
+# If the version is wrong, run: task deps
+set -uo pipefail
+
+echo "→ Running pre-push lint..."
+
+# Verify golangci-lint is available and compatible
+if ! command -v golangci-lint &>/dev/null; then
+  echo "ERROR: golangci-lint not found. Run: task deps"
+  exit 1
+fi
+
+LINT_VERSION=$(golangci-lint --version 2>/dev/null | grep -oE 'built with go[0-9.]+' | grep -oE '[0-9]+\.[0-9]+')
+WORK_GO_VERSION=$(grep -m1 '^go ' go.work 2>/dev/null | awk '{print $2}')
+
+if [[ -n "$WORK_GO_VERSION" && -n "$LINT_VERSION" ]]; then
+  # Compare major.minor — lint must be built with >= workspace Go version
+  LINT_MAJOR=$(echo "$LINT_VERSION" | cut -d. -f1)
+  LINT_MINOR=$(echo "$LINT_VERSION" | cut -d. -f2)
+  WORK_MAJOR=$(echo "$WORK_GO_VERSION" | cut -d. -f1)
+  WORK_MINOR=$(echo "$WORK_GO_VERSION" | cut -d. -f2)
+
+  if [[ "$LINT_MAJOR" -lt "$WORK_MAJOR" ]] || \
+     [[ "$LINT_MAJOR" -eq "$WORK_MAJOR" && "$LINT_MINOR" -lt "$WORK_MINOR" ]]; then
+    echo "ERROR: golangci-lint was built with go${LINT_VERSION} but go.work requires go${WORK_GO_VERSION}."
+    echo "Run: task deps"
+    exit 1
+  fi
+fi
+
+# Run golangci-lint across every module in the workspace
+FAILED=0
+find . -name "go.mod" -not -path "*/vendor/*" | while read modfile; do
+  dir=$(dirname "$modfile")
+  echo "  linting $dir"
+  if ! (cd "$dir" && golangci-lint run ./... 2>&1); then
+    FAILED=1
+  fi
+done
+
+if [[ "$FAILED" -ne 0 ]]; then
+  echo ""
+  echo "PUSH BLOCKED: lint failures found. Fix the issues above and try again."
+  exit 1
+fi
+
+echo "✓ Lint passed."

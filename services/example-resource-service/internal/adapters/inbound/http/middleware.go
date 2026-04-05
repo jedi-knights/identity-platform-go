@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
+
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
 	"github.com/ocrosby/identity-platform-go/libs/logging"
@@ -25,7 +26,7 @@ type jwtClaims struct {
 	Scopes   []string `json:"scopes"`
 }
 
-// JWTAuthMiddleware validates the JWT Bearer token (Chain of Responsibility)
+// JWTAuthMiddleware validates the JWT Bearer token (Chain of Responsibility).
 func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -66,7 +67,7 @@ func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handl
 	}
 }
 
-// RequireScopeMiddleware enforces that the token has the required scope (Chain of Responsibility)
+// RequireScopeMiddleware enforces that the token has the required scope (Chain of Responsibility).
 func RequireScopeMiddleware(requiredScope string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
