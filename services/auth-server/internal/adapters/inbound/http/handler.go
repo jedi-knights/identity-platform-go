@@ -2,6 +2,8 @@ package http
 
 import (
 	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -35,6 +37,19 @@ func NewHandler(
 	}
 }
 
+// writeOAuthError writes an RFC 6749-compliant JSON error response.
+func writeOAuthError(w http.ResponseWriter, code string, description string, httpStatus int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(httpStatus)
+	if err := json.NewEncoder(w).Encode(map[string]string{
+		"error":             code,
+		"error_description": description,
+	}); err != nil {
+		slog.Error("failed to encode oauth error", "error", err)
+	}
+}
+
 // Token handles POST /oauth/token.
 //
 // @Summary      Issue access token
@@ -58,31 +73,47 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req, ok := parseGrantRequest(w, r)
+	if !ok {
+		return
+	}
+
+	resp, err := h.issuer.IssueToken(r.Context(), req)
+	if err != nil {
+		h.logger.Error("token issuance failed", "error", err.Error())
+		writeTokenError(w, err)
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// parseGrantRequest extracts and validates the OAuth2 token request fields from the form.
+// It writes an error response and returns false if any required field is missing.
+func parseGrantRequest(w http.ResponseWriter, r *http.Request) (domain.GrantRequest, bool) {
 	grantType := domain.GrantType(r.FormValue("grant_type"))
 	clientID := r.FormValue("client_id")
 	clientSecret := r.FormValue("client_secret")
 
 	if grantType == "" {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "grant_type is required"))
-		return
+		return domain.GrantRequest{}, false
 	}
 	if clientID == "" {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "client_id is required"))
-		return
+		return domain.GrantRequest{}, false
 	}
 	if clientSecret == "" {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "client_secret is required"))
-		return
+		return domain.GrantRequest{}, false
 	}
 
-	scopeStr := r.FormValue("scope")
-
 	var scopes []string
-	if scopeStr != "" {
+	if scopeStr := r.FormValue("scope"); scopeStr != "" {
 		scopes = strings.Split(scopeStr, " ")
 	}
 
-	req := domain.GrantRequest{
+	return domain.GrantRequest{
 		GrantType:    grantType,
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
@@ -90,16 +121,26 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 		Code:         r.FormValue("code"),
 		CodeVerifier: r.FormValue("code_verifier"),
 		RedirectURI:  r.FormValue("redirect_uri"),
-	}
+	}, true
+}
 
-	resp, err := h.issuer.IssueToken(r.Context(), req)
-	if err != nil {
-		h.logger.Error("token issuance failed", "error", err.Error())
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, err.Error()))
+// writeTokenError maps an application error to an RFC 6749-compliant OAuth2 error response.
+func writeTokenError(w http.ResponseWriter, err error) {
+	if apperrors.HTTPStatus(err) >= 500 {
+		writeOAuthError(w, "server_error", "an internal error occurred", http.StatusInternalServerError)
 		return
 	}
-
-	httputil.WriteJSON(w, http.StatusOK, resp)
+	errMsg := err.Error()
+	switch {
+	case strings.Contains(errMsg, "client not found") || strings.Contains(errMsg, "invalid client credentials"):
+		writeOAuthError(w, "invalid_client", "client authentication failed", http.StatusUnauthorized)
+	case strings.Contains(errMsg, "scope not allowed"):
+		writeOAuthError(w, "invalid_scope", "the requested scope is invalid", http.StatusBadRequest)
+	case strings.Contains(errMsg, "grant type not allowed") || strings.Contains(errMsg, "unsupported grant type"):
+		writeOAuthError(w, "unsupported_grant_type", "grant type not supported", http.StatusBadRequest)
+	default:
+		writeOAuthError(w, "invalid_request", "the request is invalid", http.StatusBadRequest)
+	}
 }
 
 // Authorize handles GET /oauth/authorize (stub).
@@ -124,7 +165,7 @@ func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 // @Accept       application/x-www-form-urlencoded
 // @Produce      json
 // @Param        token  formData  string  true  "Token to introspect"
-// @Success      200  {object}  application.IntrospectResponse
+// @Success      200  {object}  domain.IntrospectResponse
 // @Failure      400  {object}  httputil.ErrorResponse
 // @Failure      500  {object}  httputil.ErrorResponse
 // @Router       /oauth/introspect [post]
@@ -210,7 +251,7 @@ func (a *tokenIssuerAdapter) IssueToken(ctx context.Context, req domain.GrantReq
 // Defining it here (at the adapter boundary) keeps the adapter decoupled from
 // the concrete application.TokenService type.
 type introspectorSvc interface {
-	Introspect(ctx context.Context, raw string) (*application.IntrospectResponse, error)
+	Introspect(ctx context.Context, raw string) (*domain.IntrospectResponse, error)
 }
 
 // revokerSvc is the narrow interface required by tokenRevokerAdapter.
@@ -227,7 +268,7 @@ func NewTokenIntrospectorAdapter(svc introspectorSvc) ports.TokenIntrospector {
 	return &tokenIntrospectorAdapter{svc: svc}
 }
 
-func (a *tokenIntrospectorAdapter) Introspect(ctx context.Context, raw string) (*application.IntrospectResponse, error) {
+func (a *tokenIntrospectorAdapter) Introspect(ctx context.Context, raw string) (*domain.IntrospectResponse, error) {
 	return a.svc.Introspect(ctx, raw)
 }
 

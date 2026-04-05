@@ -19,7 +19,7 @@ func newMockClientRepo() *mockClientRepo {
 	return &mockClientRepo{clients: make(map[string]*domain.Client)}
 }
 
-func (m *mockClientRepo) FindByID(id string) (*domain.Client, error) {
+func (m *mockClientRepo) FindByID(_ context.Context, id string) (*domain.Client, error) {
 	c, ok := m.clients[id]
 	if !ok {
 		return nil, fmt.Errorf("not found: %s", id)
@@ -27,7 +27,7 @@ func (m *mockClientRepo) FindByID(id string) (*domain.Client, error) {
 	return c, nil
 }
 
-func (m *mockClientRepo) Save(c *domain.Client) error {
+func (m *mockClientRepo) Save(_ context.Context, c *domain.Client) error {
 	m.clients[c.ID] = c
 	return nil
 }
@@ -41,12 +41,12 @@ func newMockTokenRepo() *mockTokenRepo {
 	return &mockTokenRepo{tokens: make(map[string]*domain.Token)}
 }
 
-func (m *mockTokenRepo) Save(t *domain.Token) error {
+func (m *mockTokenRepo) Save(_ context.Context, t *domain.Token) error {
 	m.tokens[t.Raw] = t
 	return nil
 }
 
-func (m *mockTokenRepo) FindByRaw(raw string) (*domain.Token, error) {
+func (m *mockTokenRepo) FindByRaw(_ context.Context, raw string) (*domain.Token, error) {
 	t, ok := m.tokens[raw]
 	if !ok {
 		return nil, fmt.Errorf("not found")
@@ -54,7 +54,7 @@ func (m *mockTokenRepo) FindByRaw(raw string) (*domain.Token, error) {
 	return t, nil
 }
 
-func (m *mockTokenRepo) Delete(raw string) error {
+func (m *mockTokenRepo) Delete(_ context.Context, raw string) error {
 	delete(m.tokens, raw)
 	return nil
 }

@@ -7,10 +7,7 @@ import (
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
 	"github.com/ocrosby/identity-platform-go/libs/logging"
-	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/application"
-
-	// Imported for swagger doc generation.
-	_ "github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/domain"
+	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/ports"
 )
 
@@ -96,14 +93,14 @@ func (h *Handler) GetResource(w http.ResponseWriter, r *http.Request) {
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        request  body      application.CreateResourceRequest  true  "Resource data"
+// @Param        request  body      domain.CreateResourceRequest  true  "Resource data"
 // @Success      201      {object}  domain.Resource
 // @Failure      400      {object}  httputil.ErrorResponse
 // @Failure      401      {object}  httputil.ErrorResponse
 // @Router       /resources [post]
 func (h *Handler) CreateResource(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
-	var req application.CreateResourceRequest
+	var req domain.CreateResourceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
 		return

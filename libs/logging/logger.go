@@ -48,12 +48,15 @@ func WithContext(ctx context.Context, l Logger) context.Context {
 	return context.WithValue(ctx, loggerKey, l)
 }
 
+// defaultLogger is returned by FromContext when no logger is in the context.
+var defaultLogger = NewLogger(Config{Level: "info", Format: "text"})
+
 // FromContext returns the Logger stored in the context, or a default logger.
 func FromContext(ctx context.Context) Logger {
 	if l, ok := ctx.Value(loggerKey).(Logger); ok {
 		return l
 	}
-	return NewLogger(Config{Level: "info", Format: "text"})
+	return defaultLogger
 }
 
 // slogLogger wraps *slog.Logger and always includes service/environment fields.
