@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
@@ -58,29 +59,42 @@ func (s *ClientCredentialsStrategy) Supports(gt domain.GrantType) bool {
 	return gt == domain.GrantTypeClientCredentials
 }
 
-func (s *ClientCredentialsStrategy) Handle(ctx context.Context, req domain.GrantRequest) (*domain.GrantResponse, error) {
+func (s *ClientCredentialsStrategy) validateClient(req domain.GrantRequest) (*domain.Client, error) {
 	client, err := s.clientRepo.FindByID(req.ClientID)
 	if err != nil {
 		return nil, fmt.Errorf("client not found: %w", err)
 	}
-
 	if client.Secret != req.ClientSecret {
 		return nil, fmt.Errorf("invalid client credentials")
 	}
-
 	if !client.HasGrantType(domain.GrantTypeClientCredentials) {
 		return nil, fmt.Errorf("grant type not allowed for client")
 	}
+	return client, nil
+}
 
-	scopes := req.Scopes
+func (s *ClientCredentialsStrategy) resolveScopes(client *domain.Client, requested []string) ([]string, error) {
+	scopes := requested
 	if len(scopes) == 0 {
 		scopes = client.Scopes
 	}
-
 	for _, scope := range scopes {
 		if !client.HasScope(scope) {
 			return nil, fmt.Errorf("scope not allowed: %s", scope)
 		}
+	}
+	return scopes, nil
+}
+
+func (s *ClientCredentialsStrategy) Handle(ctx context.Context, req domain.GrantRequest) (*domain.GrantResponse, error) {
+	client, err := s.validateClient(req)
+	if err != nil {
+		return nil, err
+	}
+
+	scopes, err := s.resolveScopes(client, req.Scopes)
+	if err != nil {
+		return nil, err
 	}
 
 	now := time.Now()
@@ -103,19 +117,11 @@ func (s *ClientCredentialsStrategy) Handle(ctx context.Context, req domain.Grant
 		return nil, fmt.Errorf("token save failed: %w", err)
 	}
 
-	scopeStr := ""
-	for i, sc := range scopes {
-		if i > 0 {
-			scopeStr += " "
-		}
-		scopeStr += sc
-	}
-
 	return &domain.GrantResponse{
 		AccessToken: raw,
 		TokenType:   "Bearer",
 		ExpiresIn:   int(s.ttl.Seconds()),
-		Scope:       scopeStr,
+		Scope:       strings.Join(scopes, " "),
 	}, nil
 }
 

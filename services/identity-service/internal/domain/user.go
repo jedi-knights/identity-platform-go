@@ -2,7 +2,7 @@ package domain
 
 import "time"
 
-// User represents an identity user
+// User represents an identity user.
 type User struct {
 	ID           string
 	Email        string
@@ -13,7 +13,7 @@ type User struct {
 	Active       bool
 }
 
-// UserRepository defines persistence operations for users
+// UserRepository defines persistence operations for users.
 type UserRepository interface {
 	FindByID(id string) (*User, error)
 	FindByEmail(email string) (*User, error)

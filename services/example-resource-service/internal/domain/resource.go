@@ -2,7 +2,7 @@ package domain
 
 import "time"
 
-// Resource is an example protected resource
+// Resource is an example protected resource.
 type Resource struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
@@ -11,7 +11,7 @@ type Resource struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// ResourceRepository defines persistence for resources
+// ResourceRepository defines persistence for resources.
 type ResourceRepository interface {
 	FindByID(id string) (*Resource, error)
 	FindAll() ([]*Resource, error)
