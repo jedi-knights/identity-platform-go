@@ -47,7 +47,7 @@ jobs:
           git config user.email "semantic-release-bot@users.noreply.github.com"
 
       - name: Install go-semantic-release
-        run: go install github.com/jedi-knights/go-semantic-release/cmd/semantic-release@v0.4.0
+        run: go install github.com/jedi-knights/go-semantic-release/cmd/semantic-release@v0.6.1
 
       - name: Run release
         run: semantic-release
