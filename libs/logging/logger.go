@@ -65,24 +65,8 @@ type slogLogger struct {
 
 // NewLogger creates a new Logger from the provided Config.
 func NewLogger(config Config) Logger {
-	level := slog.LevelInfo
-	switch config.Level {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-
-	opts := &slog.HandlerOptions{Level: level}
-
-	var handler slog.Handler
-	if config.Format == "json" {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, opts)
-	}
+	opts := &slog.HandlerOptions{Level: parseLogLevel(config.Level)}
+	handler := newHandler(config.Format, opts)
 
 	attrs := []any{}
 	if config.ServiceName != "" {
@@ -102,6 +86,26 @@ func NewLogger(config Config) Logger {
 		serviceName: config.ServiceName,
 		environment: config.Environment,
 	}
+}
+
+func parseLogLevel(level string) slog.Level {
+	switch level {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+func newHandler(format string, opts *slog.HandlerOptions) slog.Handler {
+	if format == "json" {
+		return slog.NewJSONHandler(os.Stdout, opts)
+	}
+	return slog.NewTextHandler(os.Stdout, opts)
 }
 
 func (l *slogLogger) Debug(msg string, args ...any) {

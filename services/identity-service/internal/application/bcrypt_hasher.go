@@ -2,7 +2,7 @@ package application
 
 import "golang.org/x/crypto/bcrypt"
 
-// BCryptHasher implements PasswordHasher using bcrypt
+// BCryptHasher implements PasswordHasher using bcrypt.
 type BCryptHasher struct {
 	cost int
 }

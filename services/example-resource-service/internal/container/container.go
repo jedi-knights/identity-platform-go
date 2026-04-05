@@ -14,7 +14,7 @@ type Container struct {
 	Logger     logging.Logger
 	Handler    *inboundhttp.Handler
 	Config     *config.Config
-	SigningKey  []byte
+	SigningKey []byte
 }
 
 func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
@@ -27,9 +27,9 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 	handler := inboundhttp.NewHandler(svc, svc, svc, logger)
 
 	return &Container{
-		Logger:    logger,
-		Handler:   handler,
-		Config:    cfg,
+		Logger:     logger,
+		Handler:    handler,
+		Config:     cfg,
 		SigningKey: []byte(cfg.JWT.SigningKey),
 	}, nil
 }
