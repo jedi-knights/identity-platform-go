@@ -35,7 +35,7 @@ func TestTokenService_Introspect_ValidToken(t *testing.T) {
 	}
 
 	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo)
-	svc := application.NewTokenService(tokenRepo, validator)
+	svc := application.NewTokenService(tokenRepo, nil, validator)
 
 	resp, err := svc.Introspect(context.Background(), raw)
 	if err != nil {
@@ -70,7 +70,7 @@ func TestTokenService_Introspect_ExpiredToken(t *testing.T) {
 	domainToken.Raw = raw
 
 	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo)
-	svc := application.NewTokenService(tokenRepo, validator)
+	svc := application.NewTokenService(tokenRepo, nil, validator)
 
 	resp, err := svc.Introspect(context.Background(), raw)
 	if err != nil {
@@ -78,6 +78,41 @@ func TestTokenService_Introspect_ExpiredToken(t *testing.T) {
 	}
 	if resp.Active {
 		t.Error("expected active=false for expired token")
+	}
+}
+
+func TestTokenService_Introspect_RevokedToken(t *testing.T) {
+	// A token that passes JWT validation but has been removed from the store
+	// (i.e., was revoked) must be reported as inactive.
+	tokenRepo := newMockTokenRepo()
+	gen := application.NewJWTTokenGenerator(testSigningKey, "test-issuer")
+
+	domainToken := &domain.Token{
+		ID:        "t4",
+		ClientID:  "client1",
+		Subject:   "user1",
+		Scopes:    []string{"read"},
+		ExpiresAt: time.Now().Add(time.Hour),
+		IssuedAt:  time.Now(),
+		TokenType: domain.TokenTypeBearer,
+	}
+
+	raw, err := gen.Generate(context.Background(), domainToken)
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+	domainToken.Raw = raw
+	// Do NOT save to tokenRepo — simulates a previously revoked token.
+
+	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo)
+	svc := application.NewTokenService(tokenRepo, nil, validator)
+
+	resp, err := svc.Introspect(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Active {
+		t.Error("expected active=false for revoked (not-in-store) token")
 	}
 }
 
@@ -105,7 +140,7 @@ func TestTokenService_Revoke(t *testing.T) {
 	}
 
 	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo)
-	svc := application.NewTokenService(tokenRepo, validator)
+	svc := application.NewTokenService(tokenRepo, nil, validator)
 
 	if err := svc.Revoke(context.Background(), raw); err != nil {
 		t.Fatalf("unexpected revoke error: %v", err)

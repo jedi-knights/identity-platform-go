@@ -146,7 +146,89 @@ Located in `libs/`, these are independent Go modules shared across services:
 - **[Task](https://taskfile.dev/)** (task runner) - optional but recommended
 - **[swag](https://github.com/swaggo/swag)** (Swagger doc generation) - optional, needed only for `task swagger`
 
-### Run a Service
+---
+
+### Running the Full Stack with Docker Compose
+
+The easiest way to run all six services together for local testing.
+
+**Requirements:** [Docker](https://docs.docker.com/get-docker/) with the Compose plugin (`docker compose version` to verify).
+
+#### 1. Configure environment variables
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and set the two required values:
+
+| Variable | Requirement |
+|----------|-------------|
+| `JWT_SIGNING_KEY` | Random string, minimum 32 characters. Used by `auth-server`, `token-introspection-service`, and `example-resource-service` — all three must share the same value for token validation to work across services. Generate one with: `openssl rand -hex 32` |
+| `DEV_CLIENT_SECRET` | Secret for the test OAuth client seeded into `auth-server` on startup (`client_id=test-client`). Any non-empty string works locally. |
+
+#### 2. Build and start all services
+
+```bash
+docker compose up --build
+```
+
+All six services start in parallel. Health checks on each `/health` endpoint confirm readiness.
+
+| Service | URL |
+|---------|-----|
+| auth-server | http://localhost:8080 |
+| identity-service | http://localhost:8081 |
+| client-registry-service | http://localhost:8082 |
+| token-introspection-service | http://localhost:8083 |
+| authorization-policy-service | http://localhost:8084 |
+| example-resource-service | http://localhost:8085 |
+
+#### 3. Request a token
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/oauth/token \
+  -d "grant_type=client_credentials" \
+  -d "client_id=test-client" \
+  -d "client_secret=<your DEV_CLIENT_SECRET>" \
+  -d "scope=read" | jq -r .access_token)
+```
+
+#### 4. Call the protected resource
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8085/resources
+```
+
+#### 5. Introspect the token
+
+```bash
+curl -s -X POST http://localhost:8083/introspect \
+  -d "token=$TOKEN"
+```
+
+#### 6. Revoke the token
+
+```bash
+curl -s -X POST http://localhost:8080/oauth/revoke \
+  -d "token=$TOKEN"
+```
+
+#### Useful Compose commands
+
+```bash
+docker compose up --build        # build images and start all services
+docker compose up --build -d     # same, detached (background)
+docker compose logs -f           # stream logs from all services
+docker compose logs -f auth-server  # stream logs from one service
+docker compose ps                # show status and health of all services
+docker compose down              # stop and remove containers
+docker compose down --rmi local  # also remove the locally built images
+```
+
+---
+
+### Run a Single Service (without Docker)
 
 Each service can be run independently:
 
@@ -160,7 +242,7 @@ task run:client-registry-service
 cd services/auth-server && go run ./cmd/...
 ```
 
-### Quick Test: Issue a Token
+### Quick Test: Issue a Token (without Docker)
 
 ```bash
 # Start the auth server

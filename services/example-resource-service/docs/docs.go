@@ -107,7 +107,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_example-resource-service_internal_application.CreateResourceRequest"
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_example-resource-service_internal_domain.CreateResourceRequest"
                         }
                     }
                 ],
@@ -126,6 +126,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.ErrorResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
                         "schema": {
                             "$ref": "#/definitions/httputil.ErrorResponse"
                         }
@@ -187,7 +193,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "github_com_ocrosby_identity-platform-go_services_example-resource-service_internal_application.CreateResourceRequest": {
+        "github_com_ocrosby_identity-platform-go_services_example-resource-service_internal_domain.CreateResourceRequest": {
             "type": "object",
             "properties": {
                 "description": {

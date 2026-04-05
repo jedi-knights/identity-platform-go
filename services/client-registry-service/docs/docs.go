@@ -31,7 +31,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.GetClientResponse"
+                                "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.GetClientResponse"
                             }
                         }
                     },
@@ -62,7 +62,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.CreateClientRequest"
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.CreateClientRequest"
                         }
                     }
                 ],
@@ -70,11 +70,17 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.CreateClientResponse"
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.CreateClientResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.ErrorResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
                         "schema": {
                             "$ref": "#/definitions/httputil.ErrorResponse"
                         }
@@ -90,7 +96,7 @@ const docTemplate = `{
         },
         "/clients/validate": {
             "post": {
-                "description": "Checks whether the provided client ID and secret are valid",
+                "description": "Returns 200 when credentials are valid. Returns 401 when credentials are rejected.",
                 "consumes": [
                     "application/json"
                 ],
@@ -108,7 +114,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.ValidateClientRequest"
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.ValidateClientRequest"
                         }
                     }
                 ],
@@ -116,11 +122,23 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.ValidateClientResponse"
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.ValidateClientResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.ErrorResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
                         "schema": {
                             "$ref": "#/definitions/httputil.ErrorResponse"
                         }
@@ -157,7 +175,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.GetClientResponse"
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.GetClientResponse"
                         }
                     },
                     "400": {
@@ -175,7 +193,7 @@ const docTemplate = `{
                 }
             },
             "delete": {
-                "description": "Deletes an OAuth2 client by ID",
+                "description": "Deletes an OAuth2 client by ID. Idempotent: deleting an absent client returns 204.",
                 "produces": [
                     "application/json"
                 ],
@@ -198,12 +216,6 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/httputil.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/httputil.ErrorResponse"
                         }
@@ -236,7 +248,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.CreateClientRequest": {
+        "github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.CreateClientRequest": {
             "type": "object",
             "properties": {
                 "grant_types": {
@@ -262,7 +274,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.CreateClientResponse": {
+        "github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.CreateClientResponse": {
             "type": "object",
             "properties": {
                 "client_id": {
@@ -294,7 +306,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.GetClientResponse": {
+        "github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.GetClientResponse": {
             "type": "object",
             "properties": {
                 "active": {
@@ -326,7 +338,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.ValidateClientRequest": {
+        "github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.ValidateClientRequest": {
             "type": "object",
             "properties": {
                 "client_id": {
@@ -337,7 +349,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_application.ValidateClientResponse": {
+        "github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.ValidateClientResponse": {
             "type": "object",
             "properties": {
                 "valid": {

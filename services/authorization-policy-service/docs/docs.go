@@ -35,7 +35,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_application.EvaluationRequest"
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_domain.EvaluationRequest"
                         }
                     }
                 ],
@@ -43,7 +43,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_application.EvaluationResponse"
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_domain.EvaluationResponse"
                         }
                     },
                     "400": {
@@ -77,10 +77,45 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/subjects/{subjectID}/permissions": {
+            "get": {
+                "description": "Returns all roles and resolved permissions for a subject. Used by auth-server at token issuance.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "policy"
+                ],
+                "summary": "Get subject permissions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Subject ID",
+                        "name": "subjectID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_domain.SubjectPermissions"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
-        "github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_application.EvaluationRequest": {
+        "github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_domain.EvaluationRequest": {
             "type": "object",
             "properties": {
                 "action": {
@@ -94,13 +129,33 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_application.EvaluationResponse": {
+        "github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_domain.EvaluationResponse": {
             "type": "object",
             "properties": {
                 "allowed": {
                     "type": "boolean"
                 },
                 "reason": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_domain.SubjectPermissions": {
+            "type": "object",
+            "properties": {
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "roles": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "subject_id": {
                     "type": "string"
                 }
             }

@@ -20,6 +20,17 @@ type Policy struct {
 	Roles     []string
 }
 
+// SubjectPermissions holds the resolved RBAC state for a subject.
+// Roles are the role names assigned to the subject.
+// Permissions are the fully-expanded (resource:action) pairs granted by those roles.
+// Auth-server embeds both in the JWT at token issuance so resource services can
+// evaluate authorization locally without an outbound policy call.
+type SubjectPermissions struct {
+	SubjectID   string   `json:"subject_id"`
+	Roles       []string `json:"roles"`
+	Permissions []string `json:"permissions"`
+}
+
 // EvaluationRequest is the input for policy evaluation.
 type EvaluationRequest struct {
 	SubjectID string `json:"subject_id"`

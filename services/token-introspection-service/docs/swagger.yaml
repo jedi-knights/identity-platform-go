@@ -12,20 +12,19 @@ definitions:
         type: integer
       iss:
         type: string
-      scope:
+      permissions:
         items:
           type: string
         type: array
+      roles:
+        items:
+          type: string
+        type: array
+      scope:
+        type: string
       sub:
         type: string
       token_type:
-        type: string
-    type: object
-  httputil.ErrorResponse:
-    properties:
-      code:
-        type: string
-      error:
         type: string
     type: object
 host: localhost:8083
@@ -54,7 +53,8 @@ paths:
     post:
       consumes:
       - application/x-www-form-urlencoded
-      description: Validates a JWT token and returns metadata per RFC 7662
+      description: Validates a JWT token and returns metadata per RFC 7662. Always
+        returns HTTP 200.
       parameters:
       - description: JWT token to introspect
         in: formData
@@ -68,10 +68,6 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_token-introspection-service_internal_domain.IntrospectionResult'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/httputil.ErrorResponse'
       summary: Introspect token
       tags:
       - introspection

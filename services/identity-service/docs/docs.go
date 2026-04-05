@@ -35,7 +35,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.LoginRequest"
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.LoginRequest"
                         }
                     }
                 ],
@@ -43,7 +43,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.LoginResponse"
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.LoginResponse"
                         }
                     },
                     "400": {
@@ -81,7 +81,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.RegisterRequest"
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.RegisterRequest"
                         }
                     }
                 ],
@@ -89,7 +89,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.RegisterResponse"
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.RegisterResponse"
                         }
                     },
                     "400": {
@@ -126,7 +126,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.LoginRequest": {
+        "github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.LoginRequest": {
             "type": "object",
             "properties": {
                 "email": {
@@ -137,7 +137,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.LoginResponse": {
+        "github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.LoginResponse": {
             "type": "object",
             "properties": {
                 "email": {
@@ -151,7 +151,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.RegisterRequest": {
+        "github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.RegisterRequest": {
             "type": "object",
             "properties": {
                 "email": {
@@ -165,7 +165,7 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_ocrosby_identity-platform-go_services_identity-service_internal_application.RegisterResponse": {
+        "github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.RegisterResponse": {
             "type": "object",
             "properties": {
                 "email": {

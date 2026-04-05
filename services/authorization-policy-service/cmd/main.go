@@ -55,10 +55,14 @@ func run(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("setting up observability: %w", err)
 	}
 
-	ctr, err := container.New(cfg, logger)
+	startCtx, startCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer startCancel()
+
+	ctr, err := container.New(startCtx, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
+	defer ctr.Close()
 
 	router := inboundhttp.NewRouter(ctr.Handler, logger)
 
@@ -82,10 +86,10 @@ func run(_ *cobra.Command, _ []string) error {
 
 	logger.Info("shutting down server")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	shutCtx, shutCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutCancel()
 
-	return srv.Shutdown(ctx)
+	return srv.Shutdown(shutCtx)
 }
 
 // listenAndWait starts the HTTP server and blocks until either it fails or a quit signal is received.

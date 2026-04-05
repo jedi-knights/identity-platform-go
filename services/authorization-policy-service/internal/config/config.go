@@ -8,9 +8,30 @@ import (
 	"github.com/spf13/viper"
 )
 
+// Config holds the full runtime configuration for the authorization-policy-service.
 type Config struct {
-	Server ServerConfig `mapstructure:"server"`
-	Log    LogConfig    `mapstructure:"log"`
+	Server   ServerConfig   `mapstructure:"server"`
+	Log      LogConfig      `mapstructure:"log"`
+	Database DatabaseConfig `mapstructure:"database"`
+	Redis    RedisConfig    `mapstructure:"redis"`
+}
+
+// DatabaseConfig holds database connection settings.
+// When URL is empty the service falls back to in-memory adapters so the service
+// can run without a database during local development.
+type DatabaseConfig struct {
+	// URL is the PostgreSQL connection string, read from POLICY_DATABASE_URL.
+	// Example: postgres://user:password@localhost:5432/policy?sslmode=disable
+	URL string `mapstructure:"url"`
+}
+
+// RedisConfig holds Redis connection settings for the caching layer.
+// When URL is empty, Redis caching is disabled and every evaluation hits the
+// backing store directly.
+type RedisConfig struct {
+	// URL is the Redis connection string, read from POLICY_REDIS_URL.
+	// Example: redis://localhost:6379/0
+	URL string `mapstructure:"url"`
 }
 
 type ServerConfig struct {
@@ -32,6 +53,8 @@ func Load() (*Config, error) {
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.environment", "development")
+	v.SetDefault("database.url", "")
+	v.SetDefault("redis.url", "")
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")

@@ -18,6 +18,13 @@ type GrantRequest struct {
 	Code         string
 	CodeVerifier string
 	RedirectURI  string
+	// Username and Password are used by the authorization_code flow to
+	// verify the resource owner's identity against identity-service.
+	Username string
+	Password string
+	// RefreshToken is the raw refresh token value presented by the client
+	// during the refresh_token grant (RFC 6749 §6).
+	RefreshToken string
 }
 
 // GrantResponse contains the issued token information.
