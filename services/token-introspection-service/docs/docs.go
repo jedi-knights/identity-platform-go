@@ -40,7 +40,7 @@ const docTemplate = `{
         },
         "/introspect": {
             "post": {
-                "description": "Validates a JWT token and returns metadata per RFC 7662",
+                "description": "Validates a JWT token and returns metadata per RFC 7662. Always returns HTTP 200.",
                 "consumes": [
                     "application/x-www-form-urlencoded"
                 ],
@@ -66,12 +66,6 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_token-introspection-service_internal_domain.IntrospectionResult"
                         }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/httputil.ErrorResponse"
-                        }
                     }
                 }
             }
@@ -96,27 +90,25 @@ const docTemplate = `{
                 "iss": {
                     "type": "string"
                 },
-                "scope": {
+                "permissions": {
                     "type": "array",
                     "items": {
                         "type": "string"
                     }
                 },
+                "roles": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "scope": {
+                    "type": "string"
+                },
                 "sub": {
                     "type": "string"
                 },
                 "token_type": {
-                    "type": "string"
-                }
-            }
-        },
-        "httputil.ErrorResponse": {
-            "type": "object",
-            "properties": {
-                "code": {
-                    "type": "string"
-                },
-                "error": {
                     "type": "string"
                 }
             }

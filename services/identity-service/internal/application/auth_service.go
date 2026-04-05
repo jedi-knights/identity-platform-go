@@ -17,10 +17,14 @@ type AuthService struct {
 	hasher   domain.PasswordHasher
 }
 
+// NewAuthService creates an AuthService with the given user repository and password hasher.
 func NewAuthService(userRepo domain.UserRepository, hasher domain.PasswordHasher) *AuthService {
 	return &AuthService{userRepo: userRepo, hasher: hasher}
 }
 
+// Login verifies credentials and returns the user's identity on success.
+// Returns ErrCodeBadRequest for missing fields, ErrCodeUnauthorized for invalid
+// credentials, and ErrCodeForbidden when the account is disabled.
 func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (*domain.LoginResponse, error) {
 	if req.Email == "" || req.Password == "" {
 		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "email and password are required")
@@ -49,6 +53,9 @@ func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (*doma
 	}, nil
 }
 
+// Register creates a new user account with a bcrypt-hashed password.
+// Returns ErrCodeBadRequest for missing fields and ErrCodeConflict if the email
+// is already registered.
 func (s *AuthService) Register(ctx context.Context, req domain.RegisterRequest) (*domain.RegisterResponse, error) {
 	if req.Email == "" || req.Password == "" || req.Name == "" {
 		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "email, password, and name are required")
@@ -64,7 +71,7 @@ func (s *AuthService) Register(ctx context.Context, req domain.RegisterRequest) 
 	}
 
 	if err := s.userRepo.Save(ctx, user); err != nil {
-		return nil, fmt.Errorf("failed to save user: %w", err)
+		return nil, fmt.Errorf("saving user: %w", err)
 	}
 
 	return &domain.RegisterResponse{
@@ -93,7 +100,7 @@ func (s *AuthService) assertEmailAvailable(ctx context.Context, email string) er
 func (s *AuthService) buildUser(req domain.RegisterRequest) (*domain.User, error) {
 	hash, err := s.hasher.Hash(req.Password)
 	if err != nil {
-		return nil, fmt.Errorf("failed to hash password: %w", err)
+		return nil, fmt.Errorf("hashing password: %w", err)
 	}
 
 	id, err := generateID()

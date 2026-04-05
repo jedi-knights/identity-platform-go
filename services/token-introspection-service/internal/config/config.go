@@ -12,6 +12,7 @@ type Config struct {
 	Server ServerConfig `mapstructure:"server"`
 	Log    LogConfig    `mapstructure:"log"`
 	JWT    JWTConfig    `mapstructure:"jwt"`
+	Redis  RedisConfig  `mapstructure:"redis"`
 }
 
 type ServerConfig struct {
@@ -29,6 +30,13 @@ type JWTConfig struct {
 	SigningKey string `mapstructure:"signing_key"`
 }
 
+// RedisConfig holds connection settings for the optional Redis revocation store.
+// When URL is empty, revocation checking is disabled and tokens are accepted until JWT expiry.
+// The URL is read from INTROSPECT_REDIS_URL.
+type RedisConfig struct {
+	URL string `mapstructure:"url"` // e.g. redis://localhost:6379/0
+}
+
 func Load() (*Config, error) {
 	v := viper.New()
 
@@ -38,6 +46,7 @@ func Load() (*Config, error) {
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.environment", "development")
 	v.SetDefault("jwt.signing_key", "")
+	v.SetDefault("redis.url", "")
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
@@ -67,14 +76,17 @@ func Load() (*Config, error) {
 }
 
 func validateSigningKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("validating signing key: INTROSPECT_JWT_SIGNING_KEY is not set")
+	}
 	insecureDefaults := []string{"change-me-in-production", "default-signing-key"}
 	for _, d := range insecureDefaults {
 		if key == d {
-			return fmt.Errorf("jwt.signing_key is insecure default; set INTROSPECT_JWT_SIGNING_KEY to a random value of at least 32 characters")
+			return fmt.Errorf("validating signing key: insecure default value; set INTROSPECT_JWT_SIGNING_KEY to a random value of at least 32 characters")
 		}
 	}
 	if len(key) < 32 {
-		return fmt.Errorf("jwt.signing_key must be at least 32 characters; set INTROSPECT_JWT_SIGNING_KEY")
+		return fmt.Errorf("validating signing key: must be at least 32 characters; set INTROSPECT_JWT_SIGNING_KEY")
 	}
 	return nil
 }

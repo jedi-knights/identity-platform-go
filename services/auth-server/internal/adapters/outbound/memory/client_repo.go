@@ -12,6 +12,9 @@ import (
 // ErrClientNotFound is returned by FindByID when no client matches the given ID.
 var ErrClientNotFound = errors.New("client not found")
 
+// Compile-time interface check.
+var _ domain.ClientRepository = (*ClientRepository)(nil)
+
 // ClientRepository is an in-memory client repository.
 type ClientRepository struct {
 	mu      sync.RWMutex

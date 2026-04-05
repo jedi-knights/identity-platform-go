@@ -1,6 +1,6 @@
 basePath: /
 definitions:
-  github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_application.EvaluationRequest:
+  github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_domain.EvaluationRequest:
     properties:
       action:
         type: string
@@ -9,11 +9,24 @@ definitions:
       subject_id:
         type: string
     type: object
-  github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_application.EvaluationResponse:
+  github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_domain.EvaluationResponse:
     properties:
       allowed:
         type: boolean
       reason:
+        type: string
+    type: object
+  github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_domain.SubjectPermissions:
+    properties:
+      permissions:
+        items:
+          type: string
+        type: array
+      roles:
+        items:
+          type: string
+        type: array
+      subject_id:
         type: string
     type: object
   httputil.ErrorResponse:
@@ -41,14 +54,14 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_application.EvaluationRequest'
+          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_domain.EvaluationRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_application.EvaluationResponse'
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_domain.EvaluationResponse'
         "400":
           description: Bad Request
           schema:
@@ -71,4 +84,28 @@ paths:
       summary: Health check
       tags:
       - health
+  /subjects/{subjectID}/permissions:
+    get:
+      description: Returns all roles and resolved permissions for a subject. Used
+        by auth-server at token issuance.
+      parameters:
+      - description: Subject ID
+        in: path
+        name: subjectID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_authorization-policy-service_internal_domain.SubjectPermissions'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Get subject permissions
+      tags:
+      - policy
 swagger: "2.0"

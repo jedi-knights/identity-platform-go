@@ -9,6 +9,9 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/domain"
 )
 
+// Compile-time interface check.
+var _ domain.ResourceRepository = (*ResourceRepository)(nil)
+
 // ResourceRepository is an in-memory ResourceRepository implementation.
 type ResourceRepository struct {
 	mu        sync.RWMutex

@@ -1,6 +1,19 @@
 basePath: /
 definitions:
-  github_com_ocrosby_identity-platform-go_services_auth-server_internal_application.IntrospectResponse:
+  github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.GrantResponse:
+    properties:
+      access_token:
+        type: string
+      expires_in:
+        type: integer
+      refresh_token:
+        type: string
+      scope:
+        type: string
+      token_type:
+        type: string
+    type: object
+  github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.IntrospectResponse:
     properties:
       active:
         type: boolean
@@ -13,19 +26,6 @@ definitions:
       scope:
         type: string
       sub:
-        type: string
-      token_type:
-        type: string
-    type: object
-  github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.GrantResponse:
-    properties:
-      access_token:
-        type: string
-      expires_in:
-        type: integer
-      refresh_token:
-        type: string
-      scope:
         type: string
       token_type:
         type: string
@@ -91,7 +91,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_auth-server_internal_application.IntrospectResponse'
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.IntrospectResponse'
         "400":
           description: Bad Request
           schema:

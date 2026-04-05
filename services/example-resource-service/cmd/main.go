@@ -62,8 +62,9 @@ func run(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
+	defer ctr.Close()
 
-	router := inboundhttp.NewRouter(ctr.Handler, logger, ctr.SigningKey)
+	router := inboundhttp.NewRouter(ctr.Handler, logger, ctr.SigningKey, ctr.Introspector)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{

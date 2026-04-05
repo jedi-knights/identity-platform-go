@@ -1,0 +1,12 @@
+version: 2
+
+# Files containing intentional placeholder values that are not real secrets.
+paths-ignore:
+  # Template file — all values are documentation-only stubs instructing operators
+  # to replace them before use.
+  - ".env.example"
+
+  # Go test files — hardcoded strings like "my-secret", "pass123", "correct-secret"
+  # are test fixture values, not real credentials. They are intentionally simple so
+  # tests are readable; they are never used outside the test binary.
+  - "**/*_test.go"

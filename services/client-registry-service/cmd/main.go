@@ -55,10 +55,12 @@ func run(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("setting up observability: %w", err)
 	}
 
-	ctr, err := container.New(cfg, logger)
+	startCtx := context.Background()
+	ctr, err := container.New(startCtx, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
+	defer ctr.Close()
 
 	router := inboundhttp.NewRouter(ctr.Handler, logger)
 
@@ -89,6 +91,9 @@ func run(_ *cobra.Command, _ []string) error {
 }
 
 // listenAndWait starts the HTTP server and blocks until either it fails or a quit signal is received.
+// serverErr is buffered (cap 1) so the server goroutine can always complete its send and exit
+// without blocking, even after a quit signal wins the select. A startup failure that races
+// with the quit signal is intentionally dropped here — the caller is already handling shutdown.
 func listenAndWait(srv *http.Server, quit <-chan os.Signal) error {
 	serverErr := make(chan error, 1)
 	go func() {

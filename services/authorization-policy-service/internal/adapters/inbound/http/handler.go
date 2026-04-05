@@ -14,12 +14,14 @@ import (
 
 // Handler holds HTTP handler dependencies.
 type Handler struct {
-	evaluator ports.PolicyEvaluator
-	logger    logging.Logger
+	evaluator         ports.PolicyEvaluator
+	permissionsReader ports.SubjectPermissionsReader
+	logger            logging.Logger
 }
 
-func NewHandler(evaluator ports.PolicyEvaluator, logger logging.Logger) *Handler {
-	return &Handler{evaluator: evaluator, logger: logger}
+// NewHandler creates a Handler with the given evaluator, permissions reader, and logger.
+func NewHandler(evaluator ports.PolicyEvaluator, permissionsReader ports.SubjectPermissionsReader, logger logging.Logger) *Handler {
+	return &Handler{evaluator: evaluator, permissionsReader: permissionsReader, logger: logger}
 }
 
 // Evaluate handles POST /evaluate.
@@ -43,7 +45,7 @@ func (h *Handler) Evaluate(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.evaluator.Evaluate(r.Context(), req)
 	if err != nil {
 		var ae *apperrors.AppError
-		if !errors.As(err, &ae) || ae.Code == apperrors.ErrCodeInternal {
+		if !errors.As(err, &ae) || ae.Code() == apperrors.ErrCodeInternal {
 			h.logger.Error("policy evaluation failed", "error", err.Error())
 		}
 		httputil.WriteError(w, err)
@@ -66,6 +68,33 @@ func (h *Handler) decodeEvaluationRequest(w http.ResponseWriter, r *http.Request
 		return req, false
 	}
 	return req, true
+}
+
+// GetSubjectPermissions handles GET /subjects/{subjectID}/permissions.
+//
+// @Summary      Get subject permissions
+// @Description  Returns all roles and resolved permissions for a subject. Used by auth-server at token issuance.
+// @Tags         policy
+// @Produce      json
+// @Param        subjectID  path      string  true  "Subject ID"
+// @Success      200        {object}  domain.SubjectPermissions
+// @Failure      400        {object}  httputil.ErrorResponse
+// @Router       /subjects/{subjectID}/permissions [get]
+func (h *Handler) GetSubjectPermissions(w http.ResponseWriter, r *http.Request) {
+	subjectID := r.PathValue("subjectID")
+	if subjectID == "" {
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "subjectID is required"))
+		return
+	}
+
+	result, err := h.permissionsReader.GetSubjectPermissions(r.Context(), subjectID)
+	if err != nil {
+		h.logger.Error("getting subject permissions failed", "error", err.Error())
+		httputil.WriteError(w, err)
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, result)
 }
 
 // Health handles GET /health.

@@ -10,15 +10,27 @@ import (
 
 // Config holds all identity-service configuration.
 type Config struct {
-	Server ServerConfig `mapstructure:"server"`
-	Log    LogConfig    `mapstructure:"log"`
+	Server   ServerConfig   `mapstructure:"server"`
+	Log      LogConfig      `mapstructure:"log"`
+	Database DatabaseConfig `mapstructure:"database"`
 }
 
+// DatabaseConfig holds PostgreSQL connection settings.
+// When URL is empty the service falls back to the in-memory repository adapter,
+// which is appropriate for local development and reference use.
+type DatabaseConfig struct {
+	// URL is the full PostgreSQL DSN (e.g. postgres://user:pass@host:5432/dbname).
+	// Populated from the IDENTITY_DATABASE_URL environment variable.
+	URL string `mapstructure:"url"`
+}
+
+// ServerConfig holds HTTP server binding configuration.
 type ServerConfig struct {
 	Host string `mapstructure:"host"`
 	Port int    `mapstructure:"port"`
 }
 
+// LogConfig holds structured logging configuration.
 type LogConfig struct {
 	Level       string `mapstructure:"level"`
 	Format      string `mapstructure:"format"`
@@ -33,6 +45,7 @@ func Load() (*Config, error) {
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.environment", "development")
+	v.SetDefault("database.url", "")
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
