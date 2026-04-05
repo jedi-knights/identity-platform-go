@@ -37,6 +37,9 @@ func RequireNoError(t testing.TB, err error) {
 }
 
 // AssertEqual calls t.Errorf if expected and actual are not deeply equal.
+// The first argument is the expected value; the second is the actual value.
+// Note: reflect.DeepEqual distinguishes nil slices from empty slices —
+// AssertEqual(t, []string{}, nil) will fail.
 func AssertEqual(t testing.TB, expected, actual any) {
 	t.Helper()
 	if !reflect.DeepEqual(expected, actual) {

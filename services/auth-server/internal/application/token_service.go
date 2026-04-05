@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -23,10 +24,11 @@ type TokenValidator interface {
 }
 
 // JWTClaims are the JWT claims for an access token.
+// Scope is a space-delimited string per RFC 9068 §2.2.3.1.
 type JWTClaims struct {
 	jwt.RegisteredClaims
-	ClientID string   `json:"client_id"`
-	Scopes   []string `json:"scopes"`
+	ClientID string `json:"client_id"`
+	Scope    string `json:"scope"`
 }
 
 // JWTTokenGenerator generates JWT tokens (Strategy).
@@ -49,7 +51,7 @@ func (g *JWTTokenGenerator) Generate(_ context.Context, token *domain.Token) (st
 			ID:        token.ID,
 		},
 		ClientID: token.ClientID,
-		Scopes:   token.Scopes,
+		Scope:    strings.Join(token.Scopes, " "),
 	}
 
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -67,14 +69,16 @@ func NewJWTTokenValidator(signingKey []byte, tokenRepo domain.TokenRepository) *
 }
 
 func (v *JWTTokenValidator) Validate(ctx context.Context, raw string) (*domain.Token, error) {
-	_ = ctx
-	token, err := jwt.ParseWithClaims(raw, &JWTClaims{}, func(t *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(raw, &JWTClaims{}, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return v.signingKey, nil
 	})
 	if err != nil {
+		// All errors from jwt.ParseWithClaims with a static local keyFunc are
+		// token-validation failures (expired, bad signature, malformed), not
+		// infrastructure errors. Callers should treat this as {active:false}.
 		return nil, fmt.Errorf("invalid token: %w", err)
 	}
 
@@ -87,7 +91,7 @@ func (v *JWTTokenValidator) Validate(ctx context.Context, raw string) (*domain.T
 		ID:        claims.ID,
 		ClientID:  claims.ClientID,
 		Subject:   claims.Subject,
-		Scopes:    claims.Scopes,
+		Scopes:    strings.Fields(claims.Scope),
 		ExpiresAt: claims.ExpiresAt.Time,
 		IssuedAt:  claims.IssuedAt.Time,
 		TokenType: domain.TokenTypeBearer,
@@ -109,13 +113,11 @@ func (s *TokenService) Introspect(ctx context.Context, raw string) (*domain.Intr
 	token, err := s.validator.Validate(ctx, raw)
 	if err != nil {
 		// Token validation failures (expired, bad sig, malformed) → inactive.
-		// We treat all validator errors as token-invalid for now; if the validator
-		// is ever replaced with a remote JWKS call, this should be revisited to
-		// distinguish network errors from validation failures.
+		// All errors from JWTTokenValidator are token-invalid, not infra failures.
 		return &domain.IntrospectResponse{Active: false}, nil
 	}
 
-	if token.IsExpired() {
+	if token.IsExpiredAt(time.Now()) {
 		return &domain.IntrospectResponse{Active: false}, nil
 	}
 

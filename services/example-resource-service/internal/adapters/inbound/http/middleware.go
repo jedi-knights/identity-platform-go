@@ -22,8 +22,8 @@ const (
 
 type jwtClaims struct {
 	jwt.RegisteredClaims
-	ClientID string   `json:"client_id"`
-	Scopes   []string `json:"scopes"`
+	ClientID string `json:"client_id"`
+	Scope    string `json:"scope"` // RFC 9068 §2.2.3.1: space-delimited string
 }
 
 // JWTAuthMiddleware validates the JWT Bearer token locally.
@@ -38,6 +38,7 @@ func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handl
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+				w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service"`)
 				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "missing or invalid authorization header"))
 				return
 			}
@@ -53,19 +54,21 @@ func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handl
 
 			if err != nil || !token.Valid {
 				logger.Warn("invalid token", "error", err)
+				w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service", error="invalid_token"`)
 				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid token"))
 				return
 			}
 
 			claims, ok := token.Claims.(*jwtClaims)
 			if !ok {
+				w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service", error="invalid_token"`)
 				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid token claims"))
 				return
 			}
 
 			ctx := r.Context()
 			ctx = context.WithValue(ctx, contextKeySubject, claims.Subject)
-			ctx = context.WithValue(ctx, contextKeyScopes, claims.Scopes)
+			ctx = context.WithValue(ctx, contextKeyScopes, strings.Fields(claims.Scope))
 			ctx = context.WithValue(ctx, contextKeyClientID, claims.ClientID)
 
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -74,12 +77,15 @@ func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handl
 }
 
 // RequireScopeMiddleware enforces that the token has the required scope (Chain of Responsibility).
+// Returns 401 (not 403) when scopes are absent from context — this indicates the auth middleware
+// did not run or the token was missing, which is an authentication failure, not an authorization one.
 func RequireScopeMiddleware(requiredScope string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			scopes, ok := r.Context().Value(contextKeyScopes).([]string)
 			if !ok {
-				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeForbidden, "no scopes in context"))
+				w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service"`)
+				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "missing authentication context"))
 				return
 			}
 

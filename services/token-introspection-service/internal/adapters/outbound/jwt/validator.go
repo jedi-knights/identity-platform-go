@@ -11,8 +11,8 @@ import (
 
 type jwtClaims struct {
 	gojwt.RegisteredClaims
-	ClientID string   `json:"client_id"`
-	Scopes   []string `json:"scopes"`
+	ClientID string `json:"client_id"`
+	Scope    string `json:"scope"` // RFC 9068 §2.2.3.1: space-delimited string
 }
 
 // Validator parses and validates JWT tokens using HMAC signing.
@@ -36,7 +36,7 @@ func claimsToResult(claims *jwtClaims) *domain.IntrospectionResult {
 		Active:    true,
 		Subject:   claims.Subject,
 		ClientID:  claims.ClientID,
-		Scopes:    claims.Scopes,
+		Scope:     claims.Scope,
 		TokenType: "Bearer",
 		Issuer:    claims.Issuer,
 	}
@@ -49,11 +49,11 @@ func claimsToResult(claims *jwtClaims) *domain.IntrospectionResult {
 	return result
 }
 
+// Validate parses and validates a raw JWT string.
+// Per RFC 7662 §2.2, any token validity failure must return {active: false}, not an error.
 func (v *Validator) Validate(_ context.Context, raw string) (*domain.IntrospectionResult, error) {
 	token, err := gojwt.ParseWithClaims(raw, &jwtClaims{}, v.keyFunc)
 	if err != nil {
-		// Per RFC 7662 §2.2, any token validity failure (expired, malformed,
-		// bad signature, not yet valid) must return {active: false}, not an error.
 		return &domain.IntrospectionResult{Active: false}, nil
 	}
 
@@ -63,7 +63,9 @@ func (v *Validator) Validate(_ context.Context, raw string) (*domain.Introspecti
 
 	claims, ok := token.Claims.(*jwtClaims)
 	if !ok {
-		return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid token claims")
+		// This should never happen since we passed &jwtClaims{} to ParseWithClaims,
+		// but treat it defensively as an inactive token rather than an infra error.
+		return &domain.IntrospectionResult{Active: false}, nil
 	}
 
 	return claimsToResult(claims), nil

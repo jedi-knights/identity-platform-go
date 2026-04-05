@@ -29,7 +29,7 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 	tokenRepo := memory.NewTokenRepository()
 	var seedClients []*domain.Client
 	if cfg.DevSeedClients {
-		seedClients = devClients()
+		seedClients = devClients(cfg.DevClientSecret)
 	}
 	clientRepo := memory.NewClientRepository(seedClients)
 
@@ -58,12 +58,14 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 	}, nil
 }
 
-// devClients returns a seed client for local development only. Never enable AUTH_DEV_SEED_CLIENTS in production.
-func devClients() []*domain.Client {
+// devClients returns a seed client for local development only.
+// The secret is loaded from AUTH_DEV_CLIENT_SECRET — never hardcode it.
+// Never enable AUTH_DEV_SEED_CLIENTS in production.
+func devClients(secret string) []*domain.Client {
 	return []*domain.Client{
 		{
 			ID:         "dev-client",
-			Secret:     "dev-secret",
+			Secret:     secret,
 			Name:       "Development Client",
 			Scopes:     []string{"read", "write"},
 			GrantTypes: []domain.GrantType{domain.GrantTypeClientCredentials},

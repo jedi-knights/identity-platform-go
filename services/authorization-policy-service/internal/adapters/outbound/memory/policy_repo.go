@@ -41,10 +41,14 @@ func (r *PolicyRepository) FindBySubject(_ context.Context, subjectID string) (*
 }
 
 // Save persists the policy, overwriting any existing entry for the same subject.
+// A copy is stored to prevent callers from mutating internal state after saving.
 func (r *PolicyRepository) Save(_ context.Context, policy *domain.Policy) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.policies[policy.SubjectID] = policy
+	cp := *policy
+	cp.Roles = make([]string, len(policy.Roles))
+	copy(cp.Roles, policy.Roles)
+	r.policies[policy.SubjectID] = &cp
 	return nil
 }
 
@@ -93,9 +97,13 @@ func (r *RoleRepository) FindByName(_ context.Context, name string) (*domain.Rol
 }
 
 // Save persists the role, overwriting any existing entry with the same name.
+// A copy is stored to prevent callers from mutating internal state after saving.
 func (r *RoleRepository) Save(_ context.Context, role *domain.Role) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.roles[role.Name] = role
+	cp := *role
+	cp.Permissions = make([]domain.Permission, len(role.Permissions))
+	copy(cp.Permissions, role.Permissions)
+	r.roles[role.Name] = &cp
 	return nil
 }

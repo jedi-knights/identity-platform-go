@@ -29,7 +29,8 @@ func TestTraceIDMiddleware_GeneratesID(t *testing.T) {
 }
 
 func TestTraceIDMiddleware_UsesExistingID(t *testing.T) {
-	const existingID = "my-trace-id-123"
+	// Must be a valid UUID v4 — the middleware rejects non-UUID values to prevent log injection.
+	const existingID = "550e8400-e29b-4d0f-a716-446655440000"
 	handler := httputil.TraceIDMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))

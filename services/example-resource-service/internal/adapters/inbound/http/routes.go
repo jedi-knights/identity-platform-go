@@ -19,20 +19,18 @@ func NewRouter(h *Handler, logger logging.Logger, signingKey []byte) http.Handle
 		httpSwagger.URL("/swagger/doc.json"),
 	))
 
-	readProtected := JWTAuthMiddleware(signingKey, logger)(
+	// Instantiate once and reuse across all protected routes.
+	jwtAuth := JWTAuthMiddleware(signingKey, logger)
+
+	mux.Handle("GET /resources", jwtAuth(
 		RequireScopeMiddleware("read")(http.HandlerFunc(h.ListResources)),
-	)
-	mux.Handle("GET /resources", readProtected)
-
-	readOneProtected := JWTAuthMiddleware(signingKey, logger)(
+	))
+	mux.Handle("GET /resources/{id}", jwtAuth(
 		RequireScopeMiddleware("read")(http.HandlerFunc(h.GetResource)),
-	)
-	mux.Handle("GET /resources/{id}", readOneProtected)
-
-	writeProtected := JWTAuthMiddleware(signingKey, logger)(
+	))
+	mux.Handle("POST /resources", jwtAuth(
 		RequireScopeMiddleware("write")(http.HandlerFunc(h.CreateResource)),
-	)
-	mux.Handle("POST /resources", writeProtected)
+	))
 
 	return httputil.RecoveryMiddleware(logger)(
 		httputil.LoggingMiddleware(logger)(
