@@ -209,6 +209,9 @@ func TestGrantStrategyRegistry_Handle_Routes(t *testing.T) {
 	if resp == nil {
 		t.Fatal("expected response, got nil")
 	}
+	if resp.Scope != "read" {
+		t.Errorf("expected scope 'read' (client default), got %q", resp.Scope)
+	}
 }
 
 func TestClientCredentialsStrategy_Supports(t *testing.T) {

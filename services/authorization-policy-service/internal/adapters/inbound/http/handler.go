@@ -43,7 +43,7 @@ func (h *Handler) Evaluate(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.evaluator.Evaluate(r.Context(), req)
 	if err != nil {
 		h.logger.Error("policy evaluation failed", "error", err.Error())
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, err.Error()))
+		httputil.WriteError(w, err)
 		return
 	}
 
