@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"strings"
 	"time"
@@ -64,7 +65,7 @@ func (s *ClientCredentialsStrategy) validateClient(req domain.GrantRequest) (*do
 	if err != nil {
 		return nil, fmt.Errorf("client not found: %w", err)
 	}
-	if client.Secret != req.ClientSecret {
+	if subtle.ConstantTimeCompare([]byte(client.Secret), []byte(req.ClientSecret)) != 1 {
 		return nil, fmt.Errorf("invalid client credentials")
 	}
 	if !client.HasGrantType(domain.GrantTypeClientCredentials) {
@@ -97,8 +98,14 @@ func (s *ClientCredentialsStrategy) Handle(ctx context.Context, req domain.Grant
 		return nil, err
 	}
 
+	tokenID, err := generateID()
+	if err != nil {
+		return nil, fmt.Errorf("generating token id: %w", err)
+	}
+
 	now := time.Now()
 	token := &domain.Token{
+		ID:        tokenID,
 		ClientID:  req.ClientID,
 		Subject:   req.ClientID,
 		Scopes:    scopes,

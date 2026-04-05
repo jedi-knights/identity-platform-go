@@ -30,9 +30,6 @@ func NewPolicyService(policyRepo domain.PolicyRepository, roleRepo domain.RoleRe
 }
 
 func (s *PolicyService) Evaluate(_ context.Context, req EvaluationRequest) (*EvaluationResponse, error) {
-	subject := &domain.Subject{ID: req.SubjectID}
-	_ = subject
-
 	policy, err := s.policyRepo.FindBySubject(req.SubjectID)
 	if err != nil {
 		return &EvaluationResponse{Allowed: false, Reason: "no policy found for subject"}, nil

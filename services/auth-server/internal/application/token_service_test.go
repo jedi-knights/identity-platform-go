@@ -1,5 +1,3 @@
-//go:build unit
-
 package application_test
 
 import (
@@ -7,29 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 )
 
 var testSigningKey = []byte("test-signing-key-32-bytes-long!!")
-
-func buildToken(t *testing.T, subject string, expiry time.Time) string {
-	t.Helper()
-	claims := jwt.MapClaims{
-		"sub":       subject,
-		"client_id": "client1",
-		"scopes":    []string{"read"},
-		"exp":       expiry.Unix(),
-		"iat":       time.Now().Add(-time.Minute).Unix(),
-	}
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	raw, err := tok.SignedString(testSigningKey)
-	if err != nil {
-		t.Fatalf("failed to sign token: %v", err)
-	}
-	return raw
-}
 
 func TestTokenService_Introspect_ValidToken(t *testing.T) {
 	tokenRepo := newMockTokenRepo()

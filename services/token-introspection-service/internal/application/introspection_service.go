@@ -14,6 +14,6 @@ func NewIntrospectionService(validator domain.TokenValidator) *IntrospectionServ
 	return &IntrospectionService{validator: validator}
 }
 
-func (s *IntrospectionService) Introspect(_ context.Context, raw string) (*domain.IntrospectionResult, error) {
-	return s.validator.Validate(raw)
+func (s *IntrospectionService) Introspect(ctx context.Context, raw string) (*domain.IntrospectionResult, error) {
+	return s.validator.Validate(ctx, raw)
 }

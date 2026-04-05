@@ -12,12 +12,12 @@ import (
 	"github.com/ocrosby/identity-platform-go/libs/logging"
 )
 
-type contextKey string
+type contextKey int
 
 const (
-	contextKeySubject  contextKey = "subject"
-	contextKeyScopes   contextKey = "scopes"
-	contextKeyClientID contextKey = "client_id"
+	contextKeySubject contextKey = iota
+	contextKeyScopes
+	contextKeyClientID
 )
 
 type jwtClaims struct {
@@ -26,7 +26,13 @@ type jwtClaims struct {
 	Scopes   []string `json:"scopes"`
 }
 
-// JWTAuthMiddleware validates the JWT Bearer token (Chain of Responsibility).
+// JWTAuthMiddleware validates the JWT Bearer token locally.
+//
+// NOTE: This performs local JWT validation and does NOT call the
+// token-introspection-service. As a result, tokens that have been
+// revoked via the auth-server's /oauth/revoke endpoint will still
+// be accepted here until they expire. A future improvement is to
+// delegate to the token-introspection-service instead.
 func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

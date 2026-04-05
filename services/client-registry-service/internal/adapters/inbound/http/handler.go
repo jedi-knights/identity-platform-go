@@ -49,6 +49,7 @@ func NewHandler(
 // @Failure      500      {object}  httputil.ErrorResponse
 // @Router       /clients [post]
 func (h *Handler) CreateClient(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	var req application.CreateClientRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
@@ -153,6 +154,7 @@ func (h *Handler) DeleteClient(w http.ResponseWriter, r *http.Request) {
 // @Failure      500      {object}  httputil.ErrorResponse
 // @Router       /clients/validate [post]
 func (h *Handler) ValidateClient(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	var req application.ValidateClientRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))

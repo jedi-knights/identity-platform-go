@@ -2,6 +2,7 @@ package container
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/ocrosby/identity-platform-go/libs/logging"
@@ -27,7 +28,11 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 
 	// Outbound adapters (repositories).
 	tokenRepo := memory.NewTokenRepository()
-	clientRepo := memory.NewClientRepository(defaultClients())
+	var clients []*domain.Client
+	if os.Getenv("AUTH_SEED_TEST_CLIENT") == "true" {
+		clients = defaultClients()
+	}
+	clientRepo := memory.NewClientRepository(clients)
 
 	// Token generator and validator.
 	signingKey := []byte(cfg.JWT.SigningKey)
