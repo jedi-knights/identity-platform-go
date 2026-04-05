@@ -162,6 +162,14 @@ tasks:
           (cd "$dir" && go mod tidy)
         done
 
+  deps:
+    desc: Install required development tools
+    cmds:
+      - go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+      - go install golang.org/x/tools/cmd/goimports@v0.43.0
+      - go install github.com/swaggo/swag/cmd/swag@v1.16.6
+      - go install github.com/jedi-knights/go-semantic-release/cmd/semantic-release@v0.4.0
+
   clean:
     desc: Remove build artifacts
     cmds:

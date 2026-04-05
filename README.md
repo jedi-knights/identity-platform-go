@@ -19,6 +19,7 @@ A production-style **OAuth 2.0 / OIDC** reference platform built in Go, demonstr
 - [Swagger / API Documentation](#swagger--api-documentation)
 - [Project Structure](#project-structure)
 - [Architecture Decision Records](#architecture-decision-records)
+- [Release Process](#release-process)
 - [License](#license)
 
 ---
@@ -401,6 +402,176 @@ Key design decisions are documented in `docs/adr/`:
 | [ADR-0002](docs/adr/0002-use-go-workspaces.md) | Use Go Workspaces for monorepo management |
 | [ADR-0003](docs/adr/0003-use-strategy-pattern-for-grants.md) | Use Strategy Pattern for OAuth2 grant type handling |
 | [ADR-0004](docs/adr/0004-in-memory-persistence-for-reference.md) | Use in-memory persistence for the reference implementation |
+
+---
+
+## Release Process
+
+This repository uses **independent versioning** — each service and shared library has its own version number and is released separately. Releases are automated via [go-semantic-release](https://github.com/jedi-knights/go-semantic-release), a native Go implementation of the [semantic-release](https://github.com/semantic-release/semantic-release) specification.
+
+### How Releases Are Triggered
+
+A release is triggered automatically when a commit is pushed to `main`. The release tool analyzes the commit history since the last tag for each module and determines whether a release is needed based on [Conventional Commits](https://www.conventionalcommits.org/).
+
+**Only modules that have changed get released.** A commit to `services/auth-server/` will not bump `identity-service` or any library unless it is listed as a dependency of the changed module.
+
+| Commit type | Effect |
+|---|---|
+| `feat:` | Minor version bump (`v1.2.0` → `v1.3.0`) |
+| `fix:`, `perf:`, `refactor:` | Patch version bump (`v1.2.0` → `v1.2.1`) |
+| `feat!:` or `BREAKING CHANGE:` footer | Major version bump (`v1.2.0` → `v2.0.0`) |
+| `chore:`, `docs:`, `style:`, `ci:`, `test:` | No release |
+
+```mermaid
+flowchart TD
+    A[Push to main] --> B[Release workflow starts]
+    B --> C[go-semantic-release runs]
+    C --> D{For each module...}
+    D --> E[Scan commits touching module path]
+    E --> F{Any releasable commits?}
+    F -- No --> G[Skip — no release]
+    F -- Yes --> H[Calculate next version]
+    H --> I[Generate changelog entry]
+    I --> J[Create git tag]
+    J --> K[Create GitHub Release]
+    K --> L{Dependency propagation}
+    L -- Downstream modules exist --> M[Trigger release for dependents]
+    L -- No dependents --> N[Done]
+    M --> H
+```
+
+### Module Dependency Graph
+
+The following graph shows which modules depend on which. When a library is released, all modules that depend on it are also scheduled for release in the same run — even if they have no new commits of their own. This ensures dependents are always tagged against the latest version of their dependencies.
+
+```mermaid
+graph TD
+    errors["libs/errors"]
+    httputil["libs/httputil"]
+    logging["libs/logging"]
+    testutil["libs/testutil"]
+
+    auth["services/auth-server"]
+    authz["services/authorization-policy-service"]
+    clients["services/client-registry-service"]
+    example["services/example-resource-service"]
+    identity["services/identity-service"]
+    introspect["services/token-introspection-service"]
+
+    httputil --> errors
+    logging --> errors
+    testutil --> errors
+
+    auth --> httputil
+    auth --> logging
+    authz --> httputil
+    authz --> logging
+    clients --> httputil
+    clients --> logging
+    example --> httputil
+    example --> logging
+    identity --> httputil
+    identity --> logging
+    introspect --> httputil
+    introspect --> logging
+```
+
+> Arrows mean "depends on". A change to `libs/errors` will propagate all the way through to every service.
+
+### Tag Format
+
+Each module uses a short, flat tag prefix defined in `.semantic-release.yaml`. Tags follow the pattern `<prefix>v<version>`.
+
+| Module | Tag prefix | Example tag |
+|---|---|---|
+| `services/auth-server` | `auth-server/` | `auth-server/v1.3.0` |
+| `services/authorization-policy-service` | `authorization-policy-service/` | `authorization-policy-service/v1.0.2` |
+| `services/client-registry-service` | `client-registry-service/` | `client-registry-service/v0.4.1` |
+| `services/example-resource-service` | `example-resource-service/` | `example-resource-service/v1.1.0` |
+| `services/identity-service` | `identity-service/` | `identity-service/v2.0.0` |
+| `services/token-introspection-service` | `token-introspection-service/` | `token-introspection-service/v1.0.0` |
+| `libs/errors` | `errors/` | `errors/v0.3.1` |
+| `libs/httputil` | `httputil/` | `httputil/v0.2.0` |
+| `libs/logging` | `logging/` | `logging/v0.2.0` |
+| `libs/testutil` | `testutil/` | `testutil/v0.1.0` |
+
+The prefix is intentionally short (the service name only, not the full path) so tags are readable in the GitHub Releases list and in `git tag -l`. Using the full path (`services/auth-server/v1.3.0`) would make tags unnecessarily verbose and harder to filter.
+
+### Release Configuration
+
+The release configuration lives in `.semantic-release.yaml` at the repository root. The key sections are:
+
+```yaml
+release_mode: independent          # each module is versioned independently
+dependency_propagation: true       # a lib release cascades to dependent services
+
+projects:
+  - name: auth-server              # human-readable name, used in logs and releases
+    path: services/auth-server     # path used for commit impact analysis
+    tag_prefix: "auth-server/"     # prefix applied to all tags for this module
+    dependencies:                  # modules that trigger a re-release of this one
+      - errors
+      - httputil
+      - logging
+```
+
+Each project entry defines three things:
+
+- **`path`** — the directory prefix used to determine whether a commit touches this module. Any file changed under `services/auth-server/` counts as a change to `auth-server`.
+- **`tag_prefix`** — the string prepended to the version number when creating a git tag or GitHub Release. Must end with `/`.
+- **`dependencies`** — names of other modules in this config. When a dependency is released, this module is also released (even with no new commits) to ensure its tag always reflects the latest upstream version.
+
+### Branch Policy
+
+| Branch | Release type | Version format |
+|---|---|---|
+| `main` | Stable | `v1.2.3` |
+| `beta` | Prerelease | `v1.2.3-beta.1` |
+
+Only commits merged to `main` produce stable releases. The `beta` branch can be used to ship prerelease versions for testing before merging.
+
+### GitHub Repository Setup
+
+The release workflow requires the following configuration in your GitHub repository.
+
+#### Required Secret
+
+| Secret | Where to get it | Purpose |
+|---|---|---|
+| `GITHUB_TOKEN` | Provided automatically by GitHub Actions | Create tags and GitHub Releases |
+
+`GITHUB_TOKEN` is provisioned automatically in every Actions run — no manual setup is required. The workflow already requests `contents: write` and `pull-requests: write` permissions, which are the only permissions needed.
+
+> If you ever replace `GITHUB_TOKEN` with a fine-grained PAT (for example, to allow cross-repository operations), the PAT needs **Contents: Read and write** and **Metadata: Read** scopes on this repository.
+
+#### Repository Settings
+
+Navigate to **Settings → Actions → General** and confirm:
+
+- **Workflow permissions** is set to `Read and write permissions`
+- **Allow GitHub Actions to create and approve pull requests** is checked
+
+Without write permissions, the workflow will fail at the tagging step.
+
+### Running Releases Locally
+
+You can run the release tool locally without publishing anything using dry-run mode. This is useful to preview what would be released before merging to main.
+
+```bash
+# Install the release tool
+task deps
+
+# Preview all releases (no mutations)
+semantic-release --dry-run --no-ci
+
+# Confirm which modules are discovered
+semantic-release detect-projects --no-ci
+
+# Target a single module
+semantic-release --project auth-server --dry-run --no-ci
+```
+
+`--no-ci` is required outside of CI because the tool defaults to dry-run when it cannot detect a CI environment. Without it, you must also set `GH_TOKEN`.
 
 ---
 
