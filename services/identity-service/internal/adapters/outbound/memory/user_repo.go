@@ -53,8 +53,13 @@ func (r *UserRepository) Save(_ context.Context, user *domain.User) error {
 func (r *UserRepository) Update(_ context.Context, user *domain.User) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.byID[user.ID]; !ok {
+	old, ok := r.byID[user.ID]
+	if !ok {
 		return apperrors.New(apperrors.ErrCodeNotFound, "user not found")
+	}
+	// Remove stale email index entry if email changed.
+	if old.Email != user.Email {
+		delete(r.byEmail, old.Email)
 	}
 	r.byID[user.ID] = user
 	r.byEmail[user.Email] = user

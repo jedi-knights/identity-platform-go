@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -78,18 +79,30 @@ func run(_ *cobra.Command, _ []string) error {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("server error", "error", err.Error())
-			os.Exit(1)
-		}
-	}()
+	if err := listenAndWait(srv, quit); err != nil {
+		return err
+	}
 
-	<-quit
 	logger.Info("shutting down server")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	return srv.Shutdown(ctx)
+}
+
+// listenAndWait starts the HTTP server and blocks until either it fails or a quit signal is received.
+func listenAndWait(srv *http.Server, quit <-chan os.Signal) error {
+	serverErr := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+		}
+	}()
+	select {
+	case err := <-serverErr:
+		return fmt.Errorf("server error: %w", err)
+	case <-quit:
+		return nil
+	}
 }

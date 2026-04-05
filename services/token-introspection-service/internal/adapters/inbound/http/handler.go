@@ -7,10 +7,13 @@ import (
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
 	"github.com/ocrosby/identity-platform-go/libs/logging"
 
-	// Imported for swagger doc generation.
-	_ "github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/domain"
+	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/ports"
 )
+
+// Ensure domain.IntrospectionResult is referenced so the package is included
+// in Swagger doc generation scans.
+var _ *domain.IntrospectionResult
 
 // Handler holds HTTP handler dependencies.
 type Handler struct {
@@ -34,6 +37,7 @@ func NewHandler(introspector ports.Introspector, logger logging.Logger) *Handler
 // @Failure      400  {object}  httputil.ErrorResponse
 // @Router       /introspect [post]
 func (h *Handler) Introspect(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := r.ParseForm(); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
 		return

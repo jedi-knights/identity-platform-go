@@ -70,6 +70,18 @@ func IsBadRequest(err error) bool {
 	return errors.As(err, &e) && e.Code == ErrCodeBadRequest
 }
 
+// IsConflict reports whether err is an AppError with ErrCodeConflict.
+func IsConflict(err error) bool {
+	var e *AppError
+	return errors.As(err, &e) && e.Code == ErrCodeConflict
+}
+
+// IsInternal reports whether err is an AppError with ErrCodeInternal.
+func IsInternal(err error) bool {
+	var e *AppError
+	return errors.As(err, &e) && e.Code == ErrCodeInternal
+}
+
 // HTTPStatus maps an AppError code to an HTTP status code.
 // Non-AppError values return 500.
 func HTTPStatus(err error) int {

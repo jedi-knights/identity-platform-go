@@ -2,11 +2,15 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 )
+
+// ErrTokenNotFound is returned by FindByRaw when no token matches the given raw value.
+var ErrTokenNotFound = errors.New("token not found")
 
 // TokenRepository is an in-memory token repository.
 type TokenRepository struct {
@@ -30,7 +34,7 @@ func (r *TokenRepository) FindByRaw(_ context.Context, raw string) (*domain.Toke
 	defer r.mu.RUnlock()
 	token, ok := r.tokens[raw]
 	if !ok {
-		return nil, fmt.Errorf("token not found")
+		return nil, fmt.Errorf("%w", ErrTokenNotFound)
 	}
 	return token, nil
 }

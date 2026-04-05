@@ -2,7 +2,6 @@ package httputil
 
 import (
 	"crypto/rand"
-	"encoding/binary"
 	"fmt"
 	"net/http"
 	"time"
@@ -16,10 +15,12 @@ type Logger = logging.Logger
 const traceIDHeader = "X-Trace-ID"
 
 // newUUID generates a random UUID v4 using crypto/rand.
+// It panics if crypto/rand is unavailable — this indicates a broken system
+// environment where generating secure trace IDs is impossible.
 func newUUID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		binary.BigEndian.PutUint64(b[:8], uint64(time.Now().UnixNano()))
+		panic(fmt.Sprintf("newUUID: crypto/rand unavailable: %v", err))
 	}
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant bits
@@ -70,6 +71,10 @@ func LoggingMiddleware(logger Logger) func(http.Handler) http.Handler {
 			traceID := logging.TraceIDFromContext(ctx)
 
 			next.ServeHTTP(rw, r)
+			if rw.status == 0 {
+				// A handler that never called WriteHeader implicitly sent 200 OK.
+				rw.status = http.StatusOK
+			}
 
 			duration := time.Since(start)
 			l := logger.With(
@@ -85,19 +90,25 @@ func LoggingMiddleware(logger Logger) func(http.Handler) http.Handler {
 }
 
 // RecoveryMiddleware returns middleware that recovers from panics and logs them.
+// It wraps the ResponseWriter so it can detect whether a partial response was
+// already written before the panic; if so, it skips calling http.Error to avoid
+// writing conflicting headers or a double response body.
 func RecoveryMiddleware(logger Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rw := &responseWriter{ResponseWriter: w}
 			defer func() {
 				if rec := recover(); rec != nil {
 					ctx := r.Context()
 					traceID := logging.TraceIDFromContext(ctx)
 					logger.With("trace_id", traceID, "panic", fmt.Sprintf("%v", rec)).
 						Error("recovered from panic")
-					http.Error(w, "internal server error", http.StatusInternalServerError)
+					if rw.status == 0 {
+						http.Error(w, "internal server error", http.StatusInternalServerError)
+					}
 				}
 			}()
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(rw, r)
 		})
 	}
 }

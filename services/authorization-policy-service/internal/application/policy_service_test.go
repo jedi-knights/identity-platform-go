@@ -2,9 +2,9 @@ package application_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
+	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/domain"
 )
@@ -20,7 +20,7 @@ func newMockPolicyRepo() *mockPolicyRepo {
 func (m *mockPolicyRepo) FindBySubject(_ context.Context, subjectID string) (*domain.Policy, error) {
 	p, ok := m.policies[subjectID]
 	if !ok {
-		return nil, fmt.Errorf("policy not found for subject: %s", subjectID)
+		return nil, apperrors.New(apperrors.ErrCodeNotFound, "policy not found for subject: "+subjectID)
 	}
 	return p, nil
 }
@@ -41,7 +41,7 @@ func newMockRoleRepo() *mockRoleRepo {
 func (m *mockRoleRepo) FindByName(_ context.Context, name string) (*domain.Role, error) {
 	r, ok := m.roles[name]
 	if !ok {
-		return nil, fmt.Errorf("role not found: %s", name)
+		return nil, apperrors.New(apperrors.ErrCodeNotFound, "role not found: "+name)
 	}
 	return r, nil
 }
