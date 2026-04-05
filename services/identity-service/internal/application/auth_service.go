@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/domain"
 )
 
@@ -69,7 +70,10 @@ func (s *AuthService) Login(_ context.Context, req LoginRequest) (*LoginResponse
 }
 
 func (s *AuthService) Register(_ context.Context, req RegisterRequest) (*RegisterResponse, error) {
-	existing, _ := s.userRepo.FindByEmail(req.Email)
+	existing, err := s.userRepo.FindByEmail(req.Email)
+	if err != nil && !apperrors.IsNotFound(err) {
+		return nil, fmt.Errorf("checking existing user: %w", err)
+	}
 	if existing != nil {
 		return nil, fmt.Errorf("email already registered")
 	}
@@ -79,8 +83,12 @@ func (s *AuthService) Register(_ context.Context, req RegisterRequest) (*Registe
 		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
 
+	id, err := generateID()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate user id: %w", err)
+	}
 	user := &domain.User{
-		ID:           generateID(),
+		ID:           id,
 		Email:        req.Email,
 		PasswordHash: hash,
 		Name:         req.Name,
@@ -100,8 +108,10 @@ func (s *AuthService) Register(_ context.Context, req RegisterRequest) (*Registe
 	}, nil
 }
 
-func generateID() string {
+func generateID() (string, error) {
 	b := make([]byte, 16)
-	rand.Read(b) //nolint:errcheck
-	return hex.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generating id: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }

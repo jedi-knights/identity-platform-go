@@ -39,6 +39,7 @@ func NewHandler(authenticator ports.Authenticator, registrar ports.UserRegistrar
 // @Failure      401      {object}  httputil.ErrorResponse
 // @Router       /auth/login [post]
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	var req application.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
@@ -48,7 +49,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.authenticator.Login(r.Context(), req)
 	if err != nil {
 		h.logger.Error("login failed", "error", err.Error())
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, err.Error()))
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid credentials"))
 		return
 	}
 
@@ -67,6 +68,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 // @Failure      400      {object}  httputil.ErrorResponse
 // @Router       /auth/register [post]
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	var req application.RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))

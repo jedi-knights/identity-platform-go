@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"time"
@@ -117,7 +118,8 @@ func (s *ClientService) ValidateClient(_ context.Context, req ValidateClientRequ
 		return &ValidateClientResponse{Valid: false}, nil
 	}
 
-	return &ValidateClientResponse{Valid: client.Active && client.Secret == req.ClientSecret}, nil
+	secretMatch := subtle.ConstantTimeCompare([]byte(client.Secret), []byte(req.ClientSecret)) == 1
+	return &ValidateClientResponse{Valid: client.Active && secretMatch}, nil
 }
 
 func (s *ClientService) ListClients(_ context.Context) ([]*GetClientResponse, error) {

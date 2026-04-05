@@ -1,5 +1,3 @@
-//go:build unit
-
 package logging_test
 
 import (
