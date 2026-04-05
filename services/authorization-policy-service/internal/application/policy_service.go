@@ -2,7 +2,9 @@ package application
 
 import (
 	"context"
+	"fmt"
 
+	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/domain"
 )
 
@@ -21,7 +23,10 @@ func NewPolicyService(policyRepo domain.PolicyRepository, roleRepo domain.RoleRe
 func (s *PolicyService) Evaluate(ctx context.Context, req domain.EvaluationRequest) (*domain.EvaluationResponse, error) {
 	policy, err := s.policyRepo.FindBySubject(ctx, req.SubjectID)
 	if err != nil {
-		return &domain.EvaluationResponse{Allowed: false, Reason: "no policy found for subject"}, nil
+		if apperrors.IsNotFound(err) {
+			return &domain.EvaluationResponse{Allowed: false, Reason: "no policy found for subject"}, nil
+		}
+		return nil, fmt.Errorf("finding policy for subject %q: %w", req.SubjectID, err)
 	}
 
 	spec := NewPermissionSpecification(s.roleRepo, req.Resource, req.Action)

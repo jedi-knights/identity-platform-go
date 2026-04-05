@@ -3,6 +3,8 @@ package container
 import (
 	"fmt"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/ocrosby/identity-platform-go/libs/logging"
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/outbound/memory"
@@ -24,7 +26,7 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 	}
 
 	userRepo := memory.NewUserRepository()
-	hasher := application.NewBCryptHasher(10)
+	hasher := application.NewBCryptHasher(bcrypt.DefaultCost)
 	authSvc := application.NewAuthService(userRepo, hasher)
 	handler := inboundhttp.NewHandler(authSvc, authSvc, logger)
 

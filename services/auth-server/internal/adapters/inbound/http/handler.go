@@ -3,7 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -38,7 +38,7 @@ func NewHandler(
 }
 
 // writeOAuthError writes an RFC 6749-compliant JSON error response.
-func writeOAuthError(w http.ResponseWriter, code string, description string, httpStatus int) {
+func writeOAuthError(w http.ResponseWriter, logger logging.Logger, code string, description string, httpStatus int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(httpStatus)
@@ -46,7 +46,7 @@ func writeOAuthError(w http.ResponseWriter, code string, description string, htt
 		"error":             code,
 		"error_description": description,
 	}); err != nil {
-		slog.Error("failed to encode oauth error", "error", err)
+		logger.Error("failed to encode oauth error", "error", err)
 	}
 }
 
@@ -68,6 +68,7 @@ func writeOAuthError(w http.ResponseWriter, code string, description string, htt
 // @Failure      400  {object}  httputil.ErrorResponse
 // @Router       /oauth/token [post]
 func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := r.ParseForm(); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid form data"))
 		return
@@ -81,7 +82,7 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.issuer.IssueToken(r.Context(), req)
 	if err != nil {
 		h.logger.Error("token issuance failed", "error", err.Error())
-		writeTokenError(w, err)
+		writeTokenError(w, h.logger, err)
 		return
 	}
 
@@ -125,22 +126,20 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request) (domain.GrantRequ
 }
 
 // writeTokenError maps an application error to an RFC 6749-compliant OAuth2 error response.
-func writeTokenError(w http.ResponseWriter, err error) {
-	switch {
-	case apperrors.HTTPStatus(err) >= 500:
-		writeOAuthError(w, "server_error", "an internal error occurred", http.StatusInternalServerError)
-	case apperrors.IsUnauthorized(err):
-		writeOAuthError(w, "invalid_client", "client authentication failed", http.StatusUnauthorized)
-	case apperrors.IsForbidden(err):
-		// Could be invalid_scope or unauthorized_client — use message to distinguish
-		if strings.Contains(err.Error(), "scope") {
-			writeOAuthError(w, "invalid_scope", "the requested scope is invalid", http.StatusBadRequest)
-		} else {
-			writeOAuthError(w, "unsupported_grant_type", "grant type not supported", http.StatusBadRequest)
-		}
-	default:
-		writeOAuthError(w, "invalid_request", "the request is invalid", http.StatusBadRequest)
+func writeTokenError(w http.ResponseWriter, logger logging.Logger, err error) {
+	if errors.Is(err, application.ErrUnsupportedGrantType) {
+		writeOAuthError(w, logger, "unsupported_grant_type", err.Error(), http.StatusBadRequest)
+		return
 	}
+	if apperrors.IsUnauthorized(err) {
+		writeOAuthError(w, logger, "invalid_client", "client authentication failed", http.StatusUnauthorized)
+		return
+	}
+	if apperrors.IsForbidden(err) {
+		writeOAuthError(w, logger, "invalid_scope", "requested scope not permitted", http.StatusForbidden)
+		return
+	}
+	writeOAuthError(w, logger, "server_error", "internal server error", http.StatusInternalServerError)
 }
 
 // Authorize handles GET /oauth/authorize (stub).
@@ -151,10 +150,8 @@ func writeTokenError(w http.ResponseWriter, err error) {
 // @Produce      json
 // @Success      200  {object}  map[string]string
 // @Router       /oauth/authorize [get]
-func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
-	httputil.WriteJSON(w, http.StatusOK, map[string]string{
-		"message": "authorization endpoint - not yet implemented",
-	})
+func (h *Handler) Authorize(w http.ResponseWriter, _ *http.Request) {
+	http.Error(w, "not yet implemented", http.StatusNotImplemented)
 }
 
 // Introspect handles POST /oauth/introspect.

@@ -76,7 +76,7 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 func (s *ClientService) GetClient(ctx context.Context, id string) (*domain.GetClientResponse, error) {
 	client, err := s.repo.FindByID(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetching client %s: %w", id, err)
 	}
 
 	return &domain.GetClientResponse{
@@ -92,7 +92,10 @@ func (s *ClientService) GetClient(ctx context.Context, id string) (*domain.GetCl
 func (s *ClientService) ValidateClient(ctx context.Context, req domain.ValidateClientRequest) (*domain.ValidateClientResponse, error) {
 	client, err := s.repo.FindByID(ctx, req.ClientID)
 	if err != nil {
-		return &domain.ValidateClientResponse{Valid: false}, nil
+		if apperrors.IsNotFound(err) {
+			return &domain.ValidateClientResponse{Valid: false}, nil
+		}
+		return nil, fmt.Errorf("looking up client: %w", err)
 	}
 
 	// bcrypt comparison is constant-time and handles the hashed secret stored in persistence.
@@ -105,7 +108,7 @@ func (s *ClientService) ValidateClient(ctx context.Context, req domain.ValidateC
 func (s *ClientService) ListClients(ctx context.Context) ([]*domain.GetClientResponse, error) {
 	clients, err := s.repo.List(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("listing clients: %w", err)
 	}
 
 	result := make([]*domain.GetClientResponse, 0, len(clients))

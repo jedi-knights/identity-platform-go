@@ -82,6 +82,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Location", "/users/"+resp.UserID)
 	httputil.WriteJSON(w, http.StatusCreated, resp)
 }
 

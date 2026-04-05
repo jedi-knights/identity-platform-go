@@ -29,6 +29,12 @@ func (t *Token) IsExpired() bool {
 	return time.Now().After(t.ExpiresAt)
 }
 
+// IsExpiredAt reports whether the token is expired relative to the given time.
+// Prefer this over IsExpired in tests to allow time injection.
+func (t *Token) IsExpiredAt(now time.Time) bool {
+	return now.After(t.ExpiresAt)
+}
+
 func (t *Token) HasScope(scope string) bool {
 	for _, s := range t.Scopes {
 		if s == scope {

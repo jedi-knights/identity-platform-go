@@ -33,6 +33,9 @@ func (r *ClientRepository) FindByID(_ context.Context, id string) (*domain.OAuth
 func (r *ClientRepository) Save(_ context.Context, client *domain.OAuthClient) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if _, exists := r.clients[client.ID]; exists {
+		return apperrors.New(apperrors.ErrCodeConflict, "client already exists")
+	}
 	r.clients[client.ID] = client
 	return nil
 }

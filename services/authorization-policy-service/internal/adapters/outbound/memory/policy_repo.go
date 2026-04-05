@@ -33,7 +33,11 @@ func (r *PolicyRepository) FindBySubject(_ context.Context, subjectID string) (*
 	if !ok {
 		return nil, apperrors.New(apperrors.ErrCodeNotFound, "policy not found")
 	}
-	return p, nil
+	// Return a copy to prevent callers from mutating internal state.
+	result := *p
+	result.Roles = make([]string, len(p.Roles))
+	copy(result.Roles, p.Roles)
+	return &result, nil
 }
 
 // Save persists the policy, overwriting any existing entry for the same subject.
@@ -81,7 +85,11 @@ func (r *RoleRepository) FindByName(_ context.Context, name string) (*domain.Rol
 	if !ok {
 		return nil, apperrors.New(apperrors.ErrCodeNotFound, "role not found")
 	}
-	return role, nil
+	// Return a copy to prevent callers from mutating internal state.
+	result := *role
+	result.Permissions = make([]domain.Permission, len(role.Permissions))
+	copy(result.Permissions, role.Permissions)
+	return &result, nil
 }
 
 // Save persists the role, overwriting any existing entry with the same name.

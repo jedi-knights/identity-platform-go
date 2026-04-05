@@ -2,7 +2,6 @@ package jwt
 
 import (
 	"context"
-	"errors"
 
 	gojwt "github.com/golang-jwt/jwt/v5"
 
@@ -25,7 +24,7 @@ func NewValidator(signingKey []byte) *Validator {
 	return &Validator{signingKey: signingKey}
 }
 
-func (v *Validator) keyFunc(t *gojwt.Token) (interface{}, error) {
+func (v *Validator) keyFunc(t *gojwt.Token) (any, error) {
 	if _, ok := t.Method.(*gojwt.SigningMethodHMAC); !ok {
 		return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid signing method")
 	}
@@ -53,10 +52,9 @@ func claimsToResult(claims *jwtClaims) *domain.IntrospectionResult {
 func (v *Validator) Validate(_ context.Context, raw string) (*domain.IntrospectionResult, error) {
 	token, err := gojwt.ParseWithClaims(raw, &jwtClaims{}, v.keyFunc)
 	if err != nil {
-		if errors.Is(err, gojwt.ErrTokenExpired) {
-			return &domain.IntrospectionResult{Active: false}, nil
-		}
-		return nil, apperrors.Wrap(apperrors.ErrCodeUnauthorized, "invalid token", err)
+		// Per RFC 7662 §2.2, any token validity failure (expired, malformed,
+		// bad signature, not yet valid) must return {active: false}, not an error.
+		return &domain.IntrospectionResult{Active: false}, nil
 	}
 
 	if !token.Valid {
