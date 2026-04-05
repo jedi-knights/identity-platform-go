@@ -1,6 +1,6 @@
 module github.com/ocrosby/identity-platform-go/libs/httputil
 
-go 1.24
+go 1.26
 
 require (
 	github.com/ocrosby/identity-platform-go/libs/errors v0.0.0
