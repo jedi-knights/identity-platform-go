@@ -12,19 +12,19 @@ type Role struct {
 	Permissions []Permission
 }
 
-// Policy maps subjects (users/clients) to roles
+// Policy maps subjects (users/clients) to roles.
 type Policy struct {
 	SubjectID string
 	Roles     []string
 }
 
-// PolicyRepository stores policies
+// PolicyRepository stores policies.
 type PolicyRepository interface {
 	FindBySubject(subjectID string) (*Policy, error)
 	Save(policy *Policy) error
 }
 
-// RoleRepository stores role definitions
+// RoleRepository stores role definitions.
 type RoleRepository interface {
 	FindByName(name string) (*Role, error)
 	Save(role *Role) error

@@ -21,7 +21,7 @@ type UserRepository interface {
 	Update(user *User) error
 }
 
-// PasswordHasher defines the password hashing strategy (Strategy pattern)
+// PasswordHasher defines the password hashing strategy (Strategy pattern).
 type PasswordHasher interface {
 	Hash(password string) (string, error)
 	Compare(hash, password string) error

@@ -10,7 +10,7 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/domain"
 )
 
-// AuthService handles user authentication and registration
+// AuthService handles user authentication and registration.
 type AuthService struct {
 	userRepo domain.UserRepository
 	hasher   domain.PasswordHasher
@@ -20,27 +20,27 @@ func NewAuthService(userRepo domain.UserRepository, hasher domain.PasswordHasher
 	return &AuthService{userRepo: userRepo, hasher: hasher}
 }
 
-// LoginRequest contains login credentials
+// LoginRequest contains login credentials.
 type LoginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
 
-// LoginResponse contains login result
+// LoginResponse contains login result.
 type LoginResponse struct {
 	UserID string `json:"user_id"`
 	Email  string `json:"email"`
 	Name   string `json:"name"`
 }
 
-// RegisterRequest contains registration data
+// RegisterRequest contains registration data.
 type RegisterRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	Name     string `json:"name"`
 }
 
-// RegisterResponse contains registration result
+// RegisterResponse contains registration result.
 type RegisterResponse struct {
 	UserID string `json:"user_id"`
 	Email  string `json:"email"`
