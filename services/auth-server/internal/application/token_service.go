@@ -95,21 +95,6 @@ func (v *JWTTokenValidator) Validate(ctx context.Context, raw string) (*domain.T
 	}, nil
 }
 
-// OpaqueTokenGenerator generates opaque tokens.
-type OpaqueTokenGenerator struct{}
-
-func NewOpaqueTokenGenerator() *OpaqueTokenGenerator {
-	return &OpaqueTokenGenerator{}
-}
-
-func (g *OpaqueTokenGenerator) Generate(_ context.Context, _ *domain.Token) (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("failed to generate random token: %w", err)
-	}
-	return hex.EncodeToString(b), nil
-}
-
 // TokenService handles token introspection and revocation.
 type TokenService struct {
 	tokenRepo domain.TokenRepository
@@ -123,6 +108,10 @@ func NewTokenService(tokenRepo domain.TokenRepository, validator TokenValidator)
 func (s *TokenService) Introspect(ctx context.Context, raw string) (*domain.IntrospectResponse, error) {
 	token, err := s.validator.Validate(ctx, raw)
 	if err != nil {
+		// Token validation failures (expired, bad sig, malformed) → inactive.
+		// We treat all validator errors as token-invalid for now; if the validator
+		// is ever replaced with a remote JWKS call, this should be revisited to
+		// distinguish network errors from validation failures.
 		return &domain.IntrospectResponse{Active: false}, nil
 	}
 

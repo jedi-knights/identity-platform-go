@@ -61,6 +61,9 @@ func TestIsUnauthorized(t *testing.T) {
 	if !apperrors.IsUnauthorized(err) {
 		t.Fatal("expected IsUnauthorized to return true")
 	}
+	if apperrors.IsUnauthorized(apperrors.New(apperrors.ErrCodeNotFound, "not found")) {
+		t.Error("expected IsUnauthorized to return false for ErrCodeNotFound")
+	}
 }
 
 func TestIsForbidden(t *testing.T) {
@@ -68,12 +71,54 @@ func TestIsForbidden(t *testing.T) {
 	if !apperrors.IsForbidden(err) {
 		t.Fatal("expected IsForbidden to return true")
 	}
+	if apperrors.IsForbidden(apperrors.New(apperrors.ErrCodeNotFound, "not found")) {
+		t.Error("expected IsForbidden to return false for ErrCodeNotFound")
+	}
 }
 
 func TestIsBadRequest(t *testing.T) {
 	err := apperrors.New(apperrors.ErrCodeBadRequest, "bad request")
 	if !apperrors.IsBadRequest(err) {
 		t.Fatal("expected IsBadRequest to return true")
+	}
+	if apperrors.IsBadRequest(apperrors.New(apperrors.ErrCodeNotFound, "not found")) {
+		t.Error("expected IsBadRequest to return false for ErrCodeNotFound")
+	}
+}
+
+func TestIsConflict(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"conflict error", apperrors.New(apperrors.ErrCodeConflict, "conflict"), true},
+		{"not found error", apperrors.New(apperrors.ErrCodeNotFound, "not found"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := apperrors.IsConflict(tt.err); got != tt.want {
+				t.Errorf("IsConflict() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsInternal(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"internal error", apperrors.New(apperrors.ErrCodeInternal, "internal"), true},
+		{"not found error", apperrors.New(apperrors.ErrCodeNotFound, "not found"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := apperrors.IsInternal(tt.err); got != tt.want {
+				t.Errorf("IsInternal() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

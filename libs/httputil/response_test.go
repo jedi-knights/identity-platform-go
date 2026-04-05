@@ -48,4 +48,15 @@ func TestWriteError_PlainError(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)
 	}
+
+	var resp httputil.ErrorResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Error != "internal server error" {
+		t.Errorf("expected sanitized error message, got %q", resp.Error)
+	}
+	if w.Body.String() != "" && resp.Error == "something went wrong" {
+		t.Error("raw error message must not be exposed to clients")
+	}
 }

@@ -113,6 +113,7 @@ func (h *Handler) CreateResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.Header().Set("Location", "/resources/"+resource.ID)
 	httputil.WriteJSON(w, http.StatusCreated, resource)
 }
 

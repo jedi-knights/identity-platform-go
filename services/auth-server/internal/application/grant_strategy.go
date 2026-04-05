@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,9 @@ import (
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 )
+
+// ErrUnsupportedGrantType is returned when the requested grant type has no registered strategy.
+var ErrUnsupportedGrantType = errors.New("unsupported grant type")
 
 // GrantStrategy defines the interface for handling grant types (Strategy pattern).
 type GrantStrategy interface {
@@ -32,7 +36,7 @@ func (r *GrantStrategyRegistry) Handle(ctx context.Context, req domain.GrantRequ
 			return s.Handle(ctx, req)
 		}
 	}
-	return nil, fmt.Errorf("unsupported grant type: %s", req.GrantType)
+	return nil, fmt.Errorf("%w: %s", ErrUnsupportedGrantType, req.GrantType)
 }
 
 // ClientCredentialsStrategy handles the client_credentials grant.
