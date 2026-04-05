@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -36,7 +37,7 @@ func Load() (*Config, error) {
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.environment", "development")
-	v.SetDefault("jwt.signing_key", "default-signing-key")
+	v.SetDefault("jwt.signing_key", "")
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
@@ -48,7 +49,8 @@ func Load() (*Config, error) {
 	v.AutomaticEnv()
 
 	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+		var notFound viper.ConfigFileNotFoundError
+		if !errors.As(err, &notFound) {
 			return nil, fmt.Errorf("reading config: %w", err)
 		}
 	}

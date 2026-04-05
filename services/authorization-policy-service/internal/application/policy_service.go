@@ -31,7 +31,11 @@ func (s *PolicyService) Evaluate(ctx context.Context, req domain.EvaluationReque
 
 	spec := NewPermissionSpecification(s.roleRepo, req.Resource, req.Action)
 
-	if spec.IsSatisfiedBy(ctx, policy.Roles) {
+	allowed, err := spec.IsSatisfiedBy(ctx, policy.Roles)
+	if err != nil {
+		return nil, fmt.Errorf("evaluating permissions: %w", err)
+	}
+	if allowed {
 		return &domain.EvaluationResponse{Allowed: true}, nil
 	}
 
