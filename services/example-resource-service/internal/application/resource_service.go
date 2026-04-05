@@ -42,7 +42,7 @@ func (s *ResourceService) CreateResource(ctx context.Context, req domain.CreateR
 
 	id, err := generateResourceID()
 	if err != nil {
-		return nil, fmt.Errorf("generating resource id: %w", err)
+		return nil, fmt.Errorf("creating resource: %w", err)
 	}
 
 	resource := &domain.Resource{
@@ -54,7 +54,7 @@ func (s *ResourceService) CreateResource(ctx context.Context, req domain.CreateR
 	}
 
 	if err := s.repo.Save(ctx, resource); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("saving resource: %w", err)
 	}
 
 	return resource, nil

@@ -26,20 +26,18 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 
 // WriteError writes a JSON error response derived from err.
 // It uses apperrors.HTTPStatus to determine the status code.
+// For non-AppError values, a generic sanitized message is returned to prevent
+// internal details (SQL errors, file paths, etc.) from leaking to clients.
 func WriteError(w http.ResponseWriter, err error) {
 	status := apperrors.HTTPStatus(err)
-	resp := ErrorResponse{Error: err.Error()}
 
 	var ae *apperrors.AppError
-	if asAppErr(err, &ae) {
-		resp.Code = string(ae.Code)
-		resp.Error = ae.Message
+	var resp ErrorResponse
+	if errors.As(err, &ae) {
+		resp = ErrorResponse{Error: ae.Message, Code: string(ae.Code)}
+	} else {
+		resp = ErrorResponse{Error: "internal server error", Code: string(apperrors.ErrCodeInternal)}
 	}
 
 	WriteJSON(w, status, resp)
-}
-
-// asAppErr is a helper that attempts to unwrap err into *apperrors.AppError.
-func asAppErr(err error, target **apperrors.AppError) bool {
-	return errors.As(err, target)
 }

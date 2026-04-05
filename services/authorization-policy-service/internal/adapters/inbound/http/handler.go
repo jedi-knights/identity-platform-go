@@ -40,6 +40,11 @@ func (h *Handler) Evaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.SubjectID == "" || req.Resource == "" || req.Action == "" {
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "subject_id, resource, and action are required"))
+		return
+	}
+
 	resp, err := h.evaluator.Evaluate(r.Context(), req)
 	if err != nil {
 		h.logger.Error("policy evaluation failed", "error", err.Error())
