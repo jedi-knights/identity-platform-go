@@ -6,20 +6,20 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/domain"
 )
 
-// EvaluationRequest is the input for policy evaluation
+// EvaluationRequest is the input for policy evaluation.
 type EvaluationRequest struct {
 	SubjectID string `json:"subject_id"`
 	Resource  string `json:"resource"`
 	Action    string `json:"action"`
 }
 
-// EvaluationResponse is the result of policy evaluation
+// EvaluationResponse is the result of policy evaluation.
 type EvaluationResponse struct {
 	Allowed bool   `json:"allowed"`
 	Reason  string `json:"reason,omitempty"`
 }
 
-// PolicyService evaluates authorization policies
+// PolicyService evaluates authorization policies.
 type PolicyService struct {
 	policyRepo domain.PolicyRepository
 	roleRepo   domain.RoleRepository

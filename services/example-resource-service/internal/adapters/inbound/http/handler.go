@@ -9,7 +9,7 @@ import (
 	"github.com/ocrosby/identity-platform-go/libs/logging"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/application"
 
-	// imported for swagger doc generation
+	// Imported for swagger doc generation.
 	_ "github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/ports"
 )
