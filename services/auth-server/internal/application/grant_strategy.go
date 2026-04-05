@@ -64,13 +64,13 @@ func (s *ClientCredentialsStrategy) Supports(gt domain.GrantType) bool {
 func (s *ClientCredentialsStrategy) validateClient(ctx context.Context, req domain.GrantRequest) (*domain.Client, error) {
 	client, err := s.clientRepo.FindByID(ctx, req.ClientID)
 	if err != nil {
-		return nil, apperrors.Wrap(apperrors.ErrCodeBadRequest, "client not found", err)
+		return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "client authentication failed")
 	}
 	if subtle.ConstantTimeCompare([]byte(client.Secret), []byte(req.ClientSecret)) != 1 {
-		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "invalid client credentials")
+		return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "client authentication failed")
 	}
 	if !client.HasGrantType(domain.GrantTypeClientCredentials) {
-		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "grant type not allowed for client")
+		return nil, apperrors.New(apperrors.ErrCodeForbidden, "grant type not allowed for client")
 	}
 	return client, nil
 }
@@ -82,7 +82,7 @@ func (s *ClientCredentialsStrategy) resolveScopes(client *domain.Client, request
 	}
 	for _, scope := range scopes {
 		if !client.HasScope(scope) {
-			return nil, apperrors.New(apperrors.ErrCodeBadRequest, fmt.Sprintf("scope not allowed: %s", scope))
+			return nil, apperrors.New(apperrors.ErrCodeForbidden, fmt.Sprintf("scope not allowed: %s", scope))
 		}
 	}
 	return scopes, nil

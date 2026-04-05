@@ -9,6 +9,7 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/memory"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/config"
+	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 )
 
 // Container holds all wired service dependencies.
@@ -26,7 +27,11 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 
 	// Outbound adapters (repositories).
 	tokenRepo := memory.NewTokenRepository()
-	clientRepo := memory.NewClientRepository(nil)
+	var seedClients []*domain.Client
+	if cfg.DevSeedClients {
+		seedClients = devClients()
+	}
+	clientRepo := memory.NewClientRepository(seedClients)
 
 	// Token generator and validator.
 	signingKey := []byte(cfg.JWT.SigningKey)
@@ -51,4 +56,17 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 		Handler: handler,
 		Config:  cfg,
 	}, nil
+}
+
+// devClients returns a seed client for local development only. Never enable AUTH_DEV_SEED_CLIENTS in production.
+func devClients() []*domain.Client {
+	return []*domain.Client{
+		{
+			ID:         "dev-client",
+			Secret:     "dev-secret",
+			Name:       "Development Client",
+			Scopes:     []string{"read", "write"},
+			GrantTypes: []domain.GrantType{domain.GrantTypeClientCredentials},
+		},
+	}
 }

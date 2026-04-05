@@ -39,6 +39,9 @@ func (m *mockClientRepo) Update(_ context.Context, c *domain.OAuthClient) error 
 }
 
 func (m *mockClientRepo) Delete(_ context.Context, id string) error {
+	if _, ok := m.clients[id]; !ok {
+		return fmt.Errorf("client not found: %s", id)
+	}
 	delete(m.clients, id)
 	return nil
 }
@@ -171,5 +174,44 @@ func TestClientService_ListClients(t *testing.T) {
 	}
 	if len(clients) != 2 {
 		t.Errorf("expected 2 clients, got %d", len(clients))
+	}
+}
+
+func TestClientService_DeleteClient_Success(t *testing.T) {
+	repo := newMockClientRepo()
+	repo.clients["to-delete"] = &domain.OAuthClient{ID: "to-delete", Name: "Old Client", Active: true}
+	svc := application.NewClientService(repo)
+
+	err := svc.DeleteClient(context.Background(), "to-delete")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	_, err = svc.GetClient(context.Background(), "to-delete")
+	if err == nil {
+		t.Error("expected error after delete, got nil")
+	}
+}
+
+func TestClientService_DeleteClient_NotFound(t *testing.T) {
+	repo := newMockClientRepo()
+	svc := application.NewClientService(repo)
+
+	err := svc.DeleteClient(context.Background(), "nonexistent")
+	// The memory repo returns ErrCodeNotFound — DeleteClient propagates it.
+	if err == nil {
+		t.Error("expected error deleting nonexistent client")
+	}
+}
+
+func TestClientService_CreateClient_MissingName(t *testing.T) {
+	repo := newMockClientRepo()
+	svc := application.NewClientService(repo)
+
+	_, err := svc.CreateClient(context.Background(), domain.CreateClientRequest{
+		GrantTypes: []string{"client_credentials"},
+	})
+	if err == nil {
+		t.Fatal("expected error for missing name")
 	}
 }
