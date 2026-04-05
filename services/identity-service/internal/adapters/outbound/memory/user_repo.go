@@ -45,6 +45,9 @@ func (r *UserRepository) FindByEmail(_ context.Context, email string) (*domain.U
 func (r *UserRepository) Save(_ context.Context, user *domain.User) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if _, exists := r.byEmail[user.Email]; exists {
+		return apperrors.New(apperrors.ErrCodeConflict, "email already registered")
+	}
 	r.byID[user.ID] = user
 	r.byEmail[user.Email] = user
 	return nil

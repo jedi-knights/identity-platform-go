@@ -2,7 +2,7 @@ package httputil_test
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -20,6 +20,13 @@ func TestWriteJSON(t *testing.T) {
 	}
 	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
 		t.Fatalf("expected application/json, got %s", ct)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("body is not valid JSON: %v", err)
+	}
+	if body["hello"] != "world" {
+		t.Errorf("unexpected body: %v", body)
 	}
 }
 
@@ -43,7 +50,7 @@ func TestWriteError_AppError(t *testing.T) {
 
 func TestWriteError_PlainError(t *testing.T) {
 	w := httptest.NewRecorder()
-	httputil.WriteError(w, fmt.Errorf("something went wrong"))
+	httputil.WriteError(w, errors.New("something went wrong"))
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)
@@ -56,7 +63,7 @@ func TestWriteError_PlainError(t *testing.T) {
 	if resp.Error != "internal server error" {
 		t.Errorf("expected sanitized error message, got %q", resp.Error)
 	}
-	if w.Body.String() != "" && resp.Error == "something went wrong" {
+	if resp.Error == "something went wrong" {
 		t.Error("raw error message must not be exposed to clients")
 	}
 }

@@ -111,7 +111,8 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request) (domain.GrantRequ
 
 	var scopes []string
 	if scopeStr := r.FormValue("scope"); scopeStr != "" {
-		scopes = strings.Split(scopeStr, " ")
+		// strings.Fields handles multiple spaces and trims — safer than Split.
+		scopes = strings.Fields(scopeStr)
 	}
 
 	return domain.GrantRequest{
@@ -132,11 +133,14 @@ func writeTokenError(w http.ResponseWriter, logger logging.Logger, err error) {
 		return
 	}
 	if apperrors.IsUnauthorized(err) {
+		// RFC 6749 §5.2 requires WWW-Authenticate on 401 responses.
+		w.Header().Set("WWW-Authenticate", `Basic realm="auth-server"`)
 		writeOAuthError(w, logger, "invalid_client", "client authentication failed", http.StatusUnauthorized)
 		return
 	}
 	if apperrors.IsForbidden(err) {
-		writeOAuthError(w, logger, "invalid_scope", "requested scope not permitted", http.StatusForbidden)
+		// RFC 6749 §5.2: invalid_scope must use HTTP 400, not 403.
+		writeOAuthError(w, logger, "invalid_scope", "requested scope not permitted", http.StatusBadRequest)
 		return
 	}
 	writeOAuthError(w, logger, "server_error", "internal server error", http.StatusInternalServerError)
@@ -212,8 +216,14 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.revoker.Revoke(r.Context(), token); err != nil {
-		h.logger.Error("revocation failed", "error", err.Error())
-		// Per RFC 7009, return 200 even if token not found.
+		// RFC 7009 §2.2: return 200 when the token was not found or already expired.
+		// Return 500 for genuine infrastructure failures.
+		if !apperrors.IsNotFound(err) {
+			h.logger.Error("revocation failed", "error", err.Error())
+			httputil.WriteError(w, apperrors.New(apperrors.ErrCodeInternal, "revocation failed"))
+			return
+		}
+		// Token not found — treat as successful revocation per RFC 7009.
 	}
 
 	w.WriteHeader(http.StatusOK)

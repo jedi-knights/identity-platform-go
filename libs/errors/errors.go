@@ -26,6 +26,9 @@ type AppError struct {
 }
 
 func (e *AppError) Error() string {
+	if e == nil {
+		return "<nil AppError>"
+	}
 	if e.Err != nil {
 		return fmt.Sprintf("%s: %s: %v", e.Code, e.Message, e.Err)
 	}
@@ -83,7 +86,7 @@ func IsInternal(err error) bool {
 }
 
 // HTTPStatus maps an AppError code to an HTTP status code.
-// Non-AppError values return 500.
+// Non-AppError values (including nil) return 500.
 func HTTPStatus(err error) int {
 	var e *AppError
 	if !errors.As(err, &e) {

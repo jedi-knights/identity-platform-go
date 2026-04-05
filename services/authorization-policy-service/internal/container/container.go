@@ -20,6 +20,9 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is required")
 	}
+	if logger == nil {
+		return nil, fmt.Errorf("logger is required")
+	}
 
 	policyRepo := memory.NewPolicyRepository()
 	roleRepo := memory.NewRoleRepository()

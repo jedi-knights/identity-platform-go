@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/ocrosby/identity-platform-go/libs/logging"
@@ -13,6 +14,9 @@ import (
 type Logger = logging.Logger
 
 const traceIDHeader = "X-Trace-ID"
+
+// uuidPattern matches a well-formed UUID v4 string.
+var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 // newUUID generates a random UUID v4 using crypto/rand.
 // It panics if crypto/rand is unavailable — this indicates a broken system
@@ -24,16 +28,19 @@ func newUUID() string {
 	}
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant bits
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+	// Use plain %x without width padding — each byte produces exactly 2 hex chars.
+	return fmt.Sprintf("%x-%x-%x-%x-%x",
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // TraceIDMiddleware injects a trace ID into the request context.
-// It reads X-Trace-ID from the request header, or generates a new UUID v4.
+// It reads X-Trace-ID from the inbound request header if it is a valid UUID v4,
+// otherwise it generates a fresh one to prevent log-injection via crafted headers.
 func TraceIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		traceID := r.Header.Get(traceIDHeader)
-		if traceID == "" {
+		if !uuidPattern.MatchString(traceID) {
+			// Reject missing, malformed, or potentially injected trace IDs.
 			traceID = newUUID()
 		}
 		ctx := logging.WithTraceID(r.Context(), traceID)
@@ -104,7 +111,7 @@ func RecoveryMiddleware(logger Logger) func(http.Handler) http.Handler {
 					logger.With("trace_id", traceID, "panic", fmt.Sprintf("%v", rec)).
 						Error("recovered from panic")
 					if rw.status == 0 {
-						http.Error(w, "internal server error", http.StatusInternalServerError)
+						http.Error(rw, "internal server error", http.StatusInternalServerError)
 					}
 				}
 			}()

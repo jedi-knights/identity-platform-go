@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
@@ -58,11 +59,17 @@ func (h *Handler) CreateClient(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.creator.CreateClient(r.Context(), req)
 	if err != nil {
+		var ae *apperrors.AppError
+		if errors.As(err, &ae) {
+			httputil.WriteError(w, ae)
+			return
+		}
 		h.logger.Error("create client failed", "error", err.Error())
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeInternal, err.Error()))
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeInternal, "failed to create client"))
 		return
 	}
 
+	w.Header().Set("Location", "/clients/"+resp.ClientID)
 	httputil.WriteJSON(w, http.StatusCreated, resp)
 }
 
@@ -79,7 +86,7 @@ func (h *Handler) ListClients(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.reader.ListClients(r.Context())
 	if err != nil {
 		h.logger.Error("list clients failed", "error", err.Error())
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeInternal, err.Error()))
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeInternal, "failed to list clients"))
 		return
 	}
 
@@ -164,7 +171,7 @@ func (h *Handler) ValidateClient(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.validator.ValidateClient(r.Context(), req)
 	if err != nil {
 		h.logger.Error("validate client failed", "error", err.Error())
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeInternal, err.Error()))
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeInternal, "failed to validate client"))
 		return
 	}
 
