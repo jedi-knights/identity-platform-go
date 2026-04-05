@@ -11,34 +11,31 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/domain"
 )
 
-// CreateResourceRequest holds input for creating a resource.
-type CreateResourceRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	OwnerID     string `json:"owner_id"`
-}
-
 // ResourceService handles resource CRUD business logic.
 type ResourceService struct {
 	repo domain.ResourceRepository
 }
 
+// NewResourceService creates a ResourceService backed by the given repository.
 func NewResourceService(repo domain.ResourceRepository) *ResourceService {
 	return &ResourceService{repo: repo}
 }
 
-func (s *ResourceService) GetResource(_ context.Context, id string) (*domain.Resource, error) {
+// GetResource returns the resource with the given ID.
+func (s *ResourceService) GetResource(ctx context.Context, id string) (*domain.Resource, error) {
 	if id == "" {
 		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "resource id is required")
 	}
-	return s.repo.FindByID(id)
+	return s.repo.FindByID(ctx, id)
 }
 
-func (s *ResourceService) ListResources(_ context.Context) ([]*domain.Resource, error) {
-	return s.repo.FindAll()
+// ListResources returns all resources.
+func (s *ResourceService) ListResources(ctx context.Context) ([]*domain.Resource, error) {
+	return s.repo.FindAll(ctx)
 }
 
-func (s *ResourceService) CreateResource(_ context.Context, req CreateResourceRequest) (*domain.Resource, error) {
+// CreateResource creates a new resource from the given request.
+func (s *ResourceService) CreateResource(ctx context.Context, req domain.CreateResourceRequest) (*domain.Resource, error) {
 	if req.Name == "" {
 		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "name is required")
 	}
@@ -56,7 +53,7 @@ func (s *ResourceService) CreateResource(_ context.Context, req CreateResourceRe
 		CreatedAt:   time.Now(),
 	}
 
-	if err := s.repo.Save(resource); err != nil {
+	if err := s.repo.Save(ctx, resource); err != nil {
 		return nil, err
 	}
 

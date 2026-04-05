@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 )
 
@@ -60,16 +61,16 @@ func (s *ClientCredentialsStrategy) Supports(gt domain.GrantType) bool {
 	return gt == domain.GrantTypeClientCredentials
 }
 
-func (s *ClientCredentialsStrategy) validateClient(req domain.GrantRequest) (*domain.Client, error) {
-	client, err := s.clientRepo.FindByID(req.ClientID)
+func (s *ClientCredentialsStrategy) validateClient(ctx context.Context, req domain.GrantRequest) (*domain.Client, error) {
+	client, err := s.clientRepo.FindByID(ctx, req.ClientID)
 	if err != nil {
-		return nil, fmt.Errorf("client not found: %w", err)
+		return nil, apperrors.Wrap(apperrors.ErrCodeBadRequest, "client not found", err)
 	}
 	if subtle.ConstantTimeCompare([]byte(client.Secret), []byte(req.ClientSecret)) != 1 {
-		return nil, fmt.Errorf("invalid client credentials")
+		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "invalid client credentials")
 	}
 	if !client.HasGrantType(domain.GrantTypeClientCredentials) {
-		return nil, fmt.Errorf("grant type not allowed for client")
+		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "grant type not allowed for client")
 	}
 	return client, nil
 }
@@ -81,14 +82,14 @@ func (s *ClientCredentialsStrategy) resolveScopes(client *domain.Client, request
 	}
 	for _, scope := range scopes {
 		if !client.HasScope(scope) {
-			return nil, fmt.Errorf("scope not allowed: %s", scope)
+			return nil, apperrors.New(apperrors.ErrCodeBadRequest, fmt.Sprintf("scope not allowed: %s", scope))
 		}
 	}
 	return scopes, nil
 }
 
 func (s *ClientCredentialsStrategy) Handle(ctx context.Context, req domain.GrantRequest) (*domain.GrantResponse, error) {
-	client, err := s.validateClient(req)
+	client, err := s.validateClient(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +101,7 @@ func (s *ClientCredentialsStrategy) Handle(ctx context.Context, req domain.Grant
 
 	tokenID, err := generateID()
 	if err != nil {
-		return nil, fmt.Errorf("generating token id: %w", err)
+		return nil, apperrors.Wrap(apperrors.ErrCodeInternal, "generating token id", err)
 	}
 
 	now := time.Now()
@@ -116,12 +117,12 @@ func (s *ClientCredentialsStrategy) Handle(ctx context.Context, req domain.Grant
 
 	raw, err := s.tokenGen.Generate(ctx, token)
 	if err != nil {
-		return nil, fmt.Errorf("token generation failed: %w", err)
+		return nil, apperrors.Wrap(apperrors.ErrCodeInternal, "token generation failed", err)
 	}
 	token.Raw = raw
 
-	if err := s.tokenRepo.Save(token); err != nil {
-		return nil, fmt.Errorf("token save failed: %w", err)
+	if err := s.tokenRepo.Save(ctx, token); err != nil {
+		return nil, apperrors.Wrap(apperrors.ErrCodeInternal, "token save failed", err)
 	}
 
 	return &domain.GrantResponse{

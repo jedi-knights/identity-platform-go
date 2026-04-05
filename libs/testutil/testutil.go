@@ -3,26 +3,25 @@ package testutil
 import (
 	"reflect"
 	"testing"
+
+	logginglib "github.com/ocrosby/identity-platform-go/libs/logging"
 )
 
-// Logger is a minimal interface matching libs/logging.Logger,
-// used so test helpers can accept loggers without importing that module.
-type Logger interface {
-	Debug(msg string, args ...any)
-	Info(msg string, args ...any)
-	Warn(msg string, args ...any)
-	Error(msg string, args ...any)
-	With(args ...any) Logger
-}
+// Logger is an alias for logginglib.Logger so test helpers can use it
+// interchangeably with the canonical logging interface.
+type Logger = logginglib.Logger
+
+// Compile-time check that noopLogger implements logginglib.Logger.
+var _ logginglib.Logger = (*noopLogger)(nil)
 
 // noopLogger is a Logger that discards all log output.
 type noopLogger struct{}
 
-func (noopLogger) Debug(_ string, _ ...any) {}
-func (noopLogger) Info(_ string, _ ...any)  {}
-func (noopLogger) Warn(_ string, _ ...any)  {}
-func (noopLogger) Error(_ string, _ ...any) {}
-func (n noopLogger) With(_ ...any) Logger   { return n }
+func (noopLogger) Debug(_ string, _ ...any)          {}
+func (noopLogger) Info(_ string, _ ...any)           {}
+func (noopLogger) Warn(_ string, _ ...any)           {}
+func (noopLogger) Error(_ string, _ ...any)          {}
+func (n noopLogger) With(_ ...any) logginglib.Logger { return n }
 
 // NewTestLogger returns a no-op Logger suitable for unit tests.
 func NewTestLogger() Logger {

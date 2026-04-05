@@ -2,6 +2,7 @@ package httputil
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"time"
@@ -17,7 +18,9 @@ const traceIDHeader = "X-Trace-ID"
 // newUUID generates a random UUID v4 using crypto/rand.
 func newUUID() string {
 	var b [16]byte
-	_, _ = rand.Read(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		binary.BigEndian.PutUint64(b[:8], uint64(time.Now().UnixNano()))
+	}
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant bits
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
@@ -49,12 +52,19 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	if rw.status == 0 {
+		rw.status = http.StatusOK
+	}
+	return rw.ResponseWriter.Write(b)
+}
+
 // LoggingMiddleware returns middleware that logs each request/response.
 func LoggingMiddleware(logger Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+			rw := &responseWriter{ResponseWriter: w, status: 0}
 
 			ctx := r.Context()
 			traceID := logging.TraceIDFromContext(ctx)

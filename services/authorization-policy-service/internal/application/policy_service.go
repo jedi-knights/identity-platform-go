@@ -6,40 +6,29 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/domain"
 )
 
-// EvaluationRequest is the input for policy evaluation.
-type EvaluationRequest struct {
-	SubjectID string `json:"subject_id"`
-	Resource  string `json:"resource"`
-	Action    string `json:"action"`
-}
-
-// EvaluationResponse is the result of policy evaluation.
-type EvaluationResponse struct {
-	Allowed bool   `json:"allowed"`
-	Reason  string `json:"reason,omitempty"`
-}
-
 // PolicyService evaluates authorization policies.
 type PolicyService struct {
 	policyRepo domain.PolicyRepository
 	roleRepo   domain.RoleRepository
 }
 
+// NewPolicyService creates a PolicyService backed by the given repositories.
 func NewPolicyService(policyRepo domain.PolicyRepository, roleRepo domain.RoleRepository) *PolicyService {
 	return &PolicyService{policyRepo: policyRepo, roleRepo: roleRepo}
 }
 
-func (s *PolicyService) Evaluate(_ context.Context, req EvaluationRequest) (*EvaluationResponse, error) {
-	policy, err := s.policyRepo.FindBySubject(req.SubjectID)
+// Evaluate checks whether the subject in req is permitted to perform the requested action.
+func (s *PolicyService) Evaluate(ctx context.Context, req domain.EvaluationRequest) (*domain.EvaluationResponse, error) {
+	policy, err := s.policyRepo.FindBySubject(ctx, req.SubjectID)
 	if err != nil {
-		return &EvaluationResponse{Allowed: false, Reason: "no policy found for subject"}, nil
+		return &domain.EvaluationResponse{Allowed: false, Reason: "no policy found for subject"}, nil
 	}
 
-	spec := NewPermissionSpecification(s.roleRepo, req.Resource, req.Action)
+	spec := NewPermissionSpecification(ctx, s.roleRepo, req.Resource, req.Action)
 
 	if spec.IsSatisfiedBy(policy.Roles) {
-		return &EvaluationResponse{Allowed: true}, nil
+		return &domain.EvaluationResponse{Allowed: true}, nil
 	}
 
-	return &EvaluationResponse{Allowed: false, Reason: "insufficient permissions"}, nil
+	return &domain.EvaluationResponse{Allowed: false, Reason: "insufficient permissions"}, nil
 }
