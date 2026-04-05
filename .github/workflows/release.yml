@@ -41,6 +41,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
+      - name: Configure git identity
+        run: |
+          git config user.name "semantic-release-bot"
+          git config user.email "semantic-release-bot@users.noreply.github.com"
+
       - name: Install go-semantic-release
         run: go install github.com/jedi-knights/go-semantic-release/cmd/semantic-release@v0.4.0
 
