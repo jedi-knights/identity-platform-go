@@ -1,5 +1,7 @@
 package domain
 
+import "context"
+
 // Permission represents a specific action on a resource.
 type Permission struct {
 	Resource string
@@ -18,14 +20,27 @@ type Policy struct {
 	Roles     []string
 }
 
+// EvaluationRequest is the input for policy evaluation.
+type EvaluationRequest struct {
+	SubjectID string `json:"subject_id"`
+	Resource  string `json:"resource"`
+	Action    string `json:"action"`
+}
+
+// EvaluationResponse is the result of policy evaluation.
+type EvaluationResponse struct {
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason,omitempty"`
+}
+
 // PolicyRepository stores policies.
 type PolicyRepository interface {
-	FindBySubject(subjectID string) (*Policy, error)
-	Save(policy *Policy) error
+	FindBySubject(ctx context.Context, subjectID string) (*Policy, error)
+	Save(ctx context.Context, policy *Policy) error
 }
 
 // RoleRepository stores role definitions.
 type RoleRepository interface {
-	FindByName(name string) (*Role, error)
-	Save(role *Role) error
+	FindByName(ctx context.Context, name string) (*Role, error)
+	Save(ctx context.Context, role *Role) error
 }

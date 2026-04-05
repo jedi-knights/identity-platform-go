@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -21,7 +22,7 @@ func NewClientRepository(initial []*domain.Client) *ClientRepository {
 	return r
 }
 
-func (r *ClientRepository) FindByID(id string) (*domain.Client, error) {
+func (r *ClientRepository) FindByID(_ context.Context, id string) (*domain.Client, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	client, ok := r.clients[id]
@@ -31,7 +32,7 @@ func (r *ClientRepository) FindByID(id string) (*domain.Client, error) {
 	return client, nil
 }
 
-func (r *ClientRepository) Save(client *domain.Client) error {
+func (r *ClientRepository) Save(_ context.Context, client *domain.Client) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.clients[client.ID] = client

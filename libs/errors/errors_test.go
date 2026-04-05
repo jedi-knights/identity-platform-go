@@ -79,22 +79,25 @@ func TestIsBadRequest(t *testing.T) {
 
 func TestHTTPStatus(t *testing.T) {
 	tests := []struct {
+		name     string
 		code     apperrors.ErrorCode
 		expected int
 	}{
-		{apperrors.ErrCodeNotFound, http.StatusNotFound},
-		{apperrors.ErrCodeUnauthorized, http.StatusUnauthorized},
-		{apperrors.ErrCodeForbidden, http.StatusForbidden},
-		{apperrors.ErrCodeBadRequest, http.StatusBadRequest},
-		{apperrors.ErrCodeConflict, http.StatusConflict},
-		{apperrors.ErrCodeInternal, http.StatusInternalServerError},
+		{"not found", apperrors.ErrCodeNotFound, http.StatusNotFound},
+		{"unauthorized", apperrors.ErrCodeUnauthorized, http.StatusUnauthorized},
+		{"forbidden", apperrors.ErrCodeForbidden, http.StatusForbidden},
+		{"bad request", apperrors.ErrCodeBadRequest, http.StatusBadRequest},
+		{"conflict", apperrors.ErrCodeConflict, http.StatusConflict},
+		{"internal", apperrors.ErrCodeInternal, http.StatusInternalServerError},
 	}
 	for _, tt := range tests {
-		err := apperrors.New(tt.code, "msg")
-		got := apperrors.HTTPStatus(err)
-		if got != tt.expected {
-			t.Fatalf("code %s: expected %d, got %d", tt.code, tt.expected, got)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			err := apperrors.New(tt.code, "msg")
+			got := apperrors.HTTPStatus(err)
+			if got != tt.expected {
+				t.Errorf("code %s: expected %d, got %d", tt.code, tt.expected, got)
+			}
+		})
 	}
 }
 

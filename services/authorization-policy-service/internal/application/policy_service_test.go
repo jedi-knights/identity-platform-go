@@ -17,7 +17,7 @@ func newMockPolicyRepo() *mockPolicyRepo {
 	return &mockPolicyRepo{policies: make(map[string]*domain.Policy)}
 }
 
-func (m *mockPolicyRepo) FindBySubject(subjectID string) (*domain.Policy, error) {
+func (m *mockPolicyRepo) FindBySubject(_ context.Context, subjectID string) (*domain.Policy, error) {
 	p, ok := m.policies[subjectID]
 	if !ok {
 		return nil, fmt.Errorf("policy not found for subject: %s", subjectID)
@@ -25,7 +25,7 @@ func (m *mockPolicyRepo) FindBySubject(subjectID string) (*domain.Policy, error)
 	return p, nil
 }
 
-func (m *mockPolicyRepo) Save(p *domain.Policy) error {
+func (m *mockPolicyRepo) Save(_ context.Context, p *domain.Policy) error {
 	m.policies[p.SubjectID] = p
 	return nil
 }
@@ -38,7 +38,7 @@ func newMockRoleRepo() *mockRoleRepo {
 	return &mockRoleRepo{roles: make(map[string]*domain.Role)}
 }
 
-func (m *mockRoleRepo) FindByName(name string) (*domain.Role, error) {
+func (m *mockRoleRepo) FindByName(_ context.Context, name string) (*domain.Role, error) {
 	r, ok := m.roles[name]
 	if !ok {
 		return nil, fmt.Errorf("role not found: %s", name)
@@ -46,7 +46,7 @@ func (m *mockRoleRepo) FindByName(name string) (*domain.Role, error) {
 	return r, nil
 }
 
-func (m *mockRoleRepo) Save(r *domain.Role) error {
+func (m *mockRoleRepo) Save(_ context.Context, r *domain.Role) error {
 	m.roles[r.Name] = r
 	return nil
 }
@@ -67,7 +67,7 @@ func TestPolicyService_Evaluate_Allowed(t *testing.T) {
 	}
 
 	svc := application.NewPolicyService(policyRepo, roleRepo)
-	resp, err := svc.Evaluate(context.Background(), application.EvaluationRequest{
+	resp, err := svc.Evaluate(context.Background(), domain.EvaluationRequest{
 		SubjectID: "user-123",
 		Resource:  "articles",
 		Action:    "read",
@@ -86,7 +86,7 @@ func TestPolicyService_Evaluate_Denied_NoPolicyFound(t *testing.T) {
 	roleRepo := newMockRoleRepo()
 
 	svc := application.NewPolicyService(policyRepo, roleRepo)
-	resp, err := svc.Evaluate(context.Background(), application.EvaluationRequest{
+	resp, err := svc.Evaluate(context.Background(), domain.EvaluationRequest{
 		SubjectID: "unknown-user",
 		Resource:  "articles",
 		Action:    "write",
@@ -116,7 +116,7 @@ func TestPolicyService_Evaluate_Denied_PermissionMismatch(t *testing.T) {
 	}
 
 	svc := application.NewPolicyService(policyRepo, roleRepo)
-	resp, err := svc.Evaluate(context.Background(), application.EvaluationRequest{
+	resp, err := svc.Evaluate(context.Background(), domain.EvaluationRequest{
 		SubjectID: "user-456",
 		Resource:  "articles",
 		Action:    "delete",

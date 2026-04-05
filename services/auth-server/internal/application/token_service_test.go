@@ -30,7 +30,9 @@ func TestTokenService_Introspect_ValidToken(t *testing.T) {
 		t.Fatalf("failed to generate token: %v", err)
 	}
 	domainToken.Raw = raw
-	_ = tokenRepo.Save(domainToken)
+	if err := tokenRepo.Save(context.Background(), domainToken); err != nil {
+		t.Fatalf("unexpected save error: %v", err)
+	}
 
 	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo)
 	svc := application.NewTokenService(tokenRepo, validator)
@@ -98,7 +100,9 @@ func TestTokenService_Revoke(t *testing.T) {
 		t.Fatalf("failed to generate token: %v", err)
 	}
 	domainToken.Raw = raw
-	_ = tokenRepo.Save(domainToken)
+	if err := tokenRepo.Save(context.Background(), domainToken); err != nil {
+		t.Fatalf("unexpected save error: %v", err)
+	}
 
 	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo)
 	svc := application.NewTokenService(tokenRepo, validator)
@@ -107,7 +111,7 @@ func TestTokenService_Revoke(t *testing.T) {
 		t.Fatalf("unexpected revoke error: %v", err)
 	}
 
-	if _, err := tokenRepo.FindByRaw(raw); err == nil {
+	if _, err := tokenRepo.FindByRaw(context.Background(), raw); err == nil {
 		t.Error("expected token to be deleted after revoke")
 	}
 }

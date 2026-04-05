@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // TokenType represents the type of token.
 type TokenType string
@@ -37,7 +40,18 @@ func (t *Token) HasScope(scope string) bool {
 
 // TokenRepository is the port for token persistence.
 type TokenRepository interface {
-	Save(token *Token) error
-	FindByRaw(raw string) (*Token, error)
-	Delete(raw string) error
+	Save(ctx context.Context, token *Token) error
+	FindByRaw(ctx context.Context, raw string) (*Token, error)
+	Delete(ctx context.Context, raw string) error
+}
+
+// IntrospectResponse is the result of token introspection per RFC 7662.
+type IntrospectResponse struct {
+	Active    bool   `json:"active"`
+	ClientID  string `json:"client_id,omitempty"`
+	Subject   string `json:"sub,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	ExpiresAt int64  `json:"exp,omitempty"`
+	IssuedAt  int64  `json:"iat,omitempty"`
+	TokenType string `json:"token_type,omitempty"`
 }

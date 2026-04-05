@@ -18,7 +18,7 @@ func newMockResourceRepo() *mockResourceRepo {
 	return &mockResourceRepo{resources: make(map[string]*domain.Resource)}
 }
 
-func (m *mockResourceRepo) FindByID(id string) (*domain.Resource, error) {
+func (m *mockResourceRepo) FindByID(_ context.Context, id string) (*domain.Resource, error) {
 	r, ok := m.resources[id]
 	if !ok {
 		return nil, fmt.Errorf("resource not found: %s", id)
@@ -26,7 +26,7 @@ func (m *mockResourceRepo) FindByID(id string) (*domain.Resource, error) {
 	return r, nil
 }
 
-func (m *mockResourceRepo) FindAll() ([]*domain.Resource, error) {
+func (m *mockResourceRepo) FindAll(_ context.Context) ([]*domain.Resource, error) {
 	result := make([]*domain.Resource, 0, len(m.resources))
 	for _, r := range m.resources {
 		result = append(result, r)
@@ -34,7 +34,7 @@ func (m *mockResourceRepo) FindAll() ([]*domain.Resource, error) {
 	return result, nil
 }
 
-func (m *mockResourceRepo) Save(r *domain.Resource) error {
+func (m *mockResourceRepo) Save(_ context.Context, r *domain.Resource) error {
 	m.resources[r.ID] = r
 	return nil
 }
@@ -89,7 +89,7 @@ func TestResourceService_CreateResource_Success(t *testing.T) {
 	repo := newMockResourceRepo()
 	svc := application.NewResourceService(repo)
 
-	r, err := svc.CreateResource(context.Background(), application.CreateResourceRequest{
+	r, err := svc.CreateResource(context.Background(), domain.CreateResourceRequest{
 		Name:        "My Resource",
 		Description: "A test resource",
 		OwnerID:     "user-1",
@@ -110,7 +110,7 @@ func TestResourceService_CreateResource_EmptyName(t *testing.T) {
 	repo := newMockResourceRepo()
 	svc := application.NewResourceService(repo)
 
-	_, err := svc.CreateResource(context.Background(), application.CreateResourceRequest{
+	_, err := svc.CreateResource(context.Background(), domain.CreateResourceRequest{
 		Name: "",
 	})
 	if err == nil {

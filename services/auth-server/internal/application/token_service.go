@@ -120,19 +120,19 @@ func NewTokenService(tokenRepo domain.TokenRepository, validator TokenValidator)
 	return &TokenService{tokenRepo: tokenRepo, validator: validator}
 }
 
-func (s *TokenService) Introspect(ctx context.Context, raw string) (*IntrospectResponse, error) {
+func (s *TokenService) Introspect(ctx context.Context, raw string) (*domain.IntrospectResponse, error) {
 	token, err := s.validator.Validate(ctx, raw)
 	if err != nil {
-		return &IntrospectResponse{Active: false}, nil
+		return &domain.IntrospectResponse{Active: false}, nil
 	}
 
 	if token.IsExpired() {
-		return &IntrospectResponse{Active: false}, nil
+		return &domain.IntrospectResponse{Active: false}, nil
 	}
 
 	scopeStr := strings.Join(token.Scopes, " ")
 
-	return &IntrospectResponse{
+	return &domain.IntrospectResponse{
 		Active:    true,
 		ClientID:  token.ClientID,
 		Subject:   token.Subject,
@@ -143,19 +143,8 @@ func (s *TokenService) Introspect(ctx context.Context, raw string) (*IntrospectR
 	}, nil
 }
 
-func (s *TokenService) Revoke(_ context.Context, raw string) error {
-	return s.tokenRepo.Delete(raw)
-}
-
-// IntrospectResponse is the response for token introspection (RFC 7662).
-type IntrospectResponse struct {
-	Active    bool   `json:"active"`
-	ClientID  string `json:"client_id,omitempty"`
-	Subject   string `json:"sub,omitempty"`
-	Scope     string `json:"scope,omitempty"`
-	ExpiresAt int64  `json:"exp,omitempty"`
-	IssuedAt  int64  `json:"iat,omitempty"`
-	TokenType string `json:"token_type,omitempty"`
+func (s *TokenService) Revoke(ctx context.Context, raw string) error {
+	return s.tokenRepo.Delete(ctx, raw)
 }
 
 // generateID generates a random token ID.

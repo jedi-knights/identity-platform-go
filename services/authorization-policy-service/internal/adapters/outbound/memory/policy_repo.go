@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"sync"
 
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
@@ -13,16 +14,19 @@ type PolicyRepository struct {
 	policies map[string]*domain.Policy
 }
 
+// NewPolicyRepository creates a PolicyRepository seeded with default policies.
 func NewPolicyRepository() *PolicyRepository {
 	r := &PolicyRepository{
 		policies: make(map[string]*domain.Policy),
 	}
-	_ = r.Save(&domain.Policy{SubjectID: "user-1", Roles: []string{"admin"}})
-	_ = r.Save(&domain.Policy{SubjectID: "user-2", Roles: []string{"viewer"}})
+	// Seed directly to avoid unnecessary locking through the public Save method.
+	r.policies["user-1"] = &domain.Policy{SubjectID: "user-1", Roles: []string{"admin"}}
+	r.policies["user-2"] = &domain.Policy{SubjectID: "user-2", Roles: []string{"viewer"}}
 	return r
 }
 
-func (r *PolicyRepository) FindBySubject(subjectID string) (*domain.Policy, error) {
+// FindBySubject returns the policy for the given subject, or ErrCodeNotFound.
+func (r *PolicyRepository) FindBySubject(_ context.Context, subjectID string) (*domain.Policy, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	p, ok := r.policies[subjectID]
@@ -32,7 +36,8 @@ func (r *PolicyRepository) FindBySubject(subjectID string) (*domain.Policy, erro
 	return p, nil
 }
 
-func (r *PolicyRepository) Save(policy *domain.Policy) error {
+// Save persists the policy, overwriting any existing entry for the same subject.
+func (r *PolicyRepository) Save(_ context.Context, policy *domain.Policy) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.policies[policy.SubjectID] = policy
@@ -45,28 +50,31 @@ type RoleRepository struct {
 	roles map[string]*domain.Role
 }
 
+// NewRoleRepository creates a RoleRepository seeded with default roles.
 func NewRoleRepository() *RoleRepository {
 	r := &RoleRepository{
 		roles: make(map[string]*domain.Role),
 	}
-	_ = r.Save(&domain.Role{
+	// Seed directly to avoid unnecessary locking through the public Save method.
+	r.roles["admin"] = &domain.Role{
 		Name: "admin",
 		Permissions: []domain.Permission{
 			{Resource: "resource", Action: "read"},
 			{Resource: "resource", Action: "write"},
 			{Resource: "resource", Action: "delete"},
 		},
-	})
-	_ = r.Save(&domain.Role{
+	}
+	r.roles["viewer"] = &domain.Role{
 		Name: "viewer",
 		Permissions: []domain.Permission{
 			{Resource: "resource", Action: "read"},
 		},
-	})
+	}
 	return r
 }
 
-func (r *RoleRepository) FindByName(name string) (*domain.Role, error) {
+// FindByName returns the role with the given name, or ErrCodeNotFound.
+func (r *RoleRepository) FindByName(_ context.Context, name string) (*domain.Role, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	role, ok := r.roles[name]
@@ -76,7 +84,8 @@ func (r *RoleRepository) FindByName(name string) (*domain.Role, error) {
 	return role, nil
 }
 
-func (r *RoleRepository) Save(role *domain.Role) error {
+// Save persists the role, overwriting any existing entry with the same name.
+func (r *RoleRepository) Save(_ context.Context, role *domain.Role) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.roles[role.Name] = role

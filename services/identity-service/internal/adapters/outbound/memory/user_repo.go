@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"sync"
 
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
@@ -21,7 +22,7 @@ func NewUserRepository() *UserRepository {
 	}
 }
 
-func (r *UserRepository) FindByID(id string) (*domain.User, error) {
+func (r *UserRepository) FindByID(_ context.Context, id string) (*domain.User, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	u, ok := r.byID[id]
@@ -31,7 +32,7 @@ func (r *UserRepository) FindByID(id string) (*domain.User, error) {
 	return u, nil
 }
 
-func (r *UserRepository) FindByEmail(email string) (*domain.User, error) {
+func (r *UserRepository) FindByEmail(_ context.Context, email string) (*domain.User, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	u, ok := r.byEmail[email]
@@ -41,7 +42,7 @@ func (r *UserRepository) FindByEmail(email string) (*domain.User, error) {
 	return u, nil
 }
 
-func (r *UserRepository) Save(user *domain.User) error {
+func (r *UserRepository) Save(_ context.Context, user *domain.User) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.byID[user.ID] = user
@@ -49,7 +50,7 @@ func (r *UserRepository) Save(user *domain.User) error {
 	return nil
 }
 
-func (r *UserRepository) Update(user *domain.User) error {
+func (r *UserRepository) Update(_ context.Context, user *domain.User) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.byID[user.ID]; !ok {

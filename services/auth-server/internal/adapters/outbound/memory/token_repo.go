@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -17,14 +18,14 @@ func NewTokenRepository() *TokenRepository {
 	return &TokenRepository{tokens: make(map[string]*domain.Token)}
 }
 
-func (r *TokenRepository) Save(token *domain.Token) error {
+func (r *TokenRepository) Save(_ context.Context, token *domain.Token) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.tokens[token.Raw] = token
 	return nil
 }
 
-func (r *TokenRepository) FindByRaw(raw string) (*domain.Token, error) {
+func (r *TokenRepository) FindByRaw(_ context.Context, raw string) (*domain.Token, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	token, ok := r.tokens[raw]
@@ -34,7 +35,7 @@ func (r *TokenRepository) FindByRaw(raw string) (*domain.Token, error) {
 	return token, nil
 }
 
-func (r *TokenRepository) Delete(raw string) error {
+func (r *TokenRepository) Delete(_ context.Context, raw string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.tokens, raw)
