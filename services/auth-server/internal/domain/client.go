@@ -1,5 +1,7 @@
 package domain
 
+import "context"
+
 // Client represents an OAuth2 client.
 type Client struct {
 	ID           string
@@ -39,6 +41,6 @@ func (c *Client) HasRedirectURI(uri string) bool {
 
 // ClientRepository is the port for client persistence.
 type ClientRepository interface {
-	FindByID(id string) (*Client, error)
-	Save(client *Client) error
+	FindByID(ctx context.Context, id string) (*Client, error)
+	Save(ctx context.Context, client *Client) error
 }

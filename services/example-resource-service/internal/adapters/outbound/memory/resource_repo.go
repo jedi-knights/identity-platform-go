@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -14,21 +15,24 @@ type ResourceRepository struct {
 	resources map[string]*domain.Resource
 }
 
+// NewResourceRepository creates a ResourceRepository seeded with a default resource.
 func NewResourceRepository() *ResourceRepository {
 	r := &ResourceRepository{
 		resources: make(map[string]*domain.Resource),
 	}
-	_ = r.Save(&domain.Resource{
+	// Seed directly to avoid the overhead of locking through Save.
+	r.resources["res-1"] = &domain.Resource{
 		ID:          "res-1",
 		Name:        "Sample Resource",
 		Description: "A sample protected resource",
 		OwnerID:     "user-1",
 		CreatedAt:   time.Now(),
-	})
+	}
 	return r
 }
 
-func (r *ResourceRepository) FindByID(id string) (*domain.Resource, error) {
+// FindByID returns the resource with the given ID, or ErrCodeNotFound.
+func (r *ResourceRepository) FindByID(_ context.Context, id string) (*domain.Resource, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	res, ok := r.resources[id]
@@ -38,7 +42,8 @@ func (r *ResourceRepository) FindByID(id string) (*domain.Resource, error) {
 	return res, nil
 }
 
-func (r *ResourceRepository) FindAll() ([]*domain.Resource, error) {
+// FindAll returns all stored resources.
+func (r *ResourceRepository) FindAll(_ context.Context) ([]*domain.Resource, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	result := make([]*domain.Resource, 0, len(r.resources))
@@ -48,7 +53,8 @@ func (r *ResourceRepository) FindAll() ([]*domain.Resource, error) {
 	return result, nil
 }
 
-func (r *ResourceRepository) Save(resource *domain.Resource) error {
+// Save persists the resource, overwriting any existing entry for the same ID.
+func (r *ResourceRepository) Save(_ context.Context, resource *domain.Resource) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.resources[resource.ID] = resource

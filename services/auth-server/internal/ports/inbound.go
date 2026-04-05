@@ -3,7 +3,6 @@ package ports
 import (
 	"context"
 
-	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 )
 
@@ -14,7 +13,7 @@ type TokenIssuer interface {
 
 // TokenIntrospector is the inbound port for token introspection.
 type TokenIntrospector interface {
-	Introspect(ctx context.Context, raw string) (*application.IntrospectResponse, error)
+	Introspect(ctx context.Context, raw string) (*domain.IntrospectResponse, error)
 }
 
 // TokenRevoker is the inbound port for token revocation.

@@ -7,7 +7,7 @@ import (
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
 	"github.com/ocrosby/identity-platform-go/libs/logging"
-	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/application"
+	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/ports"
 )
 
@@ -28,13 +28,13 @@ func NewHandler(evaluator ports.PolicyEvaluator, logger logging.Logger) *Handler
 // @Tags         policy
 // @Accept       json
 // @Produce      json
-// @Param        request  body      application.EvaluationRequest   true  "Evaluation request"
-// @Success      200      {object}  application.EvaluationResponse
+// @Param        request  body      domain.EvaluationRequest   true  "Evaluation request"
+// @Success      200      {object}  domain.EvaluationResponse
 // @Failure      400      {object}  httputil.ErrorResponse
 // @Router       /evaluate [post]
 func (h *Handler) Evaluate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
-	var req application.EvaluationRequest
+	var req domain.EvaluationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
 		return

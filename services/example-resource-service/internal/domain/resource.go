@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Resource is an example protected resource.
 type Resource struct {
@@ -13,7 +16,14 @@ type Resource struct {
 
 // ResourceRepository defines persistence for resources.
 type ResourceRepository interface {
-	FindByID(id string) (*Resource, error)
-	FindAll() ([]*Resource, error)
-	Save(resource *Resource) error
+	FindByID(ctx context.Context, id string) (*Resource, error)
+	FindAll(ctx context.Context) ([]*Resource, error)
+	Save(ctx context.Context, resource *Resource) error
+}
+
+// CreateResourceRequest holds input for creating a resource.
+type CreateResourceRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	OwnerID     string `json:"owner_id"`
 }

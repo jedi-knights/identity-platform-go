@@ -21,35 +21,12 @@ func NewAuthService(userRepo domain.UserRepository, hasher domain.PasswordHasher
 	return &AuthService{userRepo: userRepo, hasher: hasher}
 }
 
-// LoginRequest contains login credentials.
-type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
+func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (*domain.LoginResponse, error) {
+	if req.Email == "" || req.Password == "" {
+		return nil, fmt.Errorf("email and password are required")
+	}
 
-// LoginResponse contains login result.
-type LoginResponse struct {
-	UserID string `json:"user_id"`
-	Email  string `json:"email"`
-	Name   string `json:"name"`
-}
-
-// RegisterRequest contains registration data.
-type RegisterRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Name     string `json:"name"`
-}
-
-// RegisterResponse contains registration result.
-type RegisterResponse struct {
-	UserID string `json:"user_id"`
-	Email  string `json:"email"`
-	Name   string `json:"name"`
-}
-
-func (s *AuthService) Login(_ context.Context, req LoginRequest) (*LoginResponse, error) {
-	user, err := s.userRepo.FindByEmail(req.Email)
+	user, err := s.userRepo.FindByEmail(ctx, req.Email)
 	if err != nil {
 		return nil, fmt.Errorf("invalid credentials")
 	}
@@ -62,22 +39,55 @@ func (s *AuthService) Login(_ context.Context, req LoginRequest) (*LoginResponse
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
-	return &LoginResponse{
+	return &domain.LoginResponse{
 		UserID: user.ID,
 		Email:  user.Email,
 		Name:   user.Name,
 	}, nil
 }
 
-func (s *AuthService) Register(_ context.Context, req RegisterRequest) (*RegisterResponse, error) {
-	existing, err := s.userRepo.FindByEmail(req.Email)
-	if err != nil && !apperrors.IsNotFound(err) {
-		return nil, fmt.Errorf("checking existing user: %w", err)
-	}
-	if existing != nil {
-		return nil, fmt.Errorf("email already registered")
+func (s *AuthService) Register(ctx context.Context, req domain.RegisterRequest) (*domain.RegisterResponse, error) {
+	if req.Email == "" || req.Password == "" || req.Name == "" {
+		return nil, fmt.Errorf("email, password, and name are required")
 	}
 
+	if err := s.assertEmailAvailable(ctx, req.Email); err != nil {
+		return nil, err
+	}
+
+	user, err := s.buildUser(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.userRepo.Save(ctx, user); err != nil {
+		return nil, fmt.Errorf("failed to save user: %w", err)
+	}
+
+	return &domain.RegisterResponse{
+		UserID: user.ID,
+		Email:  user.Email,
+		Name:   user.Name,
+	}, nil
+}
+
+// assertEmailAvailable returns an error if the email is already taken or if
+// the repository check fails for a reason other than "not found".
+func (s *AuthService) assertEmailAvailable(ctx context.Context, email string) error {
+	existing, err := s.userRepo.FindByEmail(ctx, email)
+	if err != nil && !apperrors.IsNotFound(err) {
+		return fmt.Errorf("checking existing user: %w", err)
+	}
+	if existing != nil {
+		return fmt.Errorf("email already registered")
+	}
+	return nil
+}
+
+// buildUser creates a new User value from a RegisterRequest by hashing the
+// password and generating a random ID. Separating this keeps Register's
+// cyclomatic complexity within bounds.
+func (s *AuthService) buildUser(req domain.RegisterRequest) (*domain.User, error) {
 	hash, err := s.hasher.Hash(req.Password)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash password: %w", err)
@@ -87,24 +97,16 @@ func (s *AuthService) Register(_ context.Context, req RegisterRequest) (*Registe
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate user id: %w", err)
 	}
-	user := &domain.User{
+
+	now := time.Now()
+	return &domain.User{
 		ID:           id,
 		Email:        req.Email,
 		PasswordHash: hash,
 		Name:         req.Name,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		CreatedAt:    now,
+		UpdatedAt:    now,
 		Active:       true,
-	}
-
-	if err := s.userRepo.Save(user); err != nil {
-		return nil, fmt.Errorf("failed to save user: %w", err)
-	}
-
-	return &RegisterResponse{
-		UserID: user.ID,
-		Email:  user.Email,
-		Name:   user.Name,
 	}, nil
 }
 

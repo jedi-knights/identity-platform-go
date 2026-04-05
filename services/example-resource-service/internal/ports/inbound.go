@@ -3,7 +3,6 @@ package ports
 import (
 	"context"
 
-	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/domain"
 )
 
@@ -19,5 +18,5 @@ type ResourceGetter interface {
 
 // ResourceCreator creates a new resource.
 type ResourceCreator interface {
-	CreateResource(ctx context.Context, req application.CreateResourceRequest) (*domain.Resource, error)
+	CreateResource(ctx context.Context, req domain.CreateResourceRequest) (*domain.Resource, error)
 }

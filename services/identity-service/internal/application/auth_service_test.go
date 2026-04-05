@@ -23,7 +23,7 @@ func newMockUserRepo() *mockUserRepo {
 	}
 }
 
-func (m *mockUserRepo) FindByID(id string) (*domain.User, error) {
+func (m *mockUserRepo) FindByID(_ context.Context, id string) (*domain.User, error) {
 	u, ok := m.byID[id]
 	if !ok {
 		return nil, apperrors.New(apperrors.ErrCodeNotFound, fmt.Sprintf("not found: %s", id))
@@ -31,7 +31,7 @@ func (m *mockUserRepo) FindByID(id string) (*domain.User, error) {
 	return u, nil
 }
 
-func (m *mockUserRepo) FindByEmail(email string) (*domain.User, error) {
+func (m *mockUserRepo) FindByEmail(_ context.Context, email string) (*domain.User, error) {
 	u, ok := m.byEmail[email]
 	if !ok {
 		return nil, apperrors.New(apperrors.ErrCodeNotFound, fmt.Sprintf("not found: %s", email))
@@ -39,13 +39,13 @@ func (m *mockUserRepo) FindByEmail(email string) (*domain.User, error) {
 	return u, nil
 }
 
-func (m *mockUserRepo) Save(u *domain.User) error {
+func (m *mockUserRepo) Save(_ context.Context, u *domain.User) error {
 	m.byID[u.ID] = u
 	m.byEmail[u.Email] = u
 	return nil
 }
 
-func (m *mockUserRepo) Update(u *domain.User) error {
+func (m *mockUserRepo) Update(_ context.Context, u *domain.User) error {
 	m.byID[u.ID] = u
 	m.byEmail[u.Email] = u
 	return nil
@@ -77,9 +77,9 @@ func TestLogin_Success(t *testing.T) {
 		Name:         "Alice",
 		Active:       true,
 	}
-	_ = repo.Save(user)
+	_ = repo.Save(context.Background(), user)
 
-	resp, err := svc.Login(context.Background(), application.LoginRequest{
+	resp, err := svc.Login(context.Background(), domain.LoginRequest{
 		Email:    "alice@example.com",
 		Password: "secret",
 	})
@@ -96,7 +96,7 @@ func TestLogin_UserNotFound(t *testing.T) {
 	hasher := &mockHasher{}
 	svc := application.NewAuthService(repo, hasher)
 
-	_, err := svc.Login(context.Background(), application.LoginRequest{
+	_, err := svc.Login(context.Background(), domain.LoginRequest{
 		Email:    "nobody@example.com",
 		Password: "secret",
 	})
@@ -117,9 +117,9 @@ func TestLogin_WrongPassword(t *testing.T) {
 		Name:         "Bob",
 		Active:       true,
 	}
-	_ = repo.Save(user)
+	_ = repo.Save(context.Background(), user)
 
-	_, err := svc.Login(context.Background(), application.LoginRequest{
+	_, err := svc.Login(context.Background(), domain.LoginRequest{
 		Email:    "bob@example.com",
 		Password: "wrong",
 	})
@@ -140,9 +140,9 @@ func TestLogin_DisabledAccount(t *testing.T) {
 		Name:         "Carol",
 		Active:       false,
 	}
-	_ = repo.Save(user)
+	_ = repo.Save(context.Background(), user)
 
-	_, err := svc.Login(context.Background(), application.LoginRequest{
+	_, err := svc.Login(context.Background(), domain.LoginRequest{
 		Email:    "carol@example.com",
 		Password: "secret",
 	})
@@ -156,7 +156,7 @@ func TestRegister_Success(t *testing.T) {
 	hasher := &mockHasher{}
 	svc := application.NewAuthService(repo, hasher)
 
-	resp, err := svc.Register(context.Background(), application.RegisterRequest{
+	resp, err := svc.Register(context.Background(), domain.RegisterRequest{
 		Email:    "dave@example.com",
 		Password: "pass123",
 		Name:     "Dave",
@@ -184,9 +184,9 @@ func TestRegister_EmailAlreadyRegistered(t *testing.T) {
 		Name:         "Eve",
 		Active:       true,
 	}
-	_ = repo.Save(user)
+	_ = repo.Save(context.Background(), user)
 
-	_, err := svc.Register(context.Background(), application.RegisterRequest{
+	_, err := svc.Register(context.Background(), domain.RegisterRequest{
 		Email:    "eve@example.com",
 		Password: "newpass",
 		Name:     "Eve Again",

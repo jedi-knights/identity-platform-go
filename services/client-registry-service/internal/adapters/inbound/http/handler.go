@@ -7,7 +7,7 @@ import (
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
 	"github.com/ocrosby/identity-platform-go/libs/logging"
-	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/application"
+	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/ports"
 )
 
@@ -43,14 +43,14 @@ func NewHandler(
 // @Tags         clients
 // @Accept       json
 // @Produce      json
-// @Param        request  body      application.CreateClientRequest   true  "Client registration data"
-// @Success      201      {object}  application.CreateClientResponse
+// @Param        request  body      domain.CreateClientRequest   true  "Client registration data"
+// @Success      201      {object}  domain.CreateClientResponse
 // @Failure      400      {object}  httputil.ErrorResponse
 // @Failure      500      {object}  httputil.ErrorResponse
 // @Router       /clients [post]
 func (h *Handler) CreateClient(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
-	var req application.CreateClientRequest
+	var req domain.CreateClientRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
 		return
@@ -72,7 +72,7 @@ func (h *Handler) CreateClient(w http.ResponseWriter, r *http.Request) {
 // @Description  Returns all registered OAuth2 clients (secrets excluded)
 // @Tags         clients
 // @Produce      json
-// @Success      200  {array}   application.GetClientResponse
+// @Success      200  {array}   domain.GetClientResponse
 // @Failure      500  {object}  httputil.ErrorResponse
 // @Router       /clients [get]
 func (h *Handler) ListClients(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +93,7 @@ func (h *Handler) ListClients(w http.ResponseWriter, r *http.Request) {
 // @Tags         clients
 // @Produce      json
 // @Param        id   path      string  true  "Client ID"
-// @Success      200  {object}  application.GetClientResponse
+// @Success      200  {object}  domain.GetClientResponse
 // @Failure      400  {object}  httputil.ErrorResponse
 // @Failure      404  {object}  httputil.ErrorResponse
 // @Router       /clients/{id} [get]
@@ -148,14 +148,14 @@ func (h *Handler) DeleteClient(w http.ResponseWriter, r *http.Request) {
 // @Tags         clients
 // @Accept       json
 // @Produce      json
-// @Param        request  body      application.ValidateClientRequest   true  "Client credentials"
-// @Success      200      {object}  application.ValidateClientResponse
+// @Param        request  body      domain.ValidateClientRequest   true  "Client credentials"
+// @Success      200      {object}  domain.ValidateClientResponse
 // @Failure      400      {object}  httputil.ErrorResponse
 // @Failure      500      {object}  httputil.ErrorResponse
 // @Router       /clients/validate [post]
 func (h *Handler) ValidateClient(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
-	var req application.ValidateClientRequest
+	var req domain.ValidateClientRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
 		return

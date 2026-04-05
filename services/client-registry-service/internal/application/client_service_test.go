@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/domain"
 )
@@ -18,7 +20,7 @@ func newMockClientRepo() *mockClientRepo {
 	return &mockClientRepo{clients: make(map[string]*domain.OAuthClient)}
 }
 
-func (m *mockClientRepo) FindByID(id string) (*domain.OAuthClient, error) {
+func (m *mockClientRepo) FindByID(_ context.Context, id string) (*domain.OAuthClient, error) {
 	c, ok := m.clients[id]
 	if !ok {
 		return nil, fmt.Errorf("client not found: %s", id)
@@ -26,22 +28,22 @@ func (m *mockClientRepo) FindByID(id string) (*domain.OAuthClient, error) {
 	return c, nil
 }
 
-func (m *mockClientRepo) Save(c *domain.OAuthClient) error {
+func (m *mockClientRepo) Save(_ context.Context, c *domain.OAuthClient) error {
 	m.clients[c.ID] = c
 	return nil
 }
 
-func (m *mockClientRepo) Update(c *domain.OAuthClient) error {
+func (m *mockClientRepo) Update(_ context.Context, c *domain.OAuthClient) error {
 	m.clients[c.ID] = c
 	return nil
 }
 
-func (m *mockClientRepo) Delete(id string) error {
+func (m *mockClientRepo) Delete(_ context.Context, id string) error {
 	delete(m.clients, id)
 	return nil
 }
 
-func (m *mockClientRepo) List() ([]*domain.OAuthClient, error) {
+func (m *mockClientRepo) List(_ context.Context) ([]*domain.OAuthClient, error) {
 	result := make([]*domain.OAuthClient, 0, len(m.clients))
 	for _, c := range m.clients {
 		result = append(result, c)
@@ -49,11 +51,21 @@ func (m *mockClientRepo) List() ([]*domain.OAuthClient, error) {
 	return result, nil
 }
 
+// mustHashSecret hashes a plain-text secret with bcrypt for use in test fixtures.
+func mustHashSecret(t *testing.T, secret string) string {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("failed to hash test secret: %v", err)
+	}
+	return string(hash)
+}
+
 func TestClientService_CreateClient_Success(t *testing.T) {
 	repo := newMockClientRepo()
 	svc := application.NewClientService(repo)
 
-	resp, err := svc.CreateClient(context.Background(), application.CreateClientRequest{
+	resp, err := svc.CreateClient(context.Background(), domain.CreateClientRequest{
 		Name:       "My App",
 		Scopes:     []string{"read", "write"},
 		GrantTypes: []string{"client_credentials"},
@@ -102,14 +114,15 @@ func TestClientService_GetClient_NotFound(t *testing.T) {
 
 func TestClientService_ValidateClient_Valid(t *testing.T) {
 	repo := newMockClientRepo()
+	// Secrets are stored as bcrypt hashes — seed the fixture accordingly.
 	repo.clients["my-client"] = &domain.OAuthClient{
 		ID:     "my-client",
-		Secret: "my-secret",
+		Secret: mustHashSecret(t, "my-secret"),
 		Active: true,
 	}
 
 	svc := application.NewClientService(repo)
-	resp, err := svc.ValidateClient(context.Background(), application.ValidateClientRequest{
+	resp, err := svc.ValidateClient(context.Background(), domain.ValidateClientRequest{
 		ClientID:     "my-client",
 		ClientSecret: "my-secret",
 	})
@@ -124,14 +137,15 @@ func TestClientService_ValidateClient_Valid(t *testing.T) {
 
 func TestClientService_ValidateClient_WrongSecret(t *testing.T) {
 	repo := newMockClientRepo()
+	// Secrets are stored as bcrypt hashes — seed the fixture accordingly.
 	repo.clients["my-client"] = &domain.OAuthClient{
 		ID:     "my-client",
-		Secret: "correct-secret",
+		Secret: mustHashSecret(t, "correct-secret"),
 		Active: true,
 	}
 
 	svc := application.NewClientService(repo)
-	resp, err := svc.ValidateClient(context.Background(), application.ValidateClientRequest{
+	resp, err := svc.ValidateClient(context.Background(), domain.ValidateClientRequest{
 		ClientID:     "my-client",
 		ClientSecret: "wrong-secret",
 	})

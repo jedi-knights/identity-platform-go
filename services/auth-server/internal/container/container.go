@@ -2,7 +2,6 @@ package container
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/ocrosby/identity-platform-go/libs/logging"
@@ -10,7 +9,6 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/memory"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/config"
-	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 )
 
 // Container holds all wired service dependencies.
@@ -28,11 +26,7 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 
 	// Outbound adapters (repositories).
 	tokenRepo := memory.NewTokenRepository()
-	var clients []*domain.Client
-	if os.Getenv("AUTH_SEED_TEST_CLIENT") == "true" {
-		clients = defaultClients()
-	}
-	clientRepo := memory.NewClientRepository(clients)
+	clientRepo := memory.NewClientRepository(nil)
 
 	// Token generator and validator.
 	signingKey := []byte(cfg.JWT.SigningKey)
@@ -57,17 +51,4 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 		Handler: handler,
 		Config:  cfg,
 	}, nil
-}
-
-// defaultClients returns sample OAuth clients for development/testing.
-func defaultClients() []*domain.Client {
-	return []*domain.Client{
-		{
-			ID:         "test-client",
-			Secret:     "test-secret",
-			Name:       "Test Client",
-			Scopes:     []string{"read", "write"},
-			GrantTypes: []domain.GrantType{domain.GrantTypeClientCredentials},
-		},
-	}
 }
