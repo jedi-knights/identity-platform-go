@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
@@ -48,7 +49,10 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.authenticator.Login(r.Context(), req)
 	if err != nil {
-		h.logger.Error("login failed", "error", err.Error())
+		var ae *apperrors.AppError
+		if !errors.As(err, &ae) || ae.Code == apperrors.ErrCodeInternal {
+			h.logger.Error("login failed", "error", err.Error())
+		}
 		httputil.WriteError(w, err)
 		return
 	}

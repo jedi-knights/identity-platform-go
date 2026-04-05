@@ -28,7 +28,10 @@ func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (*doma
 
 	user, err := s.userRepo.FindByEmail(ctx, req.Email)
 	if err != nil {
-		return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid credentials")
+		if apperrors.IsNotFound(err) {
+			return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid credentials")
+		}
+		return nil, fmt.Errorf("looking up user: %w", err)
 	}
 
 	if !user.Active {

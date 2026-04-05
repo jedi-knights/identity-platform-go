@@ -3,10 +3,10 @@ package http
 import (
 	"net/http"
 
-	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
 	"github.com/ocrosby/identity-platform-go/libs/logging"
 
+	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/ports"
 )
@@ -51,8 +51,10 @@ func (h *Handler) Introspect(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.introspector.Introspect(r.Context(), raw)
 	if err != nil {
+		// Per RFC 7662 §2.2, infrastructure failures must not expose errors to the caller.
+		// Return {active: false} to avoid leaking internal details.
 		h.logger.Error("introspection failed", "error", err.Error())
-		httputil.WriteError(w, err)
+		httputil.WriteJSON(w, http.StatusOK, map[string]bool{"active": false})
 		return
 	}
 

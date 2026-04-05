@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
@@ -34,25 +35,37 @@ func NewHandler(evaluator ports.PolicyEvaluator, logger logging.Logger) *Handler
 // @Router       /evaluate [post]
 func (h *Handler) Evaluate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
-	var req domain.EvaluationRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
-		return
-	}
-
-	if req.SubjectID == "" || req.Resource == "" || req.Action == "" {
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "subject_id, resource, and action are required"))
+	req, ok := h.decodeEvaluationRequest(w, r)
+	if !ok {
 		return
 	}
 
 	resp, err := h.evaluator.Evaluate(r.Context(), req)
 	if err != nil {
-		h.logger.Error("policy evaluation failed", "error", err.Error())
+		var ae *apperrors.AppError
+		if !errors.As(err, &ae) || ae.Code == apperrors.ErrCodeInternal {
+			h.logger.Error("policy evaluation failed", "error", err.Error())
+		}
 		httputil.WriteError(w, err)
 		return
 	}
 
 	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// decodeEvaluationRequest parses and validates the request body.
+// Returns (req, true) on success; writes an error response and returns (_, false) on failure.
+func (h *Handler) decodeEvaluationRequest(w http.ResponseWriter, r *http.Request) (domain.EvaluationRequest, bool) {
+	var req domain.EvaluationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
+		return req, false
+	}
+	if req.SubjectID == "" || req.Resource == "" || req.Action == "" {
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "subject_id, resource, and action are required"))
+		return req, false
+	}
+	return req, true
 }
 
 // Health handles GET /health.

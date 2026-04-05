@@ -164,6 +164,6 @@ func (s *AuthorizationCodeStrategy) Supports(gt domain.GrantType) bool {
 }
 
 // Handle is a stub; full PKCE implementation would validate code_verifier against stored code_challenge.
-func (s *AuthorizationCodeStrategy) Handle(_ context.Context, _ domain.GrantRequest) (*domain.GrantResponse, error) {
-	return nil, fmt.Errorf("authorization_code grant not yet fully implemented")
+func (s *AuthorizationCodeStrategy) Handle(_ context.Context, req domain.GrantRequest) (*domain.GrantResponse, error) {
+	return nil, fmt.Errorf("%w: %s is not yet fully implemented", ErrUnsupportedGrantType, req.GrantType)
 }

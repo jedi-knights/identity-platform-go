@@ -2,6 +2,7 @@ package logging
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"os"
 )
@@ -21,6 +22,7 @@ type Config struct {
 	Format      string // "json" or "text"
 	ServiceName string
 	Environment string
+	Output      io.Writer // nil defaults to os.Stdout
 }
 
 type contextKey int
@@ -48,15 +50,14 @@ func WithContext(ctx context.Context, l Logger) context.Context {
 	return context.WithValue(ctx, loggerKey, l)
 }
 
-// defaultLogger is returned by FromContext when no logger is in the context.
-var defaultLogger = NewLogger(Config{Level: "info", Format: "text"})
-
-// FromContext returns the Logger stored in the context, or a default logger.
+// FromContext returns the Logger stored in the context.
+// If no logger is present it constructs a default info-level text logger.
+// Prefer injecting loggers explicitly rather than relying on this fallback.
 func FromContext(ctx context.Context) Logger {
 	if l, ok := ctx.Value(loggerKey).(Logger); ok {
 		return l
 	}
-	return defaultLogger
+	return NewLogger(Config{Level: "info", Format: "text"})
 }
 
 // slogLogger wraps *slog.Logger and always includes service/environment fields.
@@ -67,11 +68,13 @@ type slogLogger struct {
 }
 
 // NewLogger creates a new Logger from the provided Config.
+// If Config.Level is not a recognised value, it defaults to INFO and logs a warning.
 func NewLogger(config Config) Logger {
-	opts := &slog.HandlerOptions{Level: parseLogLevel(config.Level)}
-	handler := newHandler(config.Format, opts)
+	level, ok := parseLogLevel(config.Level)
+	opts := &slog.HandlerOptions{Level: level}
+	handler := newHandler(config.Output, config.Format, opts)
 
-	attrs := []any{}
+	var attrs []any
 	if config.ServiceName != "" {
 		attrs = append(attrs, slog.String("service_name", config.ServiceName))
 	}
@@ -84,31 +87,45 @@ func NewLogger(config Config) Logger {
 		inner = inner.With(attrs...)
 	}
 
-	return &slogLogger{
+	l := &slogLogger{
 		inner:       inner,
 		serviceName: config.ServiceName,
 		environment: config.Environment,
 	}
+
+	if !ok && config.Level != "" {
+		l.Warn("unknown log level, defaulting to INFO", "level", config.Level)
+	}
+
+	return l
 }
 
-func parseLogLevel(level string) slog.Level {
+// parseLogLevel converts a level string to slog.Level.
+// Returns (level, true) on success, (LevelInfo, false) for unknown values.
+func parseLogLevel(level string) (slog.Level, bool) {
 	switch level {
 	case "debug":
-		return slog.LevelDebug
+		return slog.LevelDebug, true
 	case "warn":
-		return slog.LevelWarn
+		return slog.LevelWarn, true
 	case "error":
-		return slog.LevelError
+		return slog.LevelError, true
+	case "info", "":
+		return slog.LevelInfo, true
 	default:
-		return slog.LevelInfo
+		return slog.LevelInfo, false
 	}
 }
 
-func newHandler(format string, opts *slog.HandlerOptions) slog.Handler {
-	if format == "json" {
-		return slog.NewJSONHandler(os.Stdout, opts)
+// newHandler creates a slog.Handler writing to w (os.Stdout if nil).
+func newHandler(w io.Writer, format string, opts *slog.HandlerOptions) slog.Handler {
+	if w == nil {
+		w = os.Stdout
 	}
-	return slog.NewTextHandler(os.Stdout, opts)
+	if format == "json" {
+		return slog.NewJSONHandler(w, opts)
+	}
+	return slog.NewTextHandler(w, opts)
 }
 
 func (l *slogLogger) Debug(msg string, args ...any) {

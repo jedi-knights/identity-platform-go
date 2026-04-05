@@ -113,7 +113,11 @@ func (h *Handler) CreateResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Location", "/resources/"+resource.ID)
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	w.Header().Set("Location", scheme+"://"+r.Host+"/resources/"+resource.ID)
 	httputil.WriteJSON(w, http.StatusCreated, resource)
 }
 
