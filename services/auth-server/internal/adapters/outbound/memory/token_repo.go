@@ -41,6 +41,9 @@ func (r *TokenRepository) FindByRaw(_ context.Context, raw string) (*domain.Toke
 func (r *TokenRepository) Delete(_ context.Context, raw string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if _, ok := r.tokens[raw]; !ok {
+		return fmt.Errorf("%w", domain.ErrTokenNotFound)
+	}
 	delete(r.tokens, raw)
 	return nil
 }

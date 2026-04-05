@@ -191,6 +191,47 @@ tasks:
       - git config core.hooksPath .githooks
       - echo "Git hooks configured. Pre-push lint will run before every push."
 
+  coverage:
+    desc: Report unit test coverage per module and overall
+    cmds:
+      - |
+        echo ""
+        echo "Unit Test Coverage"
+        echo "=============================="
+        find . -name "go.mod" -not -path "*/vendor/*" | sort | while read modfile; do
+          dir=$(dirname "$modfile")
+          profile=$(mktemp)
+          (cd "$dir" && go test -tags unit -coverprofile="$profile" ./... 2>/dev/null) > /dev/null || true
+          if [ -s "$profile" ]; then
+            # Extract per-module total from go tool cover output
+            total_line=$(go tool cover -func="$profile" 2>/dev/null | grep "^total:")
+            pct=$(echo "$total_line" | awk '{print $3}')
+            printf "  %-50s %s\n" "$dir" "${pct:-N/A}"
+          else
+            printf "  %-50s %s\n" "$dir" "no testable packages"
+          fi
+          rm -f "$profile"
+        done
+        echo ""
+
+  coverage:pkg:
+    desc: Report unit test coverage per package (verbose, all modules)
+    cmds:
+      - |
+        echo ""
+        echo "Unit Test Coverage — Per Package"
+        echo "=============================="
+        find . -name "go.mod" -not -path "*/vendor/*" | sort | while read modfile; do
+          dir=$(dirname "$modfile")
+          echo ""
+          echo "--- $dir ---"
+          (cd "$dir" && go test -tags unit -cover ./... 2>/dev/null) \
+            | grep -E "^ok|coverage:" \
+            | grep -v "no test files" \
+            || true
+        done
+        echo ""
+
   clean:
     desc: Remove build artifacts
     cmds:
