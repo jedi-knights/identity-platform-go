@@ -24,9 +24,9 @@ func (s *PolicyService) Evaluate(ctx context.Context, req domain.EvaluationReque
 		return &domain.EvaluationResponse{Allowed: false, Reason: "no policy found for subject"}, nil
 	}
 
-	spec := NewPermissionSpecification(ctx, s.roleRepo, req.Resource, req.Action)
+	spec := NewPermissionSpecification(s.roleRepo, req.Resource, req.Action)
 
-	if spec.IsSatisfiedBy(policy.Roles) {
+	if spec.IsSatisfiedBy(ctx, policy.Roles) {
 		return &domain.EvaluationResponse{Allowed: true}, nil
 	}
 

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -67,7 +66,8 @@ func NewJWTTokenValidator(signingKey []byte, tokenRepo domain.TokenRepository) *
 	return &JWTTokenValidator{signingKey: signingKey, tokenRepo: tokenRepo}
 }
 
-func (v *JWTTokenValidator) Validate(_ context.Context, raw string) (*domain.Token, error) {
+func (v *JWTTokenValidator) Validate(ctx context.Context, raw string) (*domain.Token, error) {
+	_ = ctx
 	token, err := jwt.ParseWithClaims(raw, &JWTClaims{}, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
@@ -155,6 +155,3 @@ func generateID() (string, error) {
 	}
 	return hex.EncodeToString(b), nil
 }
-
-// TokenTTL is the default token time-to-live.
-const TokenTTL = time.Hour

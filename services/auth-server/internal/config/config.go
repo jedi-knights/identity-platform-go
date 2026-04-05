@@ -9,10 +9,11 @@ import (
 
 // Config holds all auth-server configuration.
 type Config struct {
-	Server ServerConfig `mapstructure:"server"`
-	JWT    JWTConfig    `mapstructure:"jwt"`
-	Token  TokenConfig  `mapstructure:"token"`
-	Log    LogConfig    `mapstructure:"log"`
+	Server         ServerConfig `mapstructure:"server"`
+	JWT            JWTConfig    `mapstructure:"jwt"`
+	Token          TokenConfig  `mapstructure:"token"`
+	Log            LogConfig    `mapstructure:"log"`
+	DevSeedClients bool         `mapstructure:"dev_seed_clients"`
 }
 
 type ServerConfig struct {
@@ -46,6 +47,7 @@ func Load() (*Config, error) {
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.environment", "development")
+	v.SetDefault("dev_seed_clients", false)
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")

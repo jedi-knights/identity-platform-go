@@ -23,20 +23,20 @@ func NewAuthService(userRepo domain.UserRepository, hasher domain.PasswordHasher
 
 func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (*domain.LoginResponse, error) {
 	if req.Email == "" || req.Password == "" {
-		return nil, fmt.Errorf("email and password are required")
+		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "email and password are required")
 	}
 
 	user, err := s.userRepo.FindByEmail(ctx, req.Email)
 	if err != nil {
-		return nil, fmt.Errorf("invalid credentials")
+		return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid credentials")
 	}
 
 	if !user.Active {
-		return nil, fmt.Errorf("account is disabled")
+		return nil, apperrors.New(apperrors.ErrCodeForbidden, "account is disabled")
 	}
 
 	if err := s.hasher.Compare(user.PasswordHash, req.Password); err != nil {
-		return nil, fmt.Errorf("invalid credentials")
+		return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid credentials")
 	}
 
 	return &domain.LoginResponse{
@@ -48,7 +48,7 @@ func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (*doma
 
 func (s *AuthService) Register(ctx context.Context, req domain.RegisterRequest) (*domain.RegisterResponse, error) {
 	if req.Email == "" || req.Password == "" || req.Name == "" {
-		return nil, fmt.Errorf("email, password, and name are required")
+		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "email, password, and name are required")
 	}
 
 	if err := s.assertEmailAvailable(ctx, req.Email); err != nil {
@@ -79,7 +79,7 @@ func (s *AuthService) assertEmailAvailable(ctx context.Context, email string) er
 		return fmt.Errorf("checking existing user: %w", err)
 	}
 	if existing != nil {
-		return fmt.Errorf("email already registered")
+		return apperrors.New(apperrors.ErrCodeConflict, "email already registered")
 	}
 	return nil
 }

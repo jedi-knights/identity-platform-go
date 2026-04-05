@@ -3,7 +3,6 @@ package http
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
@@ -50,11 +49,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.authenticator.Login(r.Context(), req)
 	if err != nil {
 		h.logger.Error("login failed", "error", err.Error())
-		if strings.Contains(err.Error(), "required") {
-			httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, err.Error()))
-			return
-		}
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid credentials"))
+		httputil.WriteError(w, err)
 		return
 	}
 
@@ -83,15 +78,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.registrar.Register(r.Context(), req)
 	if err != nil {
 		h.logger.Error("registration failed", "error", err.Error())
-		if strings.Contains(err.Error(), "already registered") {
-			httputil.WriteError(w, apperrors.New(apperrors.ErrCodeConflict, "email already registered"))
-			return
-		}
-		if strings.Contains(err.Error(), "required") {
-			httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, err.Error()))
-			return
-		}
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeInternal, "registration failed"))
+		httputil.WriteError(w, err)
 		return
 	}
 
