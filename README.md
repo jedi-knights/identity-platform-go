@@ -409,11 +409,34 @@ Key design decisions are documented in `docs/adr/`:
 
 This repository uses **independent versioning** — each service and shared library has its own version number and is released separately. Releases are automated via [go-semantic-release](https://github.com/jedi-knights/go-semantic-release), a native Go implementation of the [semantic-release](https://github.com/semantic-release/semantic-release) specification.
 
+### Key Concepts
+
+#### Independent versioning — each module releases on its own schedule
+
+Each service and library maintains its own semantic version tracked via its own tag prefix (e.g., `auth-server/v1.3.0`, `errors/v0.3.1`). A release only occurs for a module if there are **releasable commits that touch its path** since its last tag.
+
+- A commit to `services/auth-server/` bumps `auth-server` only.
+- A commit to `services/identity-service/` bumps `identity-service` only.
+- A commit to `docs/` or `Taskfile.yml` bumps nothing — those paths belong to no module.
+
+**In practice:** you can merge ten PRs in a row and each service will only receive a version bump when its own code changes. Services with no new commits since their last release are skipped entirely.
+
+#### Dependency propagation — library changes cascade to dependent services
+
+When a shared library is released, every service that declares it as a dependency is **also released in the same run** — even if that service has no new commits of its own. This is controlled by `dependency_propagation: true` in `.semantic-release.yaml`.
+
+**Why this matters:** if `libs/errors` ships a new minor version, all six services that depend on it (through `libs/httputil` and `libs/logging`) receive a patch-level version bump. This ensures every service tag always reflects the version of its dependencies at release time — there is never a published tag that silently points at a newer library than intended.
+
+**Cascade example:** a `feat:` commit to `libs/errors` triggers:
+1. `errors` → minor bump (e.g., `errors/v0.2.0` → `errors/v0.3.0`)
+2. `httputil`, `logging`, `testutil` → patch bump (they depend on `errors`)
+3. All six services → patch bump (they depend on `httputil` and `logging`)
+
+No service code needs to change for steps 2 and 3 to happen.
+
 ### How Releases Are Triggered
 
 A release is triggered automatically when a commit is pushed to `main`. The release tool analyzes the commit history since the last tag for each module and determines whether a release is needed based on [Conventional Commits](https://www.conventionalcommits.org/).
-
-**Only modules that have changed get released.** A commit to `services/auth-server/` will not bump `identity-service` or any library unless it is listed as a dependency of the changed module.
 
 | Commit type | Effect |
 |---|---|
