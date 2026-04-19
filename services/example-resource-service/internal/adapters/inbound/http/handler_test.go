@@ -1,3 +1,5 @@
+//go:build unit
+
 package http
 
 import (
@@ -251,5 +253,124 @@ func TestGetResource_LocalPermissions_Allowed(t *testing.T) {
 	}
 	if res.ID != "r1" {
 		t.Errorf("ID: got %q, want %q", res.ID, "r1")
+	}
+}
+
+// --- Additional GetResource tests ---
+
+// TestGetResource_EmptyID_Returns400 exercises the path-value guard.
+func TestGetResource_EmptyID_Returns400(t *testing.T) {
+	svc := newFakeResourceService()
+	h := NewHandler(svc, svc, svc, testutil.NewTestLogger(), nil)
+
+	r := httptest.NewRequest(http.MethodGet, "/resources/", nil)
+	// PathValue("id") defaults to "" when not set.
+	r = injectContext(r, []string{"resources:read"})
+	w := httptest.NewRecorder()
+	h.GetResource(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+// TestGetResource_NotFound_Returns404 covers the not-found error path.
+func TestGetResource_NotFound_Returns404(t *testing.T) {
+	svc := newFakeResourceService()
+	h := NewHandler(svc, svc, svc, testutil.NewTestLogger(), nil)
+
+	r := httptest.NewRequest(http.MethodGet, "/resources/no-such-id", nil)
+	r.SetPathValue("id", "no-such-id")
+	r = injectContext(r, []string{"resources:read"})
+	w := httptest.NewRecorder()
+	h.GetResource(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status: got %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+// TestGetResource_PolicyError_Returns500 exercises the policy evaluation error path.
+func TestGetResource_PolicyError_Returns500(t *testing.T) {
+	svc := newFakeResourceService()
+	policy := &fakePolicyChecker{err: apperrors.New(apperrors.ErrCodeInternal, "policy store down")}
+	h := NewHandler(svc, svc, svc, testutil.NewTestLogger(), policy)
+
+	r := httptest.NewRequest(http.MethodGet, "/resources/r1", nil)
+	r.SetPathValue("id", "r1")
+	// nil permissions forces fallback to policy checker.
+	r = injectContext(r, nil)
+	w := httptest.NewRecorder()
+	h.GetResource(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status: got %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+// --- Additional CreateResource tests ---
+
+// TestCreateResource_BadJSON_Returns400 exercises the JSON decode error path.
+func TestCreateResource_BadJSON_Returns400(t *testing.T) {
+	svc := newFakeResourceService()
+	h := NewHandler(svc, svc, svc, testutil.NewTestLogger(), nil)
+
+	r := httptest.NewRequest(http.MethodPost, "/resources", strings.NewReader(`{not valid json}`))
+	r.Header.Set("Content-Type", "application/json")
+	r = injectContext(r, []string{"resources:write"})
+	w := httptest.NewRecorder()
+	h.CreateResource(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status: got %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+// TestCreateResource_OversizedBody_Returns413 exercises the MaxBytesReader path.
+func TestCreateResource_OversizedBody_Returns413(t *testing.T) {
+	svc := newFakeResourceService()
+	h := NewHandler(svc, svc, svc, testutil.NewTestLogger(), nil)
+
+	// Build a body that exceeds the 1 MB limit.
+	big := strings.Repeat("a", 1<<20+1)
+	r := httptest.NewRequest(http.MethodPost, "/resources", strings.NewReader(`{"name":"`+big+`"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r = injectContext(r, []string{"resources:write"})
+	w := httptest.NewRecorder()
+	h.CreateResource(w, r)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status: got %d, want %d", w.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+// TestCreateResource_PolicyError_Returns500 exercises the policy error path for writes.
+func TestCreateResource_PolicyError_Returns500(t *testing.T) {
+	svc := newFakeResourceService()
+	policy := &fakePolicyChecker{err: apperrors.New(apperrors.ErrCodeInternal, "policy store down")}
+	h := NewHandler(svc, svc, svc, testutil.NewTestLogger(), policy)
+
+	r := httptest.NewRequest(http.MethodPost, "/resources", strings.NewReader(`{"name":"x"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r = injectContext(r, nil) // nil permissions forces policy fallback
+	w := httptest.NewRecorder()
+	h.CreateResource(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status: got %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+// --- Health endpoint ---
+
+// TestHealth_Returns200 exercises the trivial health handler.
+func TestHealth_Returns200(t *testing.T) {
+	h := NewHandler(newFakeResourceService(), newFakeResourceService(), newFakeResourceService(),
+		testutil.NewTestLogger(), nil)
+	r := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	h.Health(w, r)
+	if w.Code != http.StatusOK {
+		t.Errorf("status: got %d, want %d", w.Code, http.StatusOK)
 	}
 }

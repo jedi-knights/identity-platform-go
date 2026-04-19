@@ -42,7 +42,8 @@ func (r *ResourceRepository) FindByID(_ context.Context, id string) (*domain.Res
 	if !ok {
 		return nil, apperrors.New(apperrors.ErrCodeNotFound, "resource not found")
 	}
-	return res, nil
+	copy := *res
+	return &copy, nil
 }
 
 // FindAll returns all stored resources.
@@ -51,7 +52,8 @@ func (r *ResourceRepository) FindAll(_ context.Context) ([]*domain.Resource, err
 	defer r.mu.RUnlock()
 	result := make([]*domain.Resource, 0, len(r.resources))
 	for _, res := range r.resources {
-		result = append(result, res)
+		cp := *res
+		result = append(result, &cp)
 	}
 	return result, nil
 }
@@ -60,6 +62,7 @@ func (r *ResourceRepository) FindAll(_ context.Context) ([]*domain.Resource, err
 func (r *ResourceRepository) Save(_ context.Context, resource *domain.Resource) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.resources[resource.ID] = resource
+	cp := *resource
+	r.resources[resource.ID] = &cp
 	return nil
 }

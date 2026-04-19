@@ -103,9 +103,7 @@ func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handl
 			ctx = context.WithValue(ctx, contextKeySubject, claims.Subject)
 			ctx = context.WithValue(ctx, contextKeyScopes, strings.Fields(claims.Scope))
 			ctx = context.WithValue(ctx, contextKeyClientID, claims.ClientID)
-			if claims.Permissions != nil {
-				ctx = context.WithValue(ctx, contextKeyPermissions, claims.Permissions)
-			}
+			ctx = context.WithValue(ctx, contextKeyPermissions, claims.Permissions)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -145,5 +143,11 @@ func extractBearer(w http.ResponseWriter, r *http.Request) (string, bool) {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "missing or invalid authorization header"))
 		return "", false
 	}
-	return strings.TrimPrefix(authHeader, "Bearer "), true
+	raw := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	if raw == "" {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service"`)
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "missing or invalid authorization header"))
+		return "", false
+	}
+	return raw, true
 }
