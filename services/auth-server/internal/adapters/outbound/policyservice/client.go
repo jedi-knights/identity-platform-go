@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/ports"
@@ -35,11 +36,34 @@ type subjectPermissionsResponse struct {
 	Permissions []string `json:"permissions"`
 }
 
+// permissionsStatusResult interprets the HTTP status from the policy service.
+// ok==true means the caller should proceed to decode the body.
+// ok==false with err==nil means the subject has no policy (404) — not an error.
+// ok==false with err!=nil means an unexpected failure.
+func permissionsStatusResult(status int, subjectID string) (ok bool, err error) {
+	switch status {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		// Subject has no policy entry — not an error condition.
+		return false, nil
+	default:
+		return false, fmt.Errorf("policy service returned %d for subject %q", status, subjectID)
+	}
+}
+
 // GetSubjectPermissions fetches roles and permissions for subjectID.
 // Returns empty slices (not an error) when the subject has no policy.
 func (c *Client) GetSubjectPermissions(ctx context.Context, subjectID string) (_ []string, _ []string, retErr error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.baseURL+"/subjects/"+subjectID+"/permissions", nil)
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing policy service base URL: %w", err)
+	}
+	// Set RawPath so the percent-encoded form is preserved over the wire;
+	// Path is the decoded form used by the URL package internally.
+	base.Path = "/subjects/" + subjectID + "/permissions"
+	base.RawPath = "/subjects/" + url.PathEscape(subjectID) + "/permissions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating permissions request: %w", err)
 	}
@@ -54,8 +78,12 @@ func (c *Client) GetSubjectPermissions(ctx context.Context, subjectID string) (_
 		}
 	}()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("policy service returned %d for subject %q", resp.StatusCode, subjectID)
+	ok, err := permissionsStatusResult(resp.StatusCode, subjectID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
+		return nil, nil, nil
 	}
 
 	var result subjectPermissionsResponse
