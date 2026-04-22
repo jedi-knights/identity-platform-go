@@ -2,14 +2,7 @@ package ports
 
 import (
 	"context"
-
-	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/domain"
 )
-
-// RouteResolver finds the matching route for a request path.
-type RouteResolver interface {
-	Resolve(path string) (*domain.Route, bool)
-}
 
 // HealthAggregator checks all downstream services and returns aggregate status.
 type HealthAggregator interface {
@@ -18,8 +11,8 @@ type HealthAggregator interface {
 
 // HealthReport contains the aggregate health status.
 type HealthReport struct {
-	Status   string                    `json:"status"`
-	Services map[string]ServiceHealth  `json:"services"`
+	Status   string                   `json:"status"`
+	Services map[string]ServiceHealth `json:"services"`
 }
 
 // ServiceHealth represents a single downstream service's health.

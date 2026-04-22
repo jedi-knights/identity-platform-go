@@ -32,7 +32,7 @@ func (c *Checker) Check(ctx context.Context, url string) error {
 	if err != nil {
 		return fmt.Errorf("health check failed for %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health check returned %d for %s", resp.StatusCode, url)

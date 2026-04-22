@@ -33,9 +33,9 @@ func (a *HealthAggregator) AggregateHealth(ctx context.Context) ports.HealthRepo
 	seen := make(map[string]bool)
 	var backends []backend
 	for _, r := range a.routes {
-		if !seen[r.BackendURL] {
-			seen[r.BackendURL] = true
-			backends = append(backends, backend{prefix: r.PathPrefix, url: r.BackendURL})
+		if !seen[r.Upstream.URL] {
+			seen[r.Upstream.URL] = true
+			backends = append(backends, backend{prefix: r.Match.PathPrefix, url: r.Upstream.URL})
 		}
 	}
 
@@ -73,15 +73,19 @@ func (a *HealthAggregator) AggregateHealth(ctx context.Context) ports.HealthRepo
 		}
 	}
 
-	overallStatus := "healthy"
-	if healthyCount == 0 {
-		overallStatus = "unhealthy"
-	} else if healthyCount < len(results) {
-		overallStatus = "degraded"
-	}
-
 	return ports.HealthReport{
-		Status:   overallStatus,
+		Status:   overallHealthStatus(healthyCount, len(results)),
 		Services: services,
 	}
+}
+
+// overallHealthStatus derives a simple three-state health string.
+func overallHealthStatus(healthyCount, total int) string {
+	if healthyCount == 0 {
+		return "unhealthy"
+	}
+	if healthyCount < total {
+		return "degraded"
+	}
+	return "healthy"
 }

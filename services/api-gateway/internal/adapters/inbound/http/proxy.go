@@ -27,19 +27,20 @@ type proxyEntry struct {
 func NewProxyMap(routes []domain.Route) (*ProxyMap, error) {
 	proxies := make(map[string]*proxyEntry, len(routes))
 	for _, route := range routes {
-		target, err := url.Parse(route.BackendURL)
+		target, err := url.Parse(route.Upstream.URL)
 		if err != nil {
-			return nil, fmt.Errorf("parsing backend URL %q for prefix %q: %w", route.BackendURL, route.PathPrefix, err)
+			return nil, fmt.Errorf("parsing backend URL %q for prefix %q: %w", route.Upstream.URL, route.Match.PathPrefix, err)
 		}
 
+		stripPrefix := route.Upstream.StripPrefix != ""
 		proxy := &httputil.ReverseProxy{
-			Director: newDirector(target, route.PathPrefix, route.StripPrefix),
+			Director: newDirector(target, route.Match.PathPrefix, stripPrefix),
 		}
 
-		proxies[route.PathPrefix] = &proxyEntry{
+		proxies[route.Match.PathPrefix] = &proxyEntry{
 			proxy:       proxy,
-			stripPrefix: route.StripPrefix,
-			pathPrefix:  route.PathPrefix,
+			stripPrefix: stripPrefix,
+			pathPrefix:  route.Match.PathPrefix,
 		}
 	}
 	return &ProxyMap{proxies: proxies}, nil

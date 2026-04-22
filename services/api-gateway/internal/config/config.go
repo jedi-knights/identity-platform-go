@@ -13,7 +13,16 @@ import (
 type Config struct {
 	Server ServerConfig  `mapstructure:"server"`
 	Log    LogConfig     `mapstructure:"log"`
+	CORS   CORSConfig    `mapstructure:"cors"`
 	Routes []RouteConfig `mapstructure:"routes"`
+}
+
+// CORSConfig holds Cross-Origin Resource Sharing settings.
+type CORSConfig struct {
+	AllowedOrigins []string `mapstructure:"allowed_origins"`
+	AllowedMethods []string `mapstructure:"allowed_methods"`
+	AllowedHeaders []string `mapstructure:"allowed_headers"`
+	MaxAgeSecs     int      `mapstructure:"max_age_secs"`
 }
 
 // ServerConfig holds HTTP listener settings.
