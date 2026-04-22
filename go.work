@@ -6,6 +6,7 @@ use (
 	./libs/jwtutil
 	./libs/logging
 	./libs/testutil
+	./services/api-gateway
 	./services/auth-server
 	./services/authorization-policy-service
 	./services/client-registry-service
