@@ -288,6 +288,54 @@ services:
       retries: 3
       start_period: 10s
 
+  # ---------------------------------------------------------------------------
+  # api-gateway — single entry point for all platform traffic
+  # Reverse-proxies requests to downstream services based on path prefix.
+  # Includes rate limiting, CORS, and health aggregation.
+  # ---------------------------------------------------------------------------
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: api-gateway
+    image: identity-platform/api-gateway:local
+    ports:
+      - "8086:8086"
+    environment:
+      GATEWAY_SERVER_HOST: "0.0.0.0"
+      GATEWAY_SERVER_PORT: "8086"
+      GATEWAY_LOG_LEVEL: "info"
+      GATEWAY_LOG_FORMAT: "json"
+      GATEWAY_LOG_ENVIRONMENT: "development"
+      GATEWAY_AUTH_SERVER_URL: "http://auth-server:8080"
+      GATEWAY_IDENTITY_SERVICE_URL: "http://identity-service:8081"
+      GATEWAY_CLIENT_REGISTRY_SERVICE_URL: "http://client-registry-service:8082"
+      GATEWAY_TOKEN_INTROSPECTION_SERVICE_URL: "http://token-introspection-service:8083"
+      GATEWAY_AUTHORIZATION_POLICY_SERVICE_URL: "http://authorization-policy-service:8084"
+      GATEWAY_EXAMPLE_RESOURCE_SERVICE_URL: "http://example-resource-service:8085"
+      GATEWAY_RATE_LIMIT_REQUESTS_PER_SECOND: "10"
+      GATEWAY_RATE_LIMIT_BURST_SIZE: "20"
+    depends_on:
+      auth-server:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      client-registry-service:
+        condition: service_healthy
+      token-introspection-service:
+        condition: service_healthy
+      authorization-policy-service:
+        condition: service_healthy
+      example-resource-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8086/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
 volumes:
   postgres-data:
   redis-data:

@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/ports"
@@ -52,31 +54,53 @@ func permissionsStatusResult(status int, subjectID string) (ok bool, err error) 
 	}
 }
 
+// permissionsURL constructs the absolute URL for subjectID's permissions endpoint.
+// Returns an error if subjectID contains path separators or traversal sequences.
+func (c *Client) permissionsURL(subjectID string) (string, error) {
+	if strings.ContainsAny(subjectID, "/\\") || strings.Contains(subjectID, "..") {
+		return "", fmt.Errorf("subject ID %q is invalid: must not contain path separators or traversal sequences", subjectID)
+	}
+	base, err := url.Parse(c.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("parsing policy service base URL: %w", err)
+	}
+	base.Path = "/subjects/" + subjectID + "/permissions"
+	base.RawPath = "/subjects/" + url.PathEscape(subjectID) + "/permissions"
+	return base.String(), nil
+}
+
+// closeBody closes body and propagates its error through *retErr only when *retErr is nil.
+func closeBody(body io.ReadCloser, retErr *error) {
+	if cerr := body.Close(); cerr != nil && *retErr == nil {
+		*retErr = fmt.Errorf("closing permissions response body: %w", cerr)
+	}
+}
+
+// decodePermissions unmarshals a subjectPermissionsResponse from r.
+func decodePermissions(r io.Reader) ([]string, []string, error) {
+	var result subjectPermissionsResponse
+	if err := json.NewDecoder(r).Decode(&result); err != nil {
+		return nil, nil, fmt.Errorf("decoding permissions response: %w", err)
+	}
+	return result.Roles, result.Permissions, nil
+}
+
 // GetSubjectPermissions fetches roles and permissions for subjectID.
 // Returns empty slices (not an error) when the subject has no policy.
 func (c *Client) GetSubjectPermissions(ctx context.Context, subjectID string) (_ []string, _ []string, retErr error) {
-	base, err := url.Parse(c.baseURL)
+	rawURL, err := c.permissionsURL(subjectID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parsing policy service base URL: %w", err)
+		return nil, nil, err
 	}
-	// Set RawPath so the percent-encoded form is preserved over the wire;
-	// Path is the decoded form used by the URL package internally.
-	base.Path = "/subjects/" + subjectID + "/permissions"
-	base.RawPath = "/subjects/" + url.PathEscape(subjectID) + "/permissions"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating permissions request: %w", err)
 	}
-
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("calling policy service: %w", err)
 	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil && retErr == nil {
-			retErr = fmt.Errorf("closing permissions response body: %w", err)
-		}
-	}()
+	defer closeBody(resp.Body, &retErr)
 
 	ok, err := permissionsStatusResult(resp.StatusCode, subjectID)
 	if err != nil {
@@ -85,11 +109,5 @@ func (c *Client) GetSubjectPermissions(ctx context.Context, subjectID string) (_
 	if !ok {
 		return nil, nil, nil
 	}
-
-	var result subjectPermissionsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, nil, fmt.Errorf("decoding permissions response: %w", err)
-	}
-
-	return result.Roles, result.Permissions, nil
+	return decodePermissions(resp.Body)
 }
