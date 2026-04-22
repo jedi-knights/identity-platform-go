@@ -3,39 +3,34 @@ package http
 import (
 	"net/http"
 
+	httpSwagger "github.com/swaggo/http-swagger/v2"
+
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
 	"github.com/ocrosby/identity-platform-go/libs/logging"
-	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/config"
-	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/ports"
+	_ "github.com/ocrosby/identity-platform-go/services/api-gateway/docs"
 )
 
-// NewRouter sets up the HTTP routes and applies the middleware chain.
+// NewRouter registers all routes and applies the middleware chain.
+// System routes (/health, /swagger/) are registered explicitly; all other paths
+// fall through to the gateway Proxy handler.
 //
 // Middleware order (outermost to innermost):
 //
-//	Recovery → Logging → TraceID → CORS → Handler
-//
-// The health endpoint is exempt from rate limiting. It is registered on a
-// separate mux that sits outside the rate-limit layer so monitoring tools
-// always get a response regardless of traffic volume.
-func NewRouter(h *Handler, logger logging.Logger, limiter ports.RateLimiter, cors config.CORSConfig) http.Handler {
-	// Top-level mux: health is served directly, everything else is
-	// delegated to the rate-limited proxy mux.
-	top := http.NewServeMux()
-	top.HandleFunc("GET /health", h.Health)
+//	RecoveryMiddleware → LoggingMiddleware → TraceIDMiddleware → ServeMux
+func NewRouter(h *Handler, logger logging.Logger) http.Handler {
+	mux := http.NewServeMux()
 
-	// Proxy mux: all proxied traffic goes through rate limiting.
-	proxyMux := http.NewServeMux()
-	proxyMux.HandleFunc("/", h.Proxy)
+	mux.HandleFunc("GET /health", h.Health)
+	mux.Handle("GET /swagger/", httpSwagger.Handler(
+		httpSwagger.URL("/swagger/doc.json"),
+	))
 
-	rateLimited := RateLimitMiddleware(limiter, logger)(proxyMux)
-	top.Handle("/", rateLimited)
+	// Catch-all: every unmatched path is treated as a proxy target.
+	mux.HandleFunc("/", h.Proxy)
 
 	return httputil.RecoveryMiddleware(logger)(
 		httputil.LoggingMiddleware(logger)(
-			httputil.TraceIDMiddleware(
-				CORSMiddleware(cors)(top),
-			),
+			httputil.TraceIDMiddleware(mux),
 		),
 	)
 }

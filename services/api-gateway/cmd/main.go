@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ocrosby/identity-platform-go/libs/logging"
-	inboundhttp "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/container"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/observability"
@@ -21,8 +20,8 @@ import (
 
 // @title           API Gateway
 // @version         1.0
-// @description     API Gateway — single entry point for all platform traffic.
-// @host            localhost:8086
+// @description     HTTP reverse-proxy gateway — resolves inbound requests to upstream services.
+// @host            localhost:8080
 // @BasePath        /
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
@@ -34,7 +33,7 @@ func main() {
 func newRootCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "api-gateway",
-		Short: "API Gateway for the identity platform",
+		Short: "HTTP reverse-proxy gateway for the identity platform",
 		RunE:  run,
 	}
 }
@@ -55,27 +54,21 @@ func run(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("setting up observability: %w", err)
 	}
 
-	// Application-wide context: cancelled on shutdown to stop background goroutines.
-	appCtx, appCancel := context.WithCancel(context.Background())
-	defer appCancel()
-
-	ctr, err := container.New(appCtx, cfg, logger)
+	ctr, err := container.New(cfg, logger)
 	if err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
 
-	router := inboundhttp.NewRouter(ctr.Handler, logger, ctr.RateLimiter, cfg.CORS)
-
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      router,
+		Handler:      ctr.Handler,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
-	logger.Info("starting api-gateway", "addr", addr)
+	logger.Info("starting api-gateway", "addr", addr, "routes", len(cfg.Routes))
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -84,8 +77,7 @@ func run(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	logger.Info("shutting down server")
-	appCancel()
+	logger.Info("shutting down api-gateway")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -93,7 +85,9 @@ func run(_ *cobra.Command, _ []string) error {
 	return srv.Shutdown(ctx)
 }
 
-// listenAndWait starts the HTTP server and blocks until either it fails or a quit signal is received.
+// listenAndWait starts the HTTP server and blocks until it fails or a shutdown
+// signal is received. A clean SIGTERM/SIGINT returns nil; a server start error
+// is returned as-is.
 func listenAndWait(srv *http.Server, quit <-chan os.Signal) error {
 	serverErr := make(chan error, 1)
 	go func() {

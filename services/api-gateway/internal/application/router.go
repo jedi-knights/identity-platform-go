@@ -18,7 +18,7 @@ func NewRouteResolver(routes []domain.Route) *RouteResolver {
 	sorted := make([]domain.Route, len(routes))
 	copy(sorted, routes)
 	sort.Slice(sorted, func(i, j int) bool {
-		return len(sorted[i].PathPrefix) > len(sorted[j].PathPrefix)
+		return len(sorted[i].Match.PathPrefix) > len(sorted[j].Match.PathPrefix)
 	})
 	return &RouteResolver{routes: sorted}
 }
@@ -26,7 +26,7 @@ func NewRouteResolver(routes []domain.Route) *RouteResolver {
 // Resolve finds the first route whose prefix matches the given path.
 func (r *RouteResolver) Resolve(path string) (*domain.Route, bool) {
 	for i := range r.routes {
-		if strings.HasPrefix(path, r.routes[i].PathPrefix) {
+		if strings.HasPrefix(path, r.routes[i].Match.PathPrefix) {
 			return &r.routes[i], true
 		}
 	}

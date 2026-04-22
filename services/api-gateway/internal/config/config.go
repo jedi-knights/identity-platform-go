@@ -1,42 +1,23 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/viper"
+
+	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/domain"
 )
 
-// Config holds all configuration for the API gateway.
+// Config holds all api-gateway configuration.
 type Config struct {
-	Server    ServerConfig    `mapstructure:"server"`
-	Log       LogConfig       `mapstructure:"log"`
-	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
-	CORS      CORSConfig      `mapstructure:"cors"`
-	Routes    []RouteConfig
+	Server ServerConfig  `mapstructure:"server"`
+	Log    LogConfig     `mapstructure:"log"`
+	CORS   CORSConfig    `mapstructure:"cors"`
+	Routes []RouteConfig `mapstructure:"routes"`
 }
 
-// ServerConfig holds HTTP server settings.
-type ServerConfig struct {
-	Host string `mapstructure:"host"`
-	Port int    `mapstructure:"port"`
-}
-
-// LogConfig holds logging settings.
-type LogConfig struct {
-	Level       string `mapstructure:"level"`
-	Format      string `mapstructure:"format"`
-	Environment string `mapstructure:"environment"`
-}
-
-// RateLimitConfig holds rate limiting settings.
-type RateLimitConfig struct {
-	RequestsPerSecond float64 `mapstructure:"requests_per_second"`
-	BurstSize         int     `mapstructure:"burst_size"`
-}
-
-// CORSConfig holds CORS settings.
+// CORSConfig holds Cross-Origin Resource Sharing settings.
 type CORSConfig struct {
 	AllowedOrigins []string `mapstructure:"allowed_origins"`
 	AllowedMethods []string `mapstructure:"allowed_methods"`
@@ -44,70 +25,69 @@ type CORSConfig struct {
 	MaxAgeSecs     int      `mapstructure:"max_age_secs"`
 }
 
-// RouteConfig maps a gateway path prefix to a backend service URL.
-// This struct is populated programmatically by buildRouteTable, not by Viper.
+// ServerConfig holds HTTP listener settings.
+type ServerConfig struct {
+	Host string `mapstructure:"host"`
+	Port int    `mapstructure:"port"`
+}
+
+// LogConfig holds structured logging settings.
+type LogConfig struct {
+	Level       string `mapstructure:"level"`
+	Format      string `mapstructure:"format"`
+	Environment string `mapstructure:"environment"`
+}
+
+// RouteConfig is the configuration representation of a single routing rule.
+// It is separate from domain.Route so that config concerns (YAML tags,
+// validation) do not leak into the domain layer.
 type RouteConfig struct {
-	PathPrefix  string
-	BackendURL  string
-	StripPrefix bool
+	Name     string         `mapstructure:"name"`
+	Match    MatchConfig    `mapstructure:"match"`
+	Upstream UpstreamConfig `mapstructure:"upstream"`
 }
 
-// backendURLs holds the individual service URL configs read from env vars.
-type backendURLs struct {
-	AuthServerURL                  string `mapstructure:"auth_server_url"`
-	IdentityServiceURL             string `mapstructure:"identity_service_url"`
-	ClientRegistryServiceURL       string `mapstructure:"client_registry_service_url"`
-	TokenIntrospectionServiceURL   string `mapstructure:"token_introspection_service_url"`
-	AuthorizationPolicyServiceURL  string `mapstructure:"authorization_policy_service_url"`
-	ExampleResourceServiceURL      string `mapstructure:"example_resource_service_url"`
+// MatchConfig mirrors domain.MatchCriteria for configuration purposes.
+type MatchConfig struct {
+	PathPrefix string            `mapstructure:"path_prefix"`
+	Methods    []string          `mapstructure:"methods"`
+	Headers    map[string]string `mapstructure:"headers"`
 }
 
-// Load reads configuration from environment variables and optional config file.
+// UpstreamConfig mirrors domain.UpstreamTarget for configuration purposes.
+type UpstreamConfig struct {
+	URL         string `mapstructure:"url"`
+	StripPrefix string `mapstructure:"strip_prefix"`
+}
+
+// Load reads configuration from environment variables and, if present, from a
+// YAML config file. Environment variables are prefixed with GATEWAY_ and use
+// underscores as separators (e.g. GATEWAY_SERVER_PORT overrides server.port).
+//
+// Config file search order:
+//  1. Path in GATEWAY_CONFIG_FILE env var
+//  2. ./gateway.yaml (current working directory)
+//  3. /etc/gateway/gateway.yaml
+//
+// Missing config files are silently ignored; all settings have defaults.
 func Load() (*Config, error) {
 	v := viper.New()
 
-	// Server defaults
-	v.SetDefault("server.host", "0.0.0.0")
-	v.SetDefault("server.port", 8086)
+	setDefaults(v)
+	bindEnv(v)
 
-	// Logging defaults
-	v.SetDefault("log.level", "info")
-	v.SetDefault("log.format", "text")
-	v.SetDefault("log.environment", "development")
-
-	// Rate limit defaults
-	v.SetDefault("rate_limit.requests_per_second", 10.0)
-	v.SetDefault("rate_limit.burst_size", 20)
-
-	// CORS defaults
-	v.SetDefault("cors.allowed_origins", []string{"*"})
-	v.SetDefault("cors.allowed_methods", []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"})
-	v.SetDefault("cors.allowed_headers", []string{"Content-Type", "Authorization", "X-Trace-ID"})
-	v.SetDefault("cors.max_age_secs", 3600)
-
-	// Backend URL defaults
-	v.SetDefault("auth_server_url", "http://localhost:8080")
-	v.SetDefault("identity_service_url", "http://localhost:8081")
-	v.SetDefault("client_registry_service_url", "http://localhost:8082")
-	v.SetDefault("token_introspection_service_url", "http://localhost:8083")
-	v.SetDefault("authorization_policy_service_url", "http://localhost:8084")
-	v.SetDefault("example_resource_service_url", "http://localhost:8085")
-
-	// Config file (optional)
-	v.SetConfigName("config")
+	v.SetConfigName("gateway")
 	v.SetConfigType("yaml")
 	v.AddConfigPath(".")
-	v.AddConfigPath("./config")
+	v.AddConfigPath("/etc/gateway")
 
-	// Environment variables
-	v.SetEnvPrefix("GATEWAY")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
+	if cfgFile := v.GetString("config_file"); cfgFile != "" {
+		v.SetConfigFile(cfgFile)
+	}
 
 	if err := v.ReadInConfig(); err != nil {
-		var notFound viper.ConfigFileNotFoundError
-		if !errors.As(err, &notFound) {
-			return nil, fmt.Errorf("reading config: %w", err)
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("reading config file: %w", err)
 		}
 	}
 
@@ -116,24 +96,65 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unmarshalling config: %w", err)
 	}
 
-	var urls backendURLs
-	if err := v.Unmarshal(&urls); err != nil {
-		return nil, fmt.Errorf("unmarshalling backend urls: %w", err)
+	if err := validate(&cfg); err != nil {
+		return nil, err
 	}
-
-	cfg.Routes = buildRouteTable(urls)
 
 	return &cfg, nil
 }
 
-// buildRouteTable creates the route table from backend URL configuration.
-func buildRouteTable(urls backendURLs) []RouteConfig {
-	return []RouteConfig{
-		{PathPrefix: "/oauth/", BackendURL: urls.AuthServerURL, StripPrefix: false},
-		{PathPrefix: "/auth/", BackendURL: urls.IdentityServiceURL, StripPrefix: false},
-		{PathPrefix: "/clients/", BackendURL: urls.ClientRegistryServiceURL, StripPrefix: false},
-		{PathPrefix: "/introspect", BackendURL: urls.TokenIntrospectionServiceURL, StripPrefix: false},
-		{PathPrefix: "/policies/", BackendURL: urls.AuthorizationPolicyServiceURL, StripPrefix: true},
-		{PathPrefix: "/resources/", BackendURL: urls.ExampleResourceServiceURL, StripPrefix: false},
+func setDefaults(v *viper.Viper) {
+	v.SetDefault("server.host", "0.0.0.0")
+	v.SetDefault("server.port", 8080)
+	v.SetDefault("log.level", "info")
+	v.SetDefault("log.format", "json")
+	v.SetDefault("log.environment", "production")
+}
+
+func bindEnv(v *viper.Viper) {
+	v.SetEnvPrefix("GATEWAY")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+}
+
+// validate checks that the loaded configuration is consistent.
+func validate(cfg *Config) error {
+	if cfg.Server.Port < 1 || cfg.Server.Port > 65535 {
+		return fmt.Errorf("server.port %d is out of range [1, 65535]", cfg.Server.Port)
 	}
+	seen := make(map[string]struct{}, len(cfg.Routes))
+	for i, r := range cfg.Routes {
+		if r.Name == "" {
+			return fmt.Errorf("routes[%d]: name is required", i)
+		}
+		if _, dup := seen[r.Name]; dup {
+			return fmt.Errorf("routes[%d]: duplicate route name %q", i, r.Name)
+		}
+		seen[r.Name] = struct{}{}
+		if r.Upstream.URL == "" {
+			return fmt.Errorf("routes[%d] (%q): upstream.url is required", i, r.Name)
+		}
+	}
+	return nil
+}
+
+// ToDomainRoutes converts the config-layer route definitions to domain.Route values.
+// This is the single translation point between config concerns and domain concerns.
+func (c *Config) ToDomainRoutes() []*domain.Route {
+	routes := make([]*domain.Route, len(c.Routes))
+	for i, rc := range c.Routes {
+		routes[i] = &domain.Route{
+			Name: rc.Name,
+			Match: domain.MatchCriteria{
+				PathPrefix: rc.Match.PathPrefix,
+				Methods:    rc.Match.Methods,
+				Headers:    rc.Match.Headers,
+			},
+			Upstream: domain.UpstreamTarget{
+				URL:         rc.Upstream.URL,
+				StripPrefix: rc.Upstream.StripPrefix,
+			},
+		}
+	}
+	return routes
 }

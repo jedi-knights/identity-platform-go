@@ -1,10 +1,9 @@
 package observability
 
-import (
-	"github.com/ocrosby/identity-platform-go/libs/logging"
-)
+import "github.com/ocrosby/identity-platform-go/libs/logging"
 
-// Setup initializes observability (logging, tracing, metrics).
+// Setup initializes observability for the api-gateway (logging, and in future,
+// distributed tracing and metrics exporters).
 func Setup(cfg logging.Config) (logging.Logger, error) {
 	logger := logging.NewLogger(cfg)
 	return logger, nil
