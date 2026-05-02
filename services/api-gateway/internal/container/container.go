@@ -218,22 +218,22 @@ func buildRateLimiter(ctx context.Context, cfg *config.Config) (ports.RateLimite
 
 	switch rl.Strategy {
 	case "fixed_window":
-		return fixedwindow.New(domain.FixedWindowRule{
+		return fixedwindow.New(domain.FixedWindowRule{WindowRule: domain.WindowRule{
 			RequestsPerWindow: rl.RequestsPerWindow,
 			WindowDuration:    window,
-		}), nil
+		}}), nil
 
 	case "sliding_window_log":
-		return slidingwindowlog.New(domain.SlidingWindowLogRule{
+		return slidingwindowlog.New(domain.SlidingWindowLogRule{WindowRule: domain.WindowRule{
 			RequestsPerWindow: rl.RequestsPerWindow,
 			WindowDuration:    window,
-		}), nil
+		}}), nil
 
 	case "sliding_window_counter":
-		return slidingwindowcounter.New(domain.SlidingWindowCounterRule{
+		return slidingwindowcounter.New(domain.SlidingWindowCounterRule{WindowRule: domain.WindowRule{
 			RequestsPerWindow: rl.RequestsPerWindow,
 			WindowDuration:    window,
-		}), nil
+		}}), nil
 
 	case "leaky_bucket":
 		return leakybucket.New(domain.LeakyBucketRule{
