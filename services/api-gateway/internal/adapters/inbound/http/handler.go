@@ -3,6 +3,7 @@ package http
 import (
 	"errors"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -12,6 +13,14 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/ports"
 )
+
+// headerPool reuses map[string]string allocations across Proxy calls.
+// Maps are pre-allocated with capacity 16 (covers most request header counts).
+// Each map is cleared before returning to the pool so stale entries cannot leak
+// across requests.
+var headerPool = sync.Pool{
+	New: func() any { return make(map[string]string, 16) },
+}
 
 // Handler holds all inbound HTTP handler dependencies.
 // It is intentionally thin: each method extracts the minimum set of attributes
@@ -74,9 +83,9 @@ func (h *Handler) SetReady(v bool) { h.ready.Store(v) }
 // @Failure      500  {object}  httputil.ErrorResponse
 // @Router       / [get]
 func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
-	headers := extractHeaders(r)
-
+	headers := acquireHeaders(r)
 	route, err := h.router.Route(r.Context(), r.Method, r.URL.Path, headers)
+	releaseHeaders(headers) // Route() does not retain the map; release before the upstream round-trip
 	if err != nil {
 		if errors.Is(err, application.ErrNoRouteMatched) {
 			httputil.WriteError(w, apperrors.New(apperrors.ErrCodeNotFound, "no route matched"))
@@ -92,9 +101,13 @@ func (h *Handler) Proxy(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.transport.Forward(rw, r, route); err != nil {
 		h.logger.Error("upstream error", "route", route.Name, "error", err)
-		if !rw.Written() {
+		status := http.StatusInternalServerError
+		if rw.Written() {
+			status = rw.Status()
+		} else {
 			httputil.WriteError(w, apperrors.New(apperrors.ErrCodeInternal, "upstream error"))
 		}
+		h.metrics.RecordRequest(route.Name, status, time.Since(start).Milliseconds())
 		return
 	}
 
@@ -169,13 +182,21 @@ func (h *Handler) Ready(w http.ResponseWriter, _ *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
-// extractHeaders converts the canonical http.Header map into a flat string map
-// for port-layer consumption. Only the first value per header name is used,
-// matching the most common header semantics (single-value headers).
-func extractHeaders(r *http.Request) map[string]string {
-	headers := make(map[string]string, len(r.Header))
-	for k := range r.Header {
-		headers[k] = r.Header.Get(k)
+// acquireHeaders gets a map from the pool and populates it from r's headers.
+// Only the first value per header name is used (single-value header semantics).
+// The caller must call releaseHeaders when done so the map is returned to the pool.
+func acquireHeaders(r *http.Request) map[string]string {
+	m := headerPool.Get().(map[string]string)
+	for k, vs := range r.Header {
+		if len(vs) > 0 {
+			m[k] = vs[0]
+		}
 	}
-	return headers
+	return m
+}
+
+// releaseHeaders clears m and returns it to the pool.
+func releaseHeaders(m map[string]string) {
+	clear(m)
+	headerPool.Put(m)
 }

@@ -27,6 +27,8 @@ const (
 	ErrCodeBadRequest   ErrorCode = "BAD_REQUEST"  // malformed or invalid request; maps to HTTP 400
 	ErrCodeInternal     ErrorCode = "INTERNAL"     // unexpected server failure; maps to HTTP 500
 	ErrCodeConflict     ErrorCode = "CONFLICT"     // state conflict (e.g. duplicate create); maps to HTTP 409
+	ErrCodeRateLimit    ErrorCode = "RATE_LIMIT"   // too many requests from this client; maps to HTTP 429
+	ErrCodeUnavailable  ErrorCode = "UNAVAILABLE"  // server temporarily unable to handle the request; maps to HTTP 503
 )
 
 // Compile-time assertion: *AppError must satisfy the error interface.
@@ -161,7 +163,8 @@ func isNilableKind(k reflect.Kind) bool {
 func ValidCode(c ErrorCode) bool {
 	switch c {
 	case ErrCodeNotFound, ErrCodeUnauthorized, ErrCodeForbidden,
-		ErrCodeBadRequest, ErrCodeInternal, ErrCodeConflict:
+		ErrCodeBadRequest, ErrCodeInternal, ErrCodeConflict,
+		ErrCodeRateLimit, ErrCodeUnavailable:
 		return true
 	default:
 		return false
@@ -214,4 +217,20 @@ func IsConflict(err error) bool {
 func IsInternal(err error) bool {
 	var e *AppError
 	return errors.As(err, &e) && e.code == ErrCodeInternal
+}
+
+// IsRateLimit reports whether the first [AppError] in err's chain has [ErrCodeRateLimit].
+// If an AppError with a different code appears earlier in the chain, it returns false
+// even if a deeper AppError has ErrCodeRateLimit.
+func IsRateLimit(err error) bool {
+	var e *AppError
+	return errors.As(err, &e) && e.code == ErrCodeRateLimit
+}
+
+// IsUnavailable reports whether the first [AppError] in err's chain has [ErrCodeUnavailable].
+// If an AppError with a different code appears earlier in the chain, it returns false
+// even if a deeper AppError has ErrCodeUnavailable.
+func IsUnavailable(err error) bool {
+	var e *AppError
+	return errors.As(err, &e) && e.code == ErrCodeUnavailable
 }

@@ -3,6 +3,7 @@
 package fixedwindow_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 var _ ports.RateLimiter = (*fixedwindow.RateLimiter)(nil)
 
 func TestFixedWindow_AllowsUpToLimit(t *testing.T) {
-	rl := fixedwindow.New(domain.FixedWindowRule{
+	rl := fixedwindow.New(context.Background(), domain.FixedWindowRule{
 		RequestsPerWindow: 3,
 		WindowDuration:    time.Second,
 	})
@@ -26,7 +27,7 @@ func TestFixedWindow_AllowsUpToLimit(t *testing.T) {
 }
 
 func TestFixedWindow_DeniesOverLimit(t *testing.T) {
-	rl := fixedwindow.New(domain.FixedWindowRule{
+	rl := fixedwindow.New(context.Background(), domain.FixedWindowRule{
 		RequestsPerWindow: 2,
 		WindowDuration:    time.Second,
 	})
@@ -38,7 +39,7 @@ func TestFixedWindow_DeniesOverLimit(t *testing.T) {
 }
 
 func TestFixedWindow_ResetsAfterWindow(t *testing.T) {
-	rl := fixedwindow.New(domain.FixedWindowRule{
+	rl := fixedwindow.New(context.Background(), domain.FixedWindowRule{
 		RequestsPerWindow: 1,
 		WindowDuration:    50 * time.Millisecond,
 	})
@@ -55,7 +56,7 @@ func TestFixedWindow_ResetsAfterWindow(t *testing.T) {
 }
 
 func TestFixedWindow_IndependentKeys(t *testing.T) {
-	rl := fixedwindow.New(domain.FixedWindowRule{
+	rl := fixedwindow.New(context.Background(), domain.FixedWindowRule{
 		RequestsPerWindow: 1,
 		WindowDuration:    time.Second,
 	})
