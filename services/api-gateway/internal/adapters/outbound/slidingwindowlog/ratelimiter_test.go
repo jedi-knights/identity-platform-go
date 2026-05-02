@@ -4,6 +4,7 @@ package slidingwindowlog_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -66,5 +67,45 @@ func TestSlidingWindowLog_IndependentKeys(t *testing.T) {
 	}
 	if !rl.Allow("b") {
 		t.Fatal("b should be allowed — independent log")
+	}
+}
+
+func TestSlidingWindowLog_AllowRecountsAfterWindowExpiry(t *testing.T) {
+	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{WindowRule: domain.WindowRule{
+		RequestsPerWindow: 100,
+		WindowDuration:    10 * time.Millisecond,
+	}})
+	rl.Allow("client")
+	time.Sleep(20 * time.Millisecond)
+	// The window has expired; Allow's inline eviction must reset the in-window count.
+	if !rl.Allow("client") {
+		t.Fatal("Allow should be permitted after the window expires (inline eviction resets count)")
+	}
+}
+
+func BenchmarkSlidingWindowLog_Allow_SingleKey(b *testing.B) {
+	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{WindowRule: domain.WindowRule{
+		RequestsPerWindow: b.N + 1,
+		WindowDuration:    time.Hour,
+	}})
+	b.ResetTimer()
+	for range b.N {
+		rl.Allow("client")
+	}
+}
+
+func BenchmarkSlidingWindowLog_Allow_HighCardinality(b *testing.B) {
+	const keys = 1000
+	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{WindowRule: domain.WindowRule{
+		RequestsPerWindow: b.N + 1,
+		WindowDuration:    time.Hour,
+	}})
+	k := make([]string, keys)
+	for i := range keys {
+		k[i] = fmt.Sprintf("client-%d", i)
+	}
+	b.ResetTimer()
+	for i := range b.N {
+		rl.Allow(k[i%keys])
 	}
 }
