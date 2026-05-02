@@ -4,6 +4,7 @@ package retry_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -32,6 +33,35 @@ func (c *countingTransport) Forward(w http.ResponseWriter, _ *http.Request, _ *d
 
 var _ ports.UpstreamTransport = (*countingTransport)(nil)
 
+// errorTransport returns a transport-level error without writing any status code.
+type errorTransport struct{ calls int }
+
+func (e *errorTransport) Forward(_ http.ResponseWriter, _ *http.Request, _ *domain.Route) error {
+	e.calls++
+	return errors.New("dial tcp: connection refused")
+}
+
+var _ ports.UpstreamTransport = (*errorTransport)(nil)
+
+// bodyTransport writes a response status and a fixed body payload.
+type bodyTransport struct{ body string }
+
+func (b *bodyTransport) Forward(w http.ResponseWriter, _ *http.Request, _ *domain.Route) error {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(b.body))
+	return nil
+}
+
+var _ ports.UpstreamTransport = (*bodyTransport)(nil)
+
+// failWriter is an http.ResponseWriter whose Write always returns an error,
+// used to exercise the io.Copy error path in copyRecorder.
+type failWriter struct{ header http.Header }
+
+func (f *failWriter) Header() http.Header       { return f.header }
+func (f *failWriter) WriteHeader(int)            {}
+func (f *failWriter) Write([]byte) (int, error)  { return 0, errors.New("write: broken pipe") }
+
 func globalCfg(enabled bool, maxAttempts int, statuses []int) domain.RetryConfig {
 	return domain.RetryConfig{
 		Enabled:          enabled,
@@ -52,7 +82,9 @@ func TestRetryTransport_PassthroughWhenDisabled(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	_ = tr.Forward(rr, req, noRouteRetry())
+	if err := tr.Forward(rr, req, noRouteRetry()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if inner.calls != 1 {
 		t.Errorf("calls = %d, want 1 (disabled retry must not retry)", inner.calls)
@@ -65,7 +97,9 @@ func TestRetryTransport_PassthroughWhenMaxAttemptsOne(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	_ = tr.Forward(rr, req, noRouteRetry())
+	if err := tr.Forward(rr, req, noRouteRetry()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if inner.calls != 1 {
 		t.Errorf("calls = %d, want 1 (max_attempts=1 means no retry)", inner.calls)
@@ -78,7 +112,9 @@ func TestRetryTransport_SuccessOnFirstAttemptNoRetry(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	_ = tr.Forward(rr, req, noRouteRetry())
+	if err := tr.Forward(rr, req, noRouteRetry()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if inner.calls != 1 {
 		t.Errorf("calls = %d, want 1 (success on first attempt must not retry)", inner.calls)
@@ -95,7 +131,9 @@ func TestRetryTransport_RetriesOnRetryableStatus(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	_ = tr.Forward(rr, req, noRouteRetry())
+	if err := tr.Forward(rr, req, noRouteRetry()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if inner.calls != 3 {
 		t.Errorf("calls = %d, want 3 (two retries)", inner.calls)
@@ -111,7 +149,9 @@ func TestRetryTransport_ExhaustedReturnsLastResponse(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	_ = tr.Forward(rr, req, noRouteRetry())
+	if err := tr.Forward(rr, req, noRouteRetry()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if inner.calls != 3 {
 		t.Errorf("calls = %d, want 3 (all attempts exhausted)", inner.calls)
@@ -127,7 +167,9 @@ func TestRetryTransport_NonRetryableStatusNotRetried(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	_ = tr.Forward(rr, req, noRouteRetry())
+	if err := tr.Forward(rr, req, noRouteRetry()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if inner.calls != 1 {
 		t.Errorf("calls = %d, want 1 (404 is not retryable)", inner.calls)
@@ -156,7 +198,9 @@ func TestRetryTransport_PerRouteConfigOverridesGlobal(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	_ = tr.Forward(rr, req, routeWithOverride)
+	if err := tr.Forward(rr, req, routeWithOverride); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	// With max 2 attempts: attempt 0 → 502 (retry), attempt 1 → 502 (exhausted).
 	if inner.calls != 2 {
@@ -182,7 +226,9 @@ func TestRetryTransport_ContextCancellationStopsRetries(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
 	rr := httptest.NewRecorder()
-	_ = tr.Forward(rr, req, noRouteRetry())
+	if err := tr.Forward(rr, req, noRouteRetry()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	// At least one call must have been made; fewer than 3 because the context
 	// was cancelled before the second backoff sleep expired.
@@ -191,6 +237,42 @@ func TestRetryTransport_ContextCancellationStopsRetries(t *testing.T) {
 	}
 	if inner.calls >= 3 {
 		t.Errorf("expected fewer than 3 attempts due to context cancellation; got %d", inner.calls)
+	}
+}
+
+func TestRetryTransport_RetriesOnTransportError(t *testing.T) {
+	// inner returns a transport-level error without writing any status code.
+	// The retry transport must treat this as retryable — not as a 200 success.
+	inner := &errorTransport{}
+	tr := retry.NewTransport(inner, globalCfg(true, 3, []int{502, 503}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	err := tr.Forward(rr, req, noRouteRetry())
+
+	if inner.calls != 3 {
+		t.Errorf("calls = %d, want 3 (transport error must trigger retries)", inner.calls)
+	}
+	if rr.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want %d (exhausted transport errors must write 502)", rr.Code, http.StatusBadGateway)
+	}
+	if err == nil {
+		t.Error("expected non-nil error when all attempts fail with transport error")
+	}
+}
+
+func TestRetryTransport_CopyErrorPropagated(t *testing.T) {
+	// When the response body copy to the real writer fails (e.g. client disconnect),
+	// the error must be returned to the caller, not silently discarded.
+	// MaxAttempts=2 is the minimum to exercise retryForward (<=1 bypasses it).
+	inner := &bodyTransport{body: "hello"}
+	tr := retry.NewTransport(inner, globalCfg(true, 2, []int{502}))
+
+	w := &failWriter{header: http.Header{}}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	err := tr.Forward(w, req, noRouteRetry())
+	if err == nil {
+		t.Error("expected non-nil error when the response body copy fails")
 	}
 }
 
