@@ -12,6 +12,10 @@ import (
 // Route resolves the upstream route for an inbound request. It returns
 // ErrNoRouteMatched (via the error chain) when no route is configured for the
 // request, and a non-nil AppError for infrastructure failures.
+//
+// Contract: Route must not retain the headers map after returning. Callers may
+// return it to a sync.Pool immediately after Route returns. Implementations that
+// need header values must copy them before Route returns.
 type RequestRouter interface {
 	Route(ctx context.Context, method, path string, headers map[string]string) (*domain.Route, error)
 }

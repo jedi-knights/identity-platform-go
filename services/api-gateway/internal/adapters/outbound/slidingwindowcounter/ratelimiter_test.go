@@ -14,10 +14,10 @@ import (
 var _ ports.RateLimiter = (*slidingwindowcounter.RateLimiter)(nil)
 
 func TestSlidingWindowCounter_AllowsUpToLimit(t *testing.T) {
-	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{
+	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{WindowRule: domain.WindowRule{
 		RequestsPerWindow: 3,
 		WindowDuration:    time.Second,
-	})
+	}})
 	for i := range 3 {
 		if !rl.Allow("client") {
 			t.Fatalf("request %d should be allowed", i+1)
@@ -26,10 +26,10 @@ func TestSlidingWindowCounter_AllowsUpToLimit(t *testing.T) {
 }
 
 func TestSlidingWindowCounter_DeniesOverLimit(t *testing.T) {
-	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{
+	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{WindowRule: domain.WindowRule{
 		RequestsPerWindow: 2,
 		WindowDuration:    time.Second,
-	})
+	}})
 	rl.Allow("client")
 	rl.Allow("client")
 	if rl.Allow("client") {
@@ -38,10 +38,10 @@ func TestSlidingWindowCounter_DeniesOverLimit(t *testing.T) {
 }
 
 func TestSlidingWindowCounter_ResetsAfterFullWindow(t *testing.T) {
-	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{
+	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{WindowRule: domain.WindowRule{
 		RequestsPerWindow: 2,
 		WindowDuration:    60 * time.Millisecond,
-	})
+	}})
 	rl.Allow("client")
 	rl.Allow("client")
 	// Wait for both the current and previous windows to expire.
@@ -52,10 +52,10 @@ func TestSlidingWindowCounter_ResetsAfterFullWindow(t *testing.T) {
 }
 
 func TestSlidingWindowCounter_IndependentKeys(t *testing.T) {
-	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{
+	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{WindowRule: domain.WindowRule{
 		RequestsPerWindow: 1,
 		WindowDuration:    time.Second,
-	})
+	}})
 	if !rl.Allow("a") {
 		t.Fatal("a should be allowed")
 	}
