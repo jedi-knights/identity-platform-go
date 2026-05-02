@@ -12,10 +12,10 @@ import (
 
 func TestEvictStale_RemovesStaleEntry(t *testing.T) {
 	// Arrange
-	rl := &RateLimiter{rule: domain.SlidingWindowCounterRule{
+	rl := &RateLimiter{rule: domain.SlidingWindowCounterRule{WindowRule: domain.WindowRule{
 		RequestsPerWindow: 100,
 		WindowDuration:    time.Millisecond,
-	}}
+	}}}
 	for i := range rlshard.NumShards {
 		rl.shards[i].entries = make(map[string]*entry)
 	}
@@ -41,10 +41,10 @@ func TestEvictStale_PreservesActiveLongWindowEntry(t *testing.T) {
 	// Arrange — window duration (20 min) > rlshard.StaleEntryTTL (10 min);
 	// the max() guard must prevent eviction of a recently-seen entry.
 	longWindow := 20 * time.Minute
-	rl := &RateLimiter{rule: domain.SlidingWindowCounterRule{
+	rl := &RateLimiter{rule: domain.SlidingWindowCounterRule{WindowRule: domain.WindowRule{
 		RequestsPerWindow: 100,
 		WindowDuration:    longWindow,
-	}}
+	}}}
 	for i := range rlshard.NumShards {
 		rl.shards[i].entries = make(map[string]*entry)
 	}

@@ -33,11 +33,22 @@ func TestRoute_Matches(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "method match is case-insensitive",
-			route:    domain.Route{Match: domain.MatchCriteria{Methods: []string{"get"}}},
+			name:     "method match is case-sensitive (methods normalized to uppercase at construction)",
+			route:    domain.Route{Match: domain.MatchCriteria{Methods: []string{"GET"}}},
 			method:   "GET",
 			path:     "",
 			expected: true,
+		},
+		{
+			// MatchCriteria.Methods must be uppercase — callers are responsible for
+			// normalizing at construction time (e.g. config.ToDomainRoutes).
+			// A lowercase method in the criteria will never match any real request
+			// because net/http always delivers uppercase methods.
+			name:     "lowercase method in criteria never matches (invariant violation)",
+			route:    domain.Route{Match: domain.MatchCriteria{Methods: []string{"get"}}},
+			method:   "GET",
+			path:     "",
+			expected: false,
 		},
 		{
 			name:     "method match against multiple allowed methods",
@@ -216,7 +227,12 @@ func TestRoute_Matches(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Arrange — route and request values come from the table row (tt)
+
+			// Act
 			got := tt.route.Matches(tt.method, tt.path, tt.headers)
+
+			// Assert
 			if got != tt.expected {
 				t.Errorf("Matches(%q, %q, %v) = %v, want %v",
 					tt.method, tt.path, tt.headers, got, tt.expected)
