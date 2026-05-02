@@ -11,9 +11,11 @@ package retry
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v5"
@@ -21,6 +23,12 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/ports"
 )
+
+// recorderPool reuses ResponseRecorder allocations across retry attempts.
+// Each get resets Code, HeaderMap, and Body so the recorder is clean for reuse.
+var recorderPool = sync.Pool{
+	New: func() any { return httptest.NewRecorder() },
+}
 
 // Compile-time check: Transport must satisfy ports.UpstreamTransport.
 var _ ports.UpstreamTransport = (*Transport)(nil)
@@ -70,26 +78,53 @@ func (t *Transport) retryForward(w http.ResponseWriter, r *http.Request, route *
 	retryable := makeRetryableSet(cfg.RetryableStatus)
 	bo := newExponentialBackoff(cfg)
 
+	// lastRec is always set: attempt 0 always runs (sleepContext is skipped when
+	// attempt == 0), so the post-loop copy/put never operates on nil.
 	var lastRec *httptest.ResponseRecorder
+	var lastFwdErr error
 	for attempt := 0; attempt < cfg.MaxAttempts; attempt++ {
 		if attempt > 0 && !sleepContext(r.Context(), bo.NextBackOff()) {
 			break
 		}
-		rec := httptest.NewRecorder()
-		// The error from Forward is intentionally discarded: proxy.Transport writes
-		// a 502 to rec when the upstream is unreachable, so rec.Code is the retry
-		// signal. The returned error would be redundant and is never needed here.
-		_ = t.inner.Forward(rec, r, route)
+		rec := acquireRecorder()
+		fwdErr := t.inner.Forward(rec, r, route)
+		if lastRec != nil {
+			recorderPool.Put(lastRec)
+		}
 		lastRec = rec
-		if !retryable[rec.Code] {
-			copyRecorder(w, rec)
-			return nil
+		lastFwdErr = fwdErr
+		if !shouldRetry(fwdErr, rec.Code, retryable) {
+			break
 		}
 	}
-	if lastRec != nil {
-		copyRecorder(w, lastRec)
+	// When all attempts fail with a transport error the recorder holds the default
+	// 200 status (nothing was written to it). Overwrite with 502 so the caller
+	// receives a proper gateway-error response, consistent with proxy.Transport.
+	if lastFwdErr != nil {
+		lastRec.Code = http.StatusBadGateway
 	}
-	return nil
+	copyErr := copyRecorder(w, lastRec)
+	recorderPool.Put(lastRec)
+	// errors.Join returns nil when both are nil (success path) and preserves both
+	// errors for errors.Is/As inspection when the upstream and write both fail.
+	return errors.Join(lastFwdErr, copyErr)
+}
+
+// shouldRetry reports whether the retry loop should continue after an attempt.
+// A transport-level error always warrants a retry; otherwise the status code is
+// checked against the configured retryable set.
+func shouldRetry(fwdErr error, code int, retryable map[int]bool) bool {
+	return fwdErr != nil || retryable[code]
+}
+
+// acquireRecorder gets a ResponseRecorder from the pool and resets all fields
+// (including unexported ones) via struct-level assignment so wroteHeader is zeroed.
+func acquireRecorder() *httptest.ResponseRecorder {
+	rec := recorderPool.Get().(*httptest.ResponseRecorder)
+	buf := rec.Body
+	*rec = httptest.ResponseRecorder{Body: buf, Code: http.StatusOK}
+	buf.Reset()
+	return rec
 }
 
 // makeRetryableSet converts a status-code slice to a set for O(1) lookup.
@@ -134,12 +169,14 @@ func sleepContext(ctx context.Context, d time.Duration) bool {
 }
 
 // copyRecorder writes the recorder's status, headers, and body to the real writer.
-func copyRecorder(w http.ResponseWriter, rec *httptest.ResponseRecorder) {
+// Returns the error from io.Copy so callers can detect client disconnects.
+func copyRecorder(w http.ResponseWriter, rec *httptest.ResponseRecorder) error {
 	for k, vs := range rec.Header() {
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}
 	}
 	w.WriteHeader(rec.Code)
-	_, _ = io.Copy(w, rec.Body)
+	_, err := io.Copy(w, rec.Body)
+	return err
 }
