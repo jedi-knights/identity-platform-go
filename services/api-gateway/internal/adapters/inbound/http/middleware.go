@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/rand"
@@ -9,20 +10,83 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
-	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
+	"github.com/ocrosby/identity-platform-go/libs/httputil"
 	"github.com/ocrosby/identity-platform-go/libs/jwtutil"
 	"github.com/ocrosby/identity-platform-go/libs/logging"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/ports"
 )
 
-// uuidPattern matches a well-formed UUID v4 string (lowercase hex).
-var uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+// isValidUUID reports whether s is a well-formed UUID v4 (lowercase hex, RFC 4122).
+// Hyphen positions: 8, 13, 18, 23. Version nibble at position 14 must be '4'.
+// Variant nibble at position 19 must be one of [89ab].
+// Hand-rolled to avoid a regexp allocation and per-call DFA traversal on the hot path.
+func isValidUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i := 0; i < 36; i++ {
+		if !isValidUUIDChar(i, s[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isValidUUIDChar(i int, c byte) bool {
+	switch i {
+	case 8, 13, 18, 23:
+		return c == '-'
+	case 14:
+		return c == '4'
+	case 19:
+		return isVariantNibble(c)
+	default:
+		return isHexByte(c)
+	}
+}
+
+func isVariantNibble(c byte) bool {
+	return c == '8' || c == '9' || c == 'a' || c == 'b'
+}
+
+func isHexByte(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+}
+
+// responseBuffer is a minimal http.ResponseWriter that captures status, headers,
+// and body for use in CacheMiddleware. It replaces httptest.ResponseRecorder to
+// avoid a test-package dependency in production code.
+type responseBuffer struct {
+	header http.Header
+	body   bytes.Buffer
+	code   int
+}
+
+func newResponseBuffer() *responseBuffer {
+	return &responseBuffer{header: make(http.Header), code: http.StatusOK}
+}
+
+func (rb *responseBuffer) Header() http.Header         { return rb.header }
+func (rb *responseBuffer) WriteHeader(code int)        { rb.code = code }
+func (rb *responseBuffer) Write(b []byte) (int, error) { return rb.body.Write(b) }
+
+func (rb *responseBuffer) reset() {
+	clear(rb.header)
+	rb.body.Reset()
+	rb.code = http.StatusOK
+}
+
+// cacheBufferPool reuses responseBuffer allocations across cache misses.
+var cacheBufferPool = sync.Pool{
+	New: func() any { return newResponseBuffer() },
+}
 
 // RequestIDMiddleware generates or accepts a correlation ID for every request.
 //
@@ -45,7 +109,7 @@ func RequestIDMiddleware(logger logging.Logger) func(http.Handler) http.Handler 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestID := r.Header.Get("X-Request-ID")
-			if !uuidPattern.MatchString(requestID) {
+			if !isValidUUID(requestID) {
 				// Generate a fresh UUID v4; log if the entropy source is broken.
 				var err error
 				requestID, err = newRequestID()
@@ -73,6 +137,8 @@ func RequestIDMiddleware(logger logging.Logger) func(http.Handler) http.Handler 
 }
 
 // newRequestID generates a random UUID v4.
+// This mirrors libs/httputil.newUUID but returns an error instead of panicking,
+// which is appropriate for middleware that can fall back to a sentinel value.
 func newRequestID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -139,7 +205,7 @@ func RateLimitMiddleware(limiter ports.RateLimiter, keySource string, logger log
 			if !limiter.Allow(key) {
 				logger.Warn("rate limit exceeded", "key", key, "path", r.URL.Path)
 				w.Header().Set("Retry-After", "1")
-				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeRateLimit, "rate limit exceeded"))
 				return
 			}
 
@@ -162,7 +228,8 @@ func ConcurrencyMiddleware(limiter ports.ConcurrencyLimiter, keySource string, l
 
 			if !limiter.Acquire(key) {
 				logger.Warn("concurrency limit reached", "key", key, "path", r.URL.Path)
-				http.Error(w, "too many concurrent requests", http.StatusServiceUnavailable)
+				w.Header().Set("Retry-After", "1")
+				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnavailable, "too many concurrent requests"))
 				return
 			}
 			defer limiter.Release(key)
@@ -197,7 +264,7 @@ func IPFilterMiddleware(cfg config.IPFilterConfig, logger logging.Logger) func(h
 
 			if blocked {
 				logger.Warn("ip filter blocked", "ip", key, "mode", cfg.Mode, "path", r.URL.Path)
-				http.Error(w, "forbidden", http.StatusForbidden)
+				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeForbidden, "forbidden"))
 				return
 			}
 
@@ -214,14 +281,14 @@ func IPFilterMiddleware(cfg config.IPFilterConfig, logger logging.Logger) func(h
 //   - The response Content-Type is compressible (text/*, application/json, application/xml)
 //   - The response body is at least cfg.MinSizeBytes (avoids wasting CPU on tiny payloads)
 //   - The upstream did not already set Content-Encoding (no double-compression)
-func CompressionMiddleware(cfg config.CompressionConfig) func(http.Handler) http.Handler {
+func CompressionMiddleware(cfg config.CompressionConfig, logger logging.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 				next.ServeHTTP(w, r)
 				return
 			}
-			grw := newGzipResponseWriter(w, cfg.Level, cfg.MinSizeBytes)
+			grw := newGzipResponseWriter(w, cfg.Level, cfg.MinSizeBytes, logger)
 			defer grw.finish()
 			next.ServeHTTP(grw, r)
 		})
@@ -256,12 +323,14 @@ func CacheMiddleware(cache ports.ResponseCache, cfg config.CacheConfig) func(htt
 			}
 			holder := &ports.CacheTTLHolder{TTL: defaultTTL}
 			r = r.WithContext(context.WithValue(r.Context(), ports.CacheTTLKey{}, holder))
-			rec := httptest.NewRecorder()
+			rec := cacheBufferPool.Get().(*responseBuffer)
+			rec.reset()
 			next.ServeHTTP(rec, r)
-			if rec.Code == http.StatusOK {
+			if rec.code == http.StatusOK {
 				cache.Set(key, captureEntry(rec), holder.TTL)
 			}
 			flushRecorder(w, rec)
+			cacheBufferPool.Put(rec)
 		})
 	}
 }
@@ -271,7 +340,15 @@ func isCacheableMethod(method string) bool {
 }
 
 func buildCacheKey(r *http.Request) string {
-	return r.Method + "\x00" + r.URL.Path + "\x00" + r.URL.RawQuery + "\x00" + r.Header.Get("Accept")
+	var b strings.Builder
+	b.WriteString(r.Method)
+	b.WriteByte(0)
+	b.WriteString(r.URL.Path)
+	b.WriteByte(0)
+	b.WriteString(r.URL.RawQuery)
+	b.WriteByte(0)
+	b.WriteString(r.Header.Get("Accept"))
+	return b.String()
 }
 
 func writeCachedEntry(w http.ResponseWriter, entry *ports.CacheEntry) {
@@ -281,25 +358,27 @@ func writeCachedEntry(w http.ResponseWriter, entry *ports.CacheEntry) {
 		}
 	}
 	w.WriteHeader(entry.StatusCode)
-	_, _ = w.Write(entry.Body)
+	_, _ = w.Write(entry.Body) // headers already committed; write errors cannot be remediated
 }
 
-func captureEntry(rec *httptest.ResponseRecorder) *ports.CacheEntry {
+func captureEntry(rec *responseBuffer) *ports.CacheEntry {
+	// bytes.Clone copies the body out of the buffer so it is safe to return
+	// the buffer to the pool and reuse it for the next request.
 	return &ports.CacheEntry{
-		StatusCode: rec.Code,
-		Header:     rec.Header().Clone(),
-		Body:       rec.Body.Bytes(),
+		StatusCode: rec.code,
+		Header:     rec.header.Clone(),
+		Body:       bytes.Clone(rec.body.Bytes()),
 	}
 }
 
-func flushRecorder(w http.ResponseWriter, rec *httptest.ResponseRecorder) {
-	for k, vs := range rec.Header() {
+func flushRecorder(w http.ResponseWriter, rec *responseBuffer) {
+	for k, vs := range rec.header {
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}
 	}
-	w.WriteHeader(rec.Code)
-	_, _ = io.Copy(w, rec.Body)
+	w.WriteHeader(rec.code)
+	_, _ = io.Copy(w, &rec.body) // headers already committed; copy errors cannot be remediated
 }
 
 // --- client key extraction ---
@@ -391,21 +470,22 @@ func matchesCIDR(ip net.IP, nets []*net.IPNet) bool {
 // is compressible it arms the gzip writer; otherwise it flushes plain.
 type gzipResponseWriter struct {
 	http.ResponseWriter
+	logger       logging.Logger
 	level        int
 	minSizeBytes int
 	buf          []byte
 	status       int
 	gz           *gzip.Writer
-	armed        bool // true once we committed to gzip
 	headersDone  bool // true after WriteHeader has been called on the real writer
 }
 
-func newGzipResponseWriter(w http.ResponseWriter, level, minSizeBytes int) *gzipResponseWriter {
+func newGzipResponseWriter(w http.ResponseWriter, level, minSizeBytes int, logger logging.Logger) *gzipResponseWriter {
 	if level < gzip.BestSpeed || level > gzip.BestCompression {
 		level = gzip.DefaultCompression
 	}
 	return &gzipResponseWriter{
 		ResponseWriter: w,
+		logger:         logger,
 		level:          level,
 		minSizeBytes:   minSizeBytes,
 		status:         http.StatusOK,
@@ -427,13 +507,21 @@ func (g *gzipResponseWriter) Write(b []byte) (int, error) {
 func (g *gzipResponseWriter) finish() {
 	if g.headersDone {
 		if g.gz != nil {
-			_ = g.gz.Close()
+			if err := g.gz.Close(); err != nil {
+				// Headers already committed; status cannot change. Log so operators
+				// know the client received a truncated or corrupt gzip stream.
+				g.logger.Error("gzip: failed to close compressed stream", "error", err)
+			}
+			g.gz = nil // guard against double-close if finish() is called again
 		}
 		return
 	}
 	g.flushBuffered()
 	if g.gz != nil {
-		_ = g.gz.Close()
+		if err := g.gz.Close(); err != nil {
+			g.logger.Error("gzip: failed to close compressed stream", "error", err)
+		}
+		g.gz = nil
 	}
 }
 
@@ -457,13 +545,13 @@ func (g *gzipResponseWriter) armGzip() {
 	g.ResponseWriter.Header().Set("Content-Encoding", "gzip")
 	g.ResponseWriter.Header().Del("Content-Length") // length changes after compression
 	g.ResponseWriter.WriteHeader(g.status)
+	// NewWriterLevel only errors on out-of-range level; level is clamped in newGzipResponseWriter.
 	gz, _ := gzip.NewWriterLevel(g.ResponseWriter, g.level)
 	g.gz = gz
-	g.armed = true
 }
 
 func (g *gzipResponseWriter) writeThrough(b []byte) (int, error) {
-	if g.armed && g.gz != nil {
+	if g.gz != nil {
 		return g.gz.Write(b)
 	}
 	return g.ResponseWriter.Write(b)
@@ -532,7 +620,7 @@ func JWTMiddleware(verifier ports.TokenVerifier, publicPaths []string, logger lo
 
 			raw, ok := extractBearerToken(r)
 			if !ok {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "unauthorized"))
 				return
 			}
 
@@ -545,7 +633,7 @@ func JWTMiddleware(verifier ports.TokenVerifier, publicPaths []string, logger lo
 				} else {
 					logger.Debug("jwt invalid", "path", r.URL.Path, "error", err)
 				}
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "unauthorized"))
 				return
 			}
 
