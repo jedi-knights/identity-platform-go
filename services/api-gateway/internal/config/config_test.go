@@ -123,6 +123,40 @@ func TestConfig_ToDomainRoutes_WebSocketFieldPropagated(t *testing.T) {
 	}
 }
 
+// TestConfig_ToDomainRoutes_MethodsNormalizedToUppercase verifies that lowercase or
+// mixed-case HTTP methods in the config are normalized to uppercase by ToDomainRoutes.
+// The domain layer uses exact-string comparison (==) for method matching, so this
+// normalization must happen at the config boundary.
+func TestConfig_ToDomainRoutes_MethodsNormalizedToUppercase(t *testing.T) {
+	// Arrange
+	cfg := &config.Config{
+		Routes: []config.RouteConfig{
+			{
+				Name: "svc",
+				Match: config.MatchConfig{
+					Methods: []string{"get", "Post", "DELETE"},
+				},
+				Upstream: config.UpstreamConfig{URL: "http://svc:8080"},
+			},
+		},
+	}
+
+	// Act
+	routes := cfg.ToDomainRoutes()
+
+	// Assert
+	want := []string{"GET", "POST", "DELETE"}
+	got := routes[0].Match.Methods
+	if len(got) != len(want) {
+		t.Fatalf("methods count = %d, want %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("methods[%d] = %q, want %q", i, got[i], w)
+		}
+	}
+}
+
 // --- TLS config validation ---
 
 // tlsEnvTest runs Load() with the given environment variables set and returns
@@ -173,5 +207,98 @@ func TestLoad_TLSBothFieldsSetIsAccepted(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("expected no error when both TLS fields are set, got: %v", err)
+	}
+}
+
+// --- Rate limit validation tests ---
+
+func TestLoad_UnknownRateLimitStrategyReturnsError(t *testing.T) {
+	err := tlsEnvTest(t, map[string]string{
+		"GATEWAY_RATE_LIMIT_ENABLED":  "true",
+		"GATEWAY_RATE_LIMIT_STRATEGY": "typo_bucket",
+	})
+	if err == nil {
+		t.Fatal("expected error for unrecognised strategy, got nil")
+	}
+}
+
+func TestLoad_KnownStrategiesAreAccepted(t *testing.T) {
+	strategies := []string{
+		"token_bucket", "fixed_window", "sliding_window_log",
+		"sliding_window_counter", "leaky_bucket", "concurrency",
+	}
+	for _, s := range strategies {
+		t.Run(s, func(t *testing.T) {
+			err := tlsEnvTest(t, map[string]string{
+				"GATEWAY_RATE_LIMIT_ENABLED":  "true",
+				"GATEWAY_RATE_LIMIT_STRATEGY": s,
+			})
+			if err != nil {
+				t.Errorf("strategy %q rejected unexpectedly: %v", s, err)
+			}
+		})
+	}
+}
+
+func TestLoad_TokenBucketZeroBurstSizeReturnsError(t *testing.T) {
+	err := tlsEnvTest(t, map[string]string{
+		"GATEWAY_RATE_LIMIT_ENABLED":             "true",
+		"GATEWAY_RATE_LIMIT_STRATEGY":            "token_bucket",
+		"GATEWAY_RATE_LIMIT_REQUESTS_PER_SECOND": "10",
+		"GATEWAY_RATE_LIMIT_BURST_SIZE":          "0",
+	})
+	if err == nil {
+		t.Fatal("expected error for burst_size=0, got nil")
+	}
+}
+
+func TestLoad_TokenBucketZeroRateReturnsError(t *testing.T) {
+	err := tlsEnvTest(t, map[string]string{
+		"GATEWAY_RATE_LIMIT_ENABLED":             "true",
+		"GATEWAY_RATE_LIMIT_STRATEGY":            "token_bucket",
+		"GATEWAY_RATE_LIMIT_REQUESTS_PER_SECOND": "0",
+		"GATEWAY_RATE_LIMIT_BURST_SIZE":          "10",
+	})
+	if err == nil {
+		t.Fatal("expected error for requests_per_second=0, got nil")
+	}
+}
+
+func TestLoad_WindowStrategyZeroWindowSecsReturnsError(t *testing.T) {
+	for _, s := range []string{"fixed_window", "sliding_window_log", "sliding_window_counter"} {
+		t.Run(s, func(t *testing.T) {
+			err := tlsEnvTest(t, map[string]string{
+				"GATEWAY_RATE_LIMIT_ENABLED":             "true",
+				"GATEWAY_RATE_LIMIT_STRATEGY":            s,
+				"GATEWAY_RATE_LIMIT_REQUESTS_PER_WINDOW": "10",
+				"GATEWAY_RATE_LIMIT_WINDOW_SECS":         "0",
+			})
+			if err == nil {
+				t.Fatalf("strategy %q: expected error for window_secs=0, got nil", s)
+			}
+		})
+	}
+}
+
+func TestLoad_LeakyBucketZeroDrainRateReturnsError(t *testing.T) {
+	err := tlsEnvTest(t, map[string]string{
+		"GATEWAY_RATE_LIMIT_ENABLED":               "true",
+		"GATEWAY_RATE_LIMIT_STRATEGY":              "leaky_bucket",
+		"GATEWAY_RATE_LIMIT_DRAIN_RATE_PER_SECOND": "0",
+		"GATEWAY_RATE_LIMIT_QUEUE_DEPTH":           "10",
+	})
+	if err == nil {
+		t.Fatal("expected error for drain_rate_per_second=0, got nil")
+	}
+}
+
+func TestLoad_ConcurrencyZeroMaxInFlightReturnsError(t *testing.T) {
+	err := tlsEnvTest(t, map[string]string{
+		"GATEWAY_RATE_LIMIT_ENABLED":      "true",
+		"GATEWAY_RATE_LIMIT_STRATEGY":     "concurrency",
+		"GATEWAY_RATE_LIMIT_MAX_IN_FLIGHT": "0",
+	})
+	if err == nil {
+		t.Fatal("expected error for max_in_flight=0, got nil")
 	}
 }
