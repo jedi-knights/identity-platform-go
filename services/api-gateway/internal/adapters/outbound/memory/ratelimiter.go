@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/ports"
 )
@@ -14,14 +16,20 @@ var _ ports.RateLimiter = (*RateLimiter)(nil)
 const staleEntryTTL = 10 * time.Minute
 
 // RateLimiter is an in-memory token bucket rate limiter keyed by client identifier.
+//
+// Design: Strategy pattern — RateLimiter implements ports.RateLimiter so the
+// container can swap it for any other strategy (e.g. Redis-backed) without
+// changing the caller. The token bucket algorithm is provided by
+// golang.org/x/time/rate, which is stdlib-backed and goroutine-safe, replacing
+// the previous hand-rolled domain.TokenBucket.
 type RateLimiter struct {
-	mu      sync.Mutex
-	buckets map[string]*entry
-	rule    domain.RateLimitRule
+	mu       sync.Mutex
+	limiters map[string]*limitEntry
+	rule     domain.RateLimitRule
 }
 
-type entry struct {
-	bucket   *domain.TokenBucket
+type limitEntry struct {
+	limiter  *rate.Limiter
 	lastSeen time.Time
 }
 
@@ -30,27 +38,33 @@ type entry struct {
 // when ctx is cancelled.
 func NewRateLimiter(ctx context.Context, rule domain.RateLimitRule) *RateLimiter {
 	rl := &RateLimiter{
-		buckets: make(map[string]*entry),
-		rule:    rule,
+		limiters: make(map[string]*limitEntry),
+		rule:     rule,
 	}
 	go rl.evictLoop(ctx)
 	return rl
 }
 
 // Allow checks whether a request from the given key is permitted.
+// Each unique key gets its own rate.Limiter created lazily on first use.
 func (rl *RateLimiter) Allow(key string) bool {
 	now := time.Now()
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	e, ok := rl.buckets[key]
+	e, ok := rl.limiters[key]
 	if !ok {
-		bucket := domain.NewTokenBucket(rl.rule, now)
-		e = &entry{bucket: bucket, lastSeen: now}
-		rl.buckets[key] = e
+		e = &limitEntry{
+			limiter: rate.NewLimiter(
+				rate.Limit(rl.rule.RequestsPerSecond),
+				rl.rule.BurstSize,
+			),
+			lastSeen: now,
+		}
+		rl.limiters[key] = e
 	}
 	e.lastSeen = now
-	return e.bucket.Allow(now)
+	return e.limiter.Allow()
 }
 
 // evictLoop periodically removes entries that have not been seen recently.
@@ -74,9 +88,9 @@ func (rl *RateLimiter) evictStale() {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	for key, e := range rl.buckets {
+	for key, e := range rl.limiters {
 		if now.Sub(e.lastSeen) > staleEntryTTL {
-			delete(rl.buckets, key)
+			delete(rl.limiters, key)
 		}
 	}
 }
