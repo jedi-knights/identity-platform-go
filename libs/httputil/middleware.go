@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/ocrosby/identity-platform-go/libs/logging"
@@ -74,14 +75,28 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 }
 
 // LoggingMiddleware returns middleware that logs each request/response.
+//
+// It reads trace_id and request_id from the request context, so it must be
+// placed INNER to TraceIDMiddleware and RequestIDMiddleware in the chain:
+//
+//	TraceIDMiddleware → RequestIDMiddleware → LoggingMiddleware → handler
+//
+// Fields logged on every request: method, path, status, duration_ms,
+// trace_id, request_id, remote_ip, user_agent.
 func LoggingMiddleware(logger Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			rw := &responseWriter{ResponseWriter: w, status: 0}
 
+			// Read correlation IDs from context — these are set by TraceIDMiddleware
+			// and RequestIDMiddleware which must run before this middleware.
 			ctx := r.Context()
 			traceID := logging.TraceIDFromContext(ctx)
+			requestID := logging.RequestIDFromContext(ctx)
+
+			// Extract the client IP (last segment before the port in RemoteAddr).
+			remoteIP := remoteIP(r.RemoteAddr)
 
 			next.ServeHTTP(rw, r)
 			if !rw.wroteHeader {
@@ -98,10 +113,21 @@ func LoggingMiddleware(logger Logger) func(http.Handler) http.Handler {
 				"status", rw.status,
 				"duration_ms", duration.Milliseconds(),
 				"trace_id", traceID,
+				"request_id", requestID,
+				"remote_ip", remoteIP,
+				"user_agent", r.UserAgent(),
 			)
 			l.Info("request completed")
 		})
 	}
+}
+
+// remoteIP extracts the IP address from a "host:port" RemoteAddr string.
+func remoteIP(remoteAddr string) string {
+	if idx := strings.LastIndex(remoteAddr, ":"); idx != -1 {
+		return remoteAddr[:idx]
+	}
+	return remoteAddr
 }
 
 // RecoveryMiddleware returns middleware that recovers from panics and logs them.

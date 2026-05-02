@@ -43,6 +43,7 @@ type contextKey int
 const (
 	traceIDKey contextKey = iota
 	loggerKey
+	requestIDKey
 )
 
 // WithTraceID stores a trace ID in the context.
@@ -53,6 +54,21 @@ func WithTraceID(ctx context.Context, traceID string) context.Context {
 // TraceIDFromContext retrieves the trace ID from the context.
 func TraceIDFromContext(ctx context.Context) string {
 	if v, ok := ctx.Value(traceIDKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// WithRequestID stores a request ID in the context.
+// The request ID is a client-provided or gateway-generated correlation token
+// that is propagated to upstream services via the X-Request-ID header.
+func WithRequestID(ctx context.Context, requestID string) context.Context {
+	return context.WithValue(ctx, requestIDKey, requestID)
+}
+
+// RequestIDFromContext retrieves the request ID from the context.
+func RequestIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(requestIDKey).(string); ok {
 		return v
 	}
 	return ""
