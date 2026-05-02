@@ -15,10 +15,10 @@ import (
 var _ ports.RateLimiter = (*slidingwindowlog.RateLimiter)(nil)
 
 func TestSlidingWindowLog_AllowsUpToLimit(t *testing.T) {
-	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{
+	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{WindowRule: domain.WindowRule{
 		RequestsPerWindow: 3,
 		WindowDuration:    time.Second,
-	})
+	}})
 	for i := range 3 {
 		if !rl.Allow("client") {
 			t.Fatalf("request %d should be allowed", i+1)
@@ -27,10 +27,10 @@ func TestSlidingWindowLog_AllowsUpToLimit(t *testing.T) {
 }
 
 func TestSlidingWindowLog_DeniesOverLimit(t *testing.T) {
-	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{
+	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{WindowRule: domain.WindowRule{
 		RequestsPerWindow: 2,
 		WindowDuration:    time.Second,
-	})
+	}})
 	rl.Allow("client")
 	rl.Allow("client")
 	if rl.Allow("client") {
@@ -39,10 +39,10 @@ func TestSlidingWindowLog_DeniesOverLimit(t *testing.T) {
 }
 
 func TestSlidingWindowLog_AllowsAfterWindowSlides(t *testing.T) {
-	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{
+	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{WindowRule: domain.WindowRule{
 		RequestsPerWindow: 1,
 		WindowDuration:    60 * time.Millisecond,
-	})
+	}})
 	if !rl.Allow("client") {
 		t.Fatal("first request should be allowed")
 	}
@@ -57,10 +57,10 @@ func TestSlidingWindowLog_AllowsAfterWindowSlides(t *testing.T) {
 }
 
 func TestSlidingWindowLog_IndependentKeys(t *testing.T) {
-	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{
+	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{WindowRule: domain.WindowRule{
 		RequestsPerWindow: 1,
 		WindowDuration:    time.Second,
-	})
+	}})
 	if !rl.Allow("a") {
 		t.Fatal("a should be allowed")
 	}
