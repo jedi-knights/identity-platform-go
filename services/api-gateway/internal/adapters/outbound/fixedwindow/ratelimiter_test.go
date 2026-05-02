@@ -4,6 +4,7 @@ package fixedwindow_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -68,5 +69,32 @@ func TestFixedWindow_IndependentKeys(t *testing.T) {
 	}
 	if rl.Allow("a") {
 		t.Fatal("a's second request should be denied")
+	}
+}
+
+func BenchmarkFixedWindow_Allow_SingleKey(b *testing.B) {
+	rl := fixedwindow.New(context.Background(), domain.FixedWindowRule{WindowRule: domain.WindowRule{
+		RequestsPerWindow: b.N + 1,
+		WindowDuration:    time.Hour,
+	}})
+	b.ResetTimer()
+	for range b.N {
+		rl.Allow("client")
+	}
+}
+
+func BenchmarkFixedWindow_Allow_HighCardinality(b *testing.B) {
+	const keys = 1000
+	rl := fixedwindow.New(context.Background(), domain.FixedWindowRule{WindowRule: domain.WindowRule{
+		RequestsPerWindow: b.N + 1,
+		WindowDuration:    time.Hour,
+	}})
+	k := make([]string, keys)
+	for i := range keys {
+		k[i] = fmt.Sprintf("client-%d", i)
+	}
+	b.ResetTimer()
+	for i := range b.N {
+		rl.Allow(k[i%keys])
 	}
 }

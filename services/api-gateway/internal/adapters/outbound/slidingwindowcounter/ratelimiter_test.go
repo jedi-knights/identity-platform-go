@@ -4,6 +4,7 @@ package slidingwindowcounter_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -13,6 +14,24 @@ import (
 )
 
 var _ ports.RateLimiter = (*slidingwindowcounter.RateLimiter)(nil)
+
+// TestSlidingWindowCounter_PanicsOnZeroWindowDuration verifies that New panics
+// when WindowDuration is zero, which would otherwise cause float64 division-by-zero
+// in Allow, producing +Inf/-Inf and allowing unlimited requests regardless of limit.
+func TestSlidingWindowCounter_PanicsOnZeroWindowDuration(t *testing.T) {
+	// Arrange / Act / Assert
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected New to panic on WindowDuration=0, but it did not")
+		}
+	}()
+	slidingwindowcounter.New(context.Background(), domain.SlidingWindowCounterRule{
+		WindowRule: domain.WindowRule{
+			RequestsPerWindow: 10,
+			WindowDuration:    0,
+		},
+	})
+}
 
 func TestSlidingWindowCounter_AllowsUpToLimit(t *testing.T) {
 	rl := slidingwindowcounter.New(context.Background(), domain.SlidingWindowCounterRule{WindowRule: domain.WindowRule{
@@ -62,5 +81,32 @@ func TestSlidingWindowCounter_IndependentKeys(t *testing.T) {
 	}
 	if !rl.Allow("b") {
 		t.Fatal("b should be allowed — independent counters")
+	}
+}
+
+func BenchmarkSlidingWindowCounter_Allow_SingleKey(b *testing.B) {
+	rl := slidingwindowcounter.New(context.Background(), domain.SlidingWindowCounterRule{WindowRule: domain.WindowRule{
+		RequestsPerWindow: b.N + 1,
+		WindowDuration:    time.Hour,
+	}})
+	b.ResetTimer()
+	for range b.N {
+		rl.Allow("client")
+	}
+}
+
+func BenchmarkSlidingWindowCounter_Allow_HighCardinality(b *testing.B) {
+	const keys = 1000
+	rl := slidingwindowcounter.New(context.Background(), domain.SlidingWindowCounterRule{WindowRule: domain.WindowRule{
+		RequestsPerWindow: b.N + 1,
+		WindowDuration:    time.Hour,
+	}})
+	k := make([]string, keys)
+	for i := range keys {
+		k[i] = fmt.Sprintf("client-%d", i)
+	}
+	b.ResetTimer()
+	for i := range b.N {
+		rl.Allow(k[i%keys])
 	}
 }
