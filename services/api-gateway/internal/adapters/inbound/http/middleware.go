@@ -148,6 +148,30 @@ func RateLimitMiddleware(limiter ports.RateLimiter, keySource string, logger log
 	}
 }
 
+// ConcurrencyMiddleware returns middleware that limits the number of simultaneous
+// in-flight requests per client key. When the concurrency limit is reached the
+// middleware responds with 503 Service Unavailable and does not forward the request.
+//
+// The slot is released via defer so it is freed even if the handler panics
+// (the recovery middleware above this in the chain will catch the panic after
+// the defer runs).
+func ConcurrencyMiddleware(limiter ports.ConcurrencyLimiter, keySource string, logger logging.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := extractClientKey(r, keySource)
+
+			if !limiter.Acquire(key) {
+				logger.Warn("concurrency limit reached", "key", key, "path", r.URL.Path)
+				http.Error(w, "too many concurrent requests", http.StatusServiceUnavailable)
+				return
+			}
+			defer limiter.Release(key)
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // IPFilterMiddleware returns middleware that allows or blocks requests based on
 // the client's IP address and the configured CIDR list.
 //

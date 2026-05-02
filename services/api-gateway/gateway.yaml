@@ -62,15 +62,35 @@ cors:
 
 # Rate limiting — token-bucket algorithm, keyed by client IP.
 # enabled: false means the middleware is not added to the chain at all.
-# The token bucket is backed by golang.org/x/time/rate (stdlib, goroutine-safe).
+# strategy selects the algorithm:
+#   token_bucket         — (default) allows bursts; backed by golang.org/x/time/rate
+#   fixed_window         — counts per non-overlapping window; has boundary spike
+#   sliding_window_log   — per-request timestamp log; most accurate, O(N) memory
+#   sliding_window_counter — two-counter interpolation; O(1), ~0.003% error
+#   leaky_bucket         — reject-only; constant drain rate, no bursts
+#   concurrency          — limits simultaneous in-flight requests, not rate
 rate_limit:
   enabled: false
-  requests_per_second: 100
-  burst_size: 200
+  strategy: "token_bucket"
   # key_source controls which part of the request identifies the client.
   # Behind a load balancer, change to "x-forwarded-for" or "x-real-ip" so each
   # end-user gets their own bucket rather than sharing the LB's IP.
   key_source: "ip"   # ip | x-forwarded-for | x-real-ip | header:<name> | jwt-subject
+
+  # Token bucket parameters (strategy: token_bucket)
+  requests_per_second: 100
+  burst_size: 200
+
+  # Window-based parameters (strategy: fixed_window | sliding_window_log | sliding_window_counter)
+  requests_per_window: 100
+  window_secs: 60
+
+  # Leaky bucket parameters (strategy: leaky_bucket)
+  drain_rate_per_second: 100
+  queue_depth: 200
+
+  # Concurrency parameters (strategy: concurrency)
+  max_in_flight: 100
 
 # Circuit breaking — per-route three-state machine (Closed → Open → Half-Open).
 # When enabled, a breaker is created lazily per route name on first use.

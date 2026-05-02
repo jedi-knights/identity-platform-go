@@ -47,8 +47,9 @@ import (
 //   - corsCfg:            CORS settings; an empty struct disables CORS headers.
 //   - authMiddleware:     JWT middleware; nil disables authentication.
 //   - ipFilterMiddleware: IP allow/deny middleware; nil disables IP filtering.
-//   - limiter:            token-bucket rate limiter; nil disables rate limiting.
-//   - rateLimitKeySource: key extraction mode passed to RateLimitMiddleware.
+//   - limiter:            rate limiter; nil disables rate limiting.
+//   - concLimiter:        concurrency limiter; nil disables concurrency limiting.
+//   - rateLimitKeySource: key extraction mode passed to RateLimitMiddleware/ConcurrencyMiddleware.
 //   - metricsHandler:     Prometheus HTTP handler; nil skips /metrics.
 //   - tracingMiddleware:  OTel HTTP handler wrapper; nil disables tracing.
 //   - compressionMW:      Gzip middleware; nil disables compression.
@@ -60,6 +61,7 @@ func NewRouter(
 	authMiddleware func(http.Handler) http.Handler,
 	ipFilterMiddleware func(http.Handler) http.Handler,
 	limiter ports.RateLimiter,
+	concLimiter ports.ConcurrencyLimiter,
 	rateLimitKeySource string,
 	metricsHandler http.Handler,
 	tracingMiddleware func(http.Handler) http.Handler,
@@ -79,8 +81,8 @@ func NewRouter(
 		mux.Handle("GET /metrics", metricsHandler)
 	}
 
-	// Proxy catch-all — execution order: auth → ip-filter → rate-limit → cache → proxy.
-	mux.Handle("/", buildProxyChain(h, logger, authMiddleware, ipFilterMiddleware, limiter, rateLimitKeySource, cacheMW))
+	// Proxy catch-all — execution order: auth → ip-filter → concurrency → rate-limit → cache → proxy.
+	mux.Handle("/", buildProxyChain(h, logger, authMiddleware, ipFilterMiddleware, limiter, concLimiter, rateLimitKeySource, cacheMW))
 
 	// Outer chain — applied to every request including system routes.
 	// Build inside-out; execution order is the reverse.
@@ -99,8 +101,8 @@ func NewRouter(
 }
 
 // buildProxyChain assembles the per-proxy-request middleware stack inside-out so
-// that execution order is: auth → ip-filter → rate-limit → cache → proxy.
-// Nil middlewares are skipped; a nil limiter skips rate limiting entirely.
+// that execution order is: auth → ip-filter → concurrency → rate-limit → cache → proxy.
+// Nil middlewares are skipped; nil limiters skip their respective middleware entirely.
 // Extracted from NewRouter to keep its cyclomatic complexity within the project limit.
 func buildProxyChain(
 	h *Handler,
@@ -108,6 +110,7 @@ func buildProxyChain(
 	authMW func(http.Handler) http.Handler,
 	ipFilterMW func(http.Handler) http.Handler,
 	limiter ports.RateLimiter,
+	concLimiter ports.ConcurrencyLimiter,
 	rateLimitKeySource string,
 	cacheMW func(http.Handler) http.Handler,
 ) http.Handler {
@@ -117,6 +120,9 @@ func buildProxyChain(
 	}
 	if limiter != nil {
 		ph = RateLimitMiddleware(limiter, rateLimitKeySource, logger)(ph)
+	}
+	if concLimiter != nil {
+		ph = ConcurrencyMiddleware(concLimiter, rateLimitKeySource, logger)(ph)
 	}
 	if ipFilterMW != nil {
 		ph = ipFilterMW(ph)

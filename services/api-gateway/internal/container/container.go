@@ -19,12 +19,16 @@ import (
 	jwksauth "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/auth/jwks"
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/circuitbreaker"
+	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/fixedwindow"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/healthhttp"
+	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/leakybucket"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/memory"
 	prometheusout "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/prometheus"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/proxy"
 	retryout "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/retry"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/roundrobin"
+	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/slidingwindowcounter"
+	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/slidingwindowlog"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/static"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/weighted"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/application"
@@ -67,7 +71,7 @@ type Container struct {
 //     optionally wrapped by circuitbreaker.Transport (Decorator pattern)
 //   - MetricsRecorder:   prometheusout.MetricsRecorder — exposes /metrics
 //   - HealthChecker:     healthhttp.Checker — probes each upstream's /health
-//   - RateLimiter:       memory.RateLimiter — token bucket; nil when disabled in config
+//   - RateLimiter:       strategy selected by cfg.RateLimit.Strategy; nil when disabled
 func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*Container, error) {
 	// --- Route resolver (static; restart required to pick up config changes) ---
 	ptrRoutes := cfg.ToDomainRoutes()
@@ -124,17 +128,14 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*Conta
 	}
 	healthAgg := application.NewHealthAggregator(checker, routes)
 
-	// --- Rate limiter (Strategy pattern: token bucket vs disabled) ---
+	// --- Rate limiter (Strategy pattern: algorithm selected by config) ---
 	// Passing nil to NewRouter skips the RateLimitMiddleware decorator entirely,
 	// so disabled rate limiting has zero overhead on the request path.
+	// buildRateLimiter selects the concrete algorithm based on cfg.RateLimit.Strategy.
 	var limiter ports.RateLimiter
+	var concLimiter ports.ConcurrencyLimiter
 	if cfg.RateLimit.Enabled {
-		rule := domain.RateLimitRule{
-			RequestsPerSecond: cfg.RateLimit.RequestsPerSecond,
-			BurstSize:         cfg.RateLimit.BurstSize,
-		}
-		// The eviction goroutine inside NewRateLimiter exits when ctx is cancelled.
-		limiter = memory.NewRateLimiter(ctx, rule)
+		limiter, concLimiter = buildRateLimiter(ctx, cfg)
 	}
 
 	// --- JWT auth middleware (Decorator + Strategy pattern: nil = disabled) ---
@@ -168,7 +169,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*Conta
 		handler, logger, cfg.CORS,
 		authMiddleware,
 		buildIPFilterMiddleware(cfg, logger),
-		limiter, cfg.RateLimit.KeySource,
+		limiter, concLimiter, cfg.RateLimit.KeySource,
 		promRecorder.Handler(),
 		tracingMiddleware,
 		buildCompressionMiddleware(cfg),
@@ -201,6 +202,57 @@ func buildAuthVerifier(ctx context.Context, cfg *config.Config) (ports.TokenVeri
 		return nil, fmt.Errorf("auth.signing_key must be set when auth.type is %q", cfg.Auth.Type)
 	}
 	return hs256auth.NewVerifier([]byte(cfg.Auth.SigningKey)), nil
+}
+
+// buildRateLimiter selects and constructs the rate limiting adapter based on
+// cfg.RateLimit.Strategy. Returns (nil, nil) if the strategy is unrecognised
+// or the enabled flag is false (the caller guards the enabled check).
+//
+// Strategy "concurrency" populates only the ConcurrencyLimiter return value;
+// all other strategies populate only the RateLimiter return value.
+//
+// Extracted from New to keep its cyclomatic complexity within the project limit.
+func buildRateLimiter(ctx context.Context, cfg *config.Config) (ports.RateLimiter, ports.ConcurrencyLimiter) {
+	rl := cfg.RateLimit
+	window := time.Duration(rl.WindowSecs) * time.Second
+
+	switch rl.Strategy {
+	case "fixed_window":
+		return fixedwindow.New(domain.FixedWindowRule{
+			RequestsPerWindow: rl.RequestsPerWindow,
+			WindowDuration:    window,
+		}), nil
+
+	case "sliding_window_log":
+		return slidingwindowlog.New(domain.SlidingWindowLogRule{
+			RequestsPerWindow: rl.RequestsPerWindow,
+			WindowDuration:    window,
+		}), nil
+
+	case "sliding_window_counter":
+		return slidingwindowcounter.New(domain.SlidingWindowCounterRule{
+			RequestsPerWindow: rl.RequestsPerWindow,
+			WindowDuration:    window,
+		}), nil
+
+	case "leaky_bucket":
+		return leakybucket.New(domain.LeakyBucketRule{
+			DrainRatePerSecond: rl.DrainRatePerSecond,
+			QueueDepth:         rl.QueueDepth,
+		}), nil
+
+	case "concurrency":
+		return nil, memory.NewConcurrencyLimiter(domain.ConcurrencyRule{
+			MaxInFlight: rl.MaxInFlight,
+		})
+
+	default: // "token_bucket" and any unrecognised value
+		// The eviction goroutine exits when ctx is cancelled.
+		return memory.NewRateLimiter(ctx, domain.RateLimitRule{
+			RequestsPerSecond: rl.RequestsPerSecond,
+			BurstSize:         rl.BurstSize,
+		}), nil
+	}
 }
 
 // buildIPFilterMiddleware returns an IP filter middleware when cfg.IPFilter.Enabled,

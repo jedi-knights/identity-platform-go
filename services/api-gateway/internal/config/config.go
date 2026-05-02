@@ -187,12 +187,16 @@ type CORSConfig struct {
 	MaxAgeSecs     int      `mapstructure:"max_age_secs"`
 }
 
-// RateLimitConfig governs the token-bucket rate limiter applied to API traffic.
+// RateLimitConfig governs the rate limiter applied to API traffic.
 // When Enabled is false the rate limiter is skipped entirely.
 //
-// The token bucket algorithm: each client gets a bucket with BurstSize tokens.
-// Tokens refill at RequestsPerSecond per second. A request costs one token; when
-// the bucket is empty the request is rejected with 429 Too Many Requests.
+// Strategy selects the algorithm:
+//   - "token_bucket"         — (default) allows bursts up to BurstSize; good general-purpose choice
+//   - "fixed_window"         — counts requests in non-overlapping windows; simple but has boundary spike
+//   - "sliding_window_log"   — per-request timestamp log; most accurate, O(N) memory per client
+//   - "sliding_window_counter" — two-counter interpolation; O(1) memory, ~0.003% error (Cloudflare algorithm)
+//   - "leaky_bucket"         — reject-only; enforces constant drain rate, no bursts
+//   - "concurrency"          — limits simultaneous in-flight requests per key, not rate
 //
 // KeySource selects which part of the request identifies the client:
 //   - "ip"              — RemoteAddr (default; broken behind a load balancer)
@@ -200,11 +204,41 @@ type CORSConfig struct {
 //   - "x-real-ip"       — X-Real-IP header value; fallback to ip
 //   - "header:<name>"   — arbitrary header value, e.g. "header:X-API-Key"
 //   - "jwt-subject"     — X-Auth-Subject header injected by JWTMiddleware
+//
+// Token bucket parameters (strategy: "token_bucket"):
+//
+//	RequestsPerSecond — steady-state refill rate; BurstSize — max token accumulation.
+//
+// Window parameters (strategy: "fixed_window", "sliding_window_log", "sliding_window_counter"):
+//
+//	RequestsPerWindow — max requests allowed; WindowSecs — window size in seconds.
+//
+// Leaky bucket parameters (strategy: "leaky_bucket"):
+//
+//	DrainRatePerSecond — tokens drained per second; QueueDepth — virtual queue capacity.
+//
+// Concurrency parameters (strategy: "concurrency"):
+//
+//	MaxInFlight — maximum simultaneous in-flight requests per key.
 type RateLimitConfig struct {
-	Enabled           bool    `mapstructure:"enabled"`
+	Enabled   bool   `mapstructure:"enabled"`
+	Strategy  string `mapstructure:"strategy"`   // GATEWAY_RATE_LIMIT_STRATEGY
+	KeySource string `mapstructure:"key_source"` // GATEWAY_RATE_LIMIT_KEY_SOURCE
+
+	// Token bucket
 	RequestsPerSecond float64 `mapstructure:"requests_per_second"`
 	BurstSize         int     `mapstructure:"burst_size"`
-	KeySource         string  `mapstructure:"key_source"` // GATEWAY_RATE_LIMIT_KEY_SOURCE
+
+	// Window-based (fixed_window, sliding_window_log, sliding_window_counter)
+	RequestsPerWindow int `mapstructure:"requests_per_window"`
+	WindowSecs        int `mapstructure:"window_secs"`
+
+	// Leaky bucket
+	DrainRatePerSecond float64 `mapstructure:"drain_rate_per_second"`
+	QueueDepth         int     `mapstructure:"queue_depth"`
+
+	// Concurrency
+	MaxInFlight int `mapstructure:"max_in_flight"`
 }
 
 // ServerConfig holds HTTP listener settings.
@@ -408,9 +442,19 @@ func setDefaults(v *viper.Viper) {
 	// key_source defaults to "ip"; production deployments behind an LB should use
 	// "x-forwarded-for" or "x-real-ip" so each end-user gets their own bucket.
 	v.SetDefault("rate_limit.enabled", false)
+	v.SetDefault("rate_limit.strategy", "token_bucket")
+	v.SetDefault("rate_limit.key_source", "ip")
+	// Token bucket defaults
 	v.SetDefault("rate_limit.requests_per_second", 100.0)
 	v.SetDefault("rate_limit.burst_size", 200)
-	v.SetDefault("rate_limit.key_source", "ip")
+	// Window-based defaults
+	v.SetDefault("rate_limit.requests_per_window", 100)
+	v.SetDefault("rate_limit.window_secs", 60)
+	// Leaky bucket defaults
+	v.SetDefault("rate_limit.drain_rate_per_second", 100.0)
+	v.SetDefault("rate_limit.queue_depth", 200)
+	// Concurrency defaults
+	v.SetDefault("rate_limit.max_in_flight", 100)
 
 	// IP filter is opt-in. Default mode is "deny" (block listed CIDRs).
 	v.SetDefault("ip_filter.enabled", false)
