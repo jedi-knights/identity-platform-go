@@ -13,10 +13,10 @@ import (
 func TestEvictStale_RemovesExpiredKey(t *testing.T) {
 	// Arrange
 	window := 10 * time.Millisecond
-	rl := &RateLimiter{rule: domain.SlidingWindowLogRule{WindowRule: domain.WindowRule{
+	rl := &RateLimiter{rule: domain.SlidingWindowLogRule{
 		RequestsPerWindow: 100,
 		WindowDuration:    window,
-	}}}
+	}}
 	for i := range rlshard.NumShards {
 		rl.shards[i].logs = make(map[string][]time.Time)
 	}
@@ -43,10 +43,10 @@ func TestEvictStale_RemovesExpiredKey(t *testing.T) {
 
 func TestEvictStale_PreservesActiveKey(t *testing.T) {
 	// Arrange
-	rl := &RateLimiter{rule: domain.SlidingWindowLogRule{WindowRule: domain.WindowRule{
+	rl := &RateLimiter{rule: domain.SlidingWindowLogRule{
 		RequestsPerWindow: 100,
 		WindowDuration:    time.Hour,
-	}}}
+	}}
 	for i := range rlshard.NumShards {
 		rl.shards[i].logs = make(map[string][]time.Time)
 	}

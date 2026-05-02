@@ -3,6 +3,7 @@
 package slidingwindowcounter_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 var _ ports.RateLimiter = (*slidingwindowcounter.RateLimiter)(nil)
 
 func TestSlidingWindowCounter_AllowsUpToLimit(t *testing.T) {
-	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{
+	rl := slidingwindowcounter.New(context.Background(), domain.SlidingWindowCounterRule{
 		RequestsPerWindow: 3,
 		WindowDuration:    time.Second,
 	})
@@ -26,7 +27,7 @@ func TestSlidingWindowCounter_AllowsUpToLimit(t *testing.T) {
 }
 
 func TestSlidingWindowCounter_DeniesOverLimit(t *testing.T) {
-	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{
+	rl := slidingwindowcounter.New(context.Background(), domain.SlidingWindowCounterRule{
 		RequestsPerWindow: 2,
 		WindowDuration:    time.Second,
 	})
@@ -38,7 +39,7 @@ func TestSlidingWindowCounter_DeniesOverLimit(t *testing.T) {
 }
 
 func TestSlidingWindowCounter_ResetsAfterFullWindow(t *testing.T) {
-	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{
+	rl := slidingwindowcounter.New(context.Background(), domain.SlidingWindowCounterRule{
 		RequestsPerWindow: 2,
 		WindowDuration:    60 * time.Millisecond,
 	})
@@ -52,7 +53,7 @@ func TestSlidingWindowCounter_ResetsAfterFullWindow(t *testing.T) {
 }
 
 func TestSlidingWindowCounter_IndependentKeys(t *testing.T) {
-	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{
+	rl := slidingwindowcounter.New(context.Background(), domain.SlidingWindowCounterRule{
 		RequestsPerWindow: 1,
 		WindowDuration:    time.Second,
 	})

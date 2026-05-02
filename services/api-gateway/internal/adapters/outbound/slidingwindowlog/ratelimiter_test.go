@@ -3,6 +3,7 @@
 package slidingwindowlog_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 var _ ports.RateLimiter = (*slidingwindowlog.RateLimiter)(nil)
 
 func TestSlidingWindowLog_AllowsUpToLimit(t *testing.T) {
-	rl := slidingwindowlog.New(domain.SlidingWindowLogRule{
+	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{
 		RequestsPerWindow: 3,
 		WindowDuration:    time.Second,
 	})
@@ -26,7 +27,7 @@ func TestSlidingWindowLog_AllowsUpToLimit(t *testing.T) {
 }
 
 func TestSlidingWindowLog_DeniesOverLimit(t *testing.T) {
-	rl := slidingwindowlog.New(domain.SlidingWindowLogRule{
+	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{
 		RequestsPerWindow: 2,
 		WindowDuration:    time.Second,
 	})
@@ -38,7 +39,7 @@ func TestSlidingWindowLog_DeniesOverLimit(t *testing.T) {
 }
 
 func TestSlidingWindowLog_AllowsAfterWindowSlides(t *testing.T) {
-	rl := slidingwindowlog.New(domain.SlidingWindowLogRule{
+	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{
 		RequestsPerWindow: 1,
 		WindowDuration:    60 * time.Millisecond,
 	})
@@ -56,7 +57,7 @@ func TestSlidingWindowLog_AllowsAfterWindowSlides(t *testing.T) {
 }
 
 func TestSlidingWindowLog_IndependentKeys(t *testing.T) {
-	rl := slidingwindowlog.New(domain.SlidingWindowLogRule{
+	rl := slidingwindowlog.New(context.Background(), domain.SlidingWindowLogRule{
 		RequestsPerWindow: 1,
 		WindowDuration:    time.Second,
 	})
