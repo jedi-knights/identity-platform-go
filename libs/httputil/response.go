@@ -44,6 +44,8 @@ var appErrorHTTPStatus = map[apperrors.ErrorCode]int{
 	apperrors.ErrCodeBadRequest:   http.StatusBadRequest,
 	apperrors.ErrCodeConflict:     http.StatusConflict,
 	apperrors.ErrCodeInternal:     http.StatusInternalServerError,
+	apperrors.ErrCodeRateLimit:    http.StatusTooManyRequests,
+	apperrors.ErrCodeUnavailable:  http.StatusServiceUnavailable,
 }
 
 // HTTPStatus maps an AppError code to an HTTP status code.
