@@ -31,18 +31,13 @@ var _ ports.UpstreamTransport = (*Transport)(nil)
 type Transport struct {
 	inner    ports.UpstreamTransport
 	cfg      config.CircuitBreakerConfig
-	mu       sync.Mutex
-	breakers map[string]*gobreaker.CircuitBreaker
+	breakers sync.Map // key: string → *gobreaker.CircuitBreaker; populated lazily on first request per route
 }
 
 // NewTransport creates a circuit-breaking decorator around inner.
 // One gobreaker.CircuitBreaker is created lazily per route name on first use.
 func NewTransport(inner ports.UpstreamTransport, cfg config.CircuitBreakerConfig) *Transport {
-	return &Transport{
-		inner:    inner,
-		cfg:      cfg,
-		breakers: make(map[string]*gobreaker.CircuitBreaker),
-	}
+	return &Transport{inner: inner, cfg: cfg}
 }
 
 // Forward forwards the request through the circuit breaker for route.Name.
@@ -77,17 +72,15 @@ func (t *Transport) Forward(w http.ResponseWriter, r *http.Request, route *domai
 	}
 }
 
-// breakerFor returns the circuit breaker for the given route name, creating it
-// lazily if this is the first request to that route.
+// breakerFor returns the circuit breaker for the given route name.
+// The fast path (already initialised route) is a single lock-free sync.Map.Load.
+// The slow path (first request to a new route) uses LoadOrStore so two concurrent
+// cold-start goroutines for the same route discard the duplicate and share one CB.
 func (t *Transport) breakerFor(routeName string) *gobreaker.CircuitBreaker {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if cb, ok := t.breakers[routeName]; ok {
-		return cb
+	if v, ok := t.breakers.Load(routeName); ok {
+		return v.(*gobreaker.CircuitBreaker)
 	}
-
-	settings := gobreaker.Settings{
+	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
 		Name:        routeName,
 		MaxRequests: t.cfg.MaxRequests,
 		Interval:    time.Duration(t.cfg.IntervalSecs) * time.Second,
@@ -104,9 +97,7 @@ func (t *Transport) breakerFor(routeName string) *gobreaker.CircuitBreaker {
 			ratio := float64(counts.TotalFailures) / float64(counts.Requests)
 			return ratio >= t.cfg.FailureRatio
 		},
-	}
-
-	cb := gobreaker.NewCircuitBreaker(settings)
-	t.breakers[routeName] = cb
-	return cb
+	})
+	actual, _ := t.breakers.LoadOrStore(routeName, cb)
+	return actual.(*gobreaker.CircuitBreaker)
 }
