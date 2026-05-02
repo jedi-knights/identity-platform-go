@@ -211,6 +211,10 @@ func buildAuthVerifier(ctx context.Context, cfg *config.Config) (ports.TokenVeri
 // Strategy "concurrency" populates only the ConcurrencyLimiter return value;
 // all other strategies populate only the RateLimiter return value.
 //
+// ctx governs the token-bucket eviction goroutine lifetime (memory.NewRateLimiter).
+// Other adapters are currently stateless and ignore it; pass it anyway so the
+// signature remains consistent if any adapter adds background goroutines later.
+//
 // Extracted from New to keep its cyclomatic complexity within the project limit.
 func buildRateLimiter(ctx context.Context, cfg *config.Config) (ports.RateLimiter, ports.ConcurrencyLimiter) {
 	rl := cfg.RateLimit
