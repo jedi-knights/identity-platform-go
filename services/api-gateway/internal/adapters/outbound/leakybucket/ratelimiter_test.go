@@ -3,6 +3,7 @@
 package leakybucket_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 var _ ports.RateLimiter = (*leakybucket.RateLimiter)(nil)
 
 func TestLeakyBucket_AllowsUpToQueueDepth(t *testing.T) {
-	rl := leakybucket.New(domain.LeakyBucketRule{
+	rl := leakybucket.New(context.Background(), domain.LeakyBucketRule{
 		DrainRatePerSecond: 1,
 		QueueDepth:         3,
 	})
@@ -26,7 +27,7 @@ func TestLeakyBucket_AllowsUpToQueueDepth(t *testing.T) {
 }
 
 func TestLeakyBucket_DeniesWhenQueueFull(t *testing.T) {
-	rl := leakybucket.New(domain.LeakyBucketRule{
+	rl := leakybucket.New(context.Background(), domain.LeakyBucketRule{
 		DrainRatePerSecond: 1,
 		QueueDepth:         2,
 	})
@@ -38,7 +39,7 @@ func TestLeakyBucket_DeniesWhenQueueFull(t *testing.T) {
 }
 
 func TestLeakyBucket_AllowsAfterDrain(t *testing.T) {
-	rl := leakybucket.New(domain.LeakyBucketRule{
+	rl := leakybucket.New(context.Background(), domain.LeakyBucketRule{
 		DrainRatePerSecond: 20, // drain one token every 50ms
 		QueueDepth:         1,
 	})
@@ -55,7 +56,7 @@ func TestLeakyBucket_AllowsAfterDrain(t *testing.T) {
 }
 
 func TestLeakyBucket_IndependentKeys(t *testing.T) {
-	rl := leakybucket.New(domain.LeakyBucketRule{
+	rl := leakybucket.New(context.Background(), domain.LeakyBucketRule{
 		DrainRatePerSecond: 1,
 		QueueDepth:         1,
 	})

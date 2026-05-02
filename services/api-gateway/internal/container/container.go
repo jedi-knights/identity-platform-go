@@ -172,7 +172,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*Conta
 		limiter, concLimiter, cfg.RateLimit.KeySource,
 		promRecorder.Handler(),
 		tracingMiddleware,
-		buildCompressionMiddleware(cfg),
+		buildCompressionMiddleware(cfg, logger),
 		buildCacheMiddleware(cfg),
 	)
 
@@ -218,25 +218,25 @@ func buildRateLimiter(ctx context.Context, cfg *config.Config) (ports.RateLimite
 
 	switch rl.Strategy {
 	case "fixed_window":
-		return fixedwindow.New(domain.FixedWindowRule{WindowRule: domain.WindowRule{
+		return fixedwindow.New(ctx, domain.FixedWindowRule{WindowRule: domain.WindowRule{
 			RequestsPerWindow: rl.RequestsPerWindow,
 			WindowDuration:    window,
 		}}), nil
 
 	case "sliding_window_log":
-		return slidingwindowlog.New(domain.SlidingWindowLogRule{WindowRule: domain.WindowRule{
+		return slidingwindowlog.New(ctx, domain.SlidingWindowLogRule{WindowRule: domain.WindowRule{
 			RequestsPerWindow: rl.RequestsPerWindow,
 			WindowDuration:    window,
 		}}), nil
 
 	case "sliding_window_counter":
-		return slidingwindowcounter.New(domain.SlidingWindowCounterRule{WindowRule: domain.WindowRule{
+		return slidingwindowcounter.New(ctx, domain.SlidingWindowCounterRule{WindowRule: domain.WindowRule{
 			RequestsPerWindow: rl.RequestsPerWindow,
 			WindowDuration:    window,
 		}}), nil
 
 	case "leaky_bucket":
-		return leakybucket.New(domain.LeakyBucketRule{
+		return leakybucket.New(ctx, domain.LeakyBucketRule{
 			DrainRatePerSecond: rl.DrainRatePerSecond,
 			QueueDepth:         rl.QueueDepth,
 		}), nil
@@ -266,11 +266,11 @@ func buildIPFilterMiddleware(cfg *config.Config, logger logging.Logger) func(htt
 
 // buildCompressionMiddleware returns a compression middleware when cfg.Compression.Enabled,
 // otherwise nil. Extracted from New to keep its cyclomatic complexity within limit.
-func buildCompressionMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
+func buildCompressionMiddleware(cfg *config.Config, logger logging.Logger) func(http.Handler) http.Handler {
 	if !cfg.Compression.Enabled {
 		return nil
 	}
-	return inboundhttp.CompressionMiddleware(cfg.Compression)
+	return inboundhttp.CompressionMiddleware(cfg.Compression, logger)
 }
 
 // buildTransportChain assembles the outbound transport Decorator stack:
