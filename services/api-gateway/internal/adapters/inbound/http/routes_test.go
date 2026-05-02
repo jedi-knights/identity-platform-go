@@ -26,7 +26,7 @@ func newRouter(t *testing.T, router ports.RequestRouter, transport ports.Upstrea
 	t.Helper()
 	logger := logging.NewLogger(logging.Config{Output: io.Discard})
 	h := gatewayhttp.NewHandler(router, transport, &fakeMetrics{}, logger, nil)
-	return gatewayhttp.NewRouter(h, logger, config.CORSConfig{}, nil, nil, nil, "ip", nil, nil, nil, nil)
+	return gatewayhttp.NewRouter(h, logger, config.CORSConfig{}, nil, nil, nil, nil, "ip", nil, nil, nil, nil)
 }
 
 func TestNewRouter_HealthEndpointReturns200(t *testing.T) {
