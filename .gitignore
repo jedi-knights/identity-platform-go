@@ -28,3 +28,6 @@ __debug_bin
 
 # Local planning
 TODO.md
+
+# Claude Code artifacts
+.claude/
