@@ -46,7 +46,10 @@ type MatchCriteria struct {
 	PathPrefix string
 
 	// Methods is the list of allowed HTTP methods (e.g. ["GET", "POST"]).
-	// An empty slice allows any method. Comparison is case-insensitive.
+	// An empty slice allows any method. Methods must be uppercase — callers are
+	// responsible for normalizing at construction time (e.g. via config.ToDomainRoutes).
+	// Incoming request methods from Go's net/http are always uppercase, so exact
+	// comparison with == is used instead of case-insensitive EqualFold.
 	Methods []string
 
 	// Headers is a map of header name → required value.
@@ -151,7 +154,7 @@ func (r *Route) matchesMethod(method string) bool {
 		return true
 	}
 	for _, m := range r.Match.Methods {
-		if strings.EqualFold(m, method) {
+		if m == method {
 			return true
 		}
 	}
