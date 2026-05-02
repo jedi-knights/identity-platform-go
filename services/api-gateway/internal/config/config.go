@@ -509,6 +509,9 @@ func validate(cfg *Config) error {
 	if err := validateServer(cfg.Server); err != nil {
 		return err
 	}
+	if err := validateRateLimit(cfg.RateLimit); err != nil {
+		return err
+	}
 	seen := make(map[string]struct{}, len(cfg.Routes))
 	for i, r := range cfg.Routes {
 		if r.Name == "" {
@@ -521,6 +524,79 @@ func validate(cfg *Config) error {
 		if err := validateUpstream(i, r.Name, r.Upstream); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// validRateLimitStrategies is the set of recognised rate_limit.strategy values.
+var validRateLimitStrategies = map[string]bool{
+	"token_bucket": true, "fixed_window": true,
+	"sliding_window_log": true, "sliding_window_counter": true,
+	"leaky_bucket": true, "concurrency": true,
+}
+
+// validateRateLimit checks that, when rate limiting is enabled, the strategy
+// is recognised and the per-strategy parameters are sensible.
+// Extracted from validate to keep its cyclomatic complexity within the project limit.
+func validateRateLimit(rl RateLimitConfig) error {
+	if !rl.Enabled {
+		return nil
+	}
+	if !validRateLimitStrategies[rl.Strategy] {
+		return fmt.Errorf("rate_limit.strategy %q is not recognised; valid values: token_bucket, fixed_window, sliding_window_log, sliding_window_counter, leaky_bucket, concurrency", rl.Strategy)
+	}
+	return validateRateLimitParams(rl)
+}
+
+// validateRateLimitParams dispatches per-strategy parameter validation.
+// Extracted from validateRateLimit to keep its cyclomatic complexity within limit.
+func validateRateLimitParams(rl RateLimitConfig) error {
+	switch rl.Strategy {
+	case "token_bucket":
+		return validateTokenBucketParams(rl)
+	case "fixed_window", "sliding_window_log", "sliding_window_counter":
+		return validateWindowParams(rl)
+	case "leaky_bucket":
+		return validateLeakyBucketParams(rl)
+	case "concurrency":
+		return validateConcurrencyParams(rl)
+	}
+	return nil
+}
+
+func validateTokenBucketParams(rl RateLimitConfig) error {
+	if rl.RequestsPerSecond <= 0 {
+		return fmt.Errorf("rate_limit.requests_per_second must be > 0 for strategy %q", rl.Strategy)
+	}
+	if rl.BurstSize <= 0 {
+		return fmt.Errorf("rate_limit.burst_size must be > 0 for strategy %q", rl.Strategy)
+	}
+	return nil
+}
+
+func validateWindowParams(rl RateLimitConfig) error {
+	if rl.RequestsPerWindow <= 0 {
+		return fmt.Errorf("rate_limit.requests_per_window must be > 0 for strategy %q", rl.Strategy)
+	}
+	if rl.WindowSecs <= 0 {
+		return fmt.Errorf("rate_limit.window_secs must be > 0 for strategy %q", rl.Strategy)
+	}
+	return nil
+}
+
+func validateLeakyBucketParams(rl RateLimitConfig) error {
+	if rl.DrainRatePerSecond <= 0 {
+		return fmt.Errorf("rate_limit.drain_rate_per_second must be > 0 for strategy %q", rl.Strategy)
+	}
+	if rl.QueueDepth <= 0 {
+		return fmt.Errorf("rate_limit.queue_depth must be > 0 for strategy %q", rl.Strategy)
+	}
+	return nil
+}
+
+func validateConcurrencyParams(rl RateLimitConfig) error {
+	if rl.MaxInFlight <= 0 {
+		return fmt.Errorf("rate_limit.max_in_flight must be > 0 for strategy %q", rl.Strategy)
 	}
 	return nil
 }
@@ -557,7 +633,7 @@ func (c *Config) ToDomainRoutes() []*domain.Route {
 			Name: rc.Name,
 			Match: domain.MatchCriteria{
 				PathPrefix: rc.Match.PathPrefix,
-				Methods:    rc.Match.Methods,
+				Methods:    upperMethods(rc.Match.Methods),
 				Headers:    rc.Match.Headers,
 			},
 			Upstream: domain.UpstreamTarget{
@@ -578,6 +654,21 @@ func (c *Config) ToDomainRoutes() []*domain.Route {
 		}
 	}
 	return routes
+}
+
+// upperMethods returns a new slice with every method converted to uppercase.
+// HTTP methods are case-sensitive by spec (RFC 7230 §3.1.1); the domain layer
+// uses exact comparison, so all methods must be uppercase before storage.
+// Returns nil when methods is nil or empty.
+func upperMethods(methods []string) []string {
+	if len(methods) == 0 {
+		return methods
+	}
+	out := make([]string, len(methods))
+	for i, m := range methods {
+		out[i] = strings.ToUpper(m)
+	}
+	return out
 }
 
 // normalizeWeightedURLs resolves the upstream URL pool and optional weights from
