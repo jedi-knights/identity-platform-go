@@ -205,7 +205,13 @@ func TestHandler_Proxy_PassesHeadersToRouter(t *testing.T) {
 
 	capturingRouter := &capturingRouter{
 		captureFunc: func(_ context.Context, _, _ string, headers map[string]string) {
-			capturedHeaders = headers
+			// Copy before Route() returns: the production handler returns the map
+			// to the pool (and clears it) immediately after Route() finishes.
+			copied := make(map[string]string, len(headers))
+			for k, v := range headers {
+				copied[k] = v
+			}
+			capturedHeaders = copied
 		},
 		route: &domain.Route{Name: "svc"},
 	}

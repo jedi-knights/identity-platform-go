@@ -3,6 +3,7 @@
 package memory_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/memory"
@@ -59,5 +60,29 @@ func TestConcurrencyLimiter_ReleaseDoesNotGoBelowZero(t *testing.T) {
 	cl.Release("client") // spurious release — must not panic
 	if !cl.Acquire("client") {
 		t.Fatal("Acquire after spurious Release should still work")
+	}
+}
+
+func BenchmarkConcurrencyLimiter_AcquireRelease_SingleKey(b *testing.B) {
+	cl := memory.NewConcurrencyLimiter(domain.ConcurrencyRule{MaxInFlight: 1})
+	b.ResetTimer()
+	for range b.N {
+		cl.Acquire("client")
+		cl.Release("client")
+	}
+}
+
+func BenchmarkConcurrencyLimiter_AcquireRelease_HighCardinality(b *testing.B) {
+	const keys = 1000
+	cl := memory.NewConcurrencyLimiter(domain.ConcurrencyRule{MaxInFlight: 1})
+	k := make([]string, keys)
+	for i := range keys {
+		k[i] = fmt.Sprintf("client-%d", i)
+	}
+	b.ResetTimer()
+	for i := range b.N {
+		key := k[i%keys]
+		cl.Acquire(key)
+		cl.Release(key)
 	}
 }
