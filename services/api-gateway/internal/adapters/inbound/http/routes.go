@@ -31,9 +31,10 @@ import (
 //	                → [proxy catch-all]:
 //	                    JWTMiddleware (optional)
 //	                      → IPFilterMiddleware (optional)
-//	                        → RateLimitMiddleware (optional)
-//	                          → CacheMiddleware (optional)
-//	                            → Proxy
+//	                        → ConcurrencyMiddleware (optional)
+//	                          → RateLimitMiddleware (optional)
+//	                            → CacheMiddleware (optional)
+//	                              → Proxy
 //
 // Ordering rationale:
 //   - Auth before IP filter before rate-limit: invalid tokens rejected first
