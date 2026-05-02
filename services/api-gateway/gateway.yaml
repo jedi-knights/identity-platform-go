@@ -1,0 +1,214 @@
+# api-gateway configuration
+#
+# All values can be overridden by environment variables prefixed with GATEWAY_.
+# Underscores separate nested keys: e.g. GATEWAY_SERVER_PORT overrides server.port.
+#
+# Config file search order:
+#   1. Path in GATEWAY_CONFIG_FILE env var
+#   2. ./gateway.yaml  (this file)
+#   3. /etc/gateway/gateway.yaml
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  # TLS is opt-in. Both cert and key must be set together; leave empty for HTTP.
+  # Inject paths via GATEWAY_SERVER_TLS_CERT_FILE / GATEWAY_SERVER_TLS_KEY_FILE.
+  tls_cert_file: ""
+  tls_key_file:  ""
+  # Two-phase graceful shutdown: after /health returns 503, sleep this many
+  # seconds to let the load balancer finish draining before srv.Shutdown runs.
+  drain_timeout_secs: 5
+
+log:
+  level: "info"       # debug | info | warn | error
+  format: "json"      # json | text
+  environment: "development"
+
+# Authentication — JWT Bearer token validation for API traffic.
+# When enabled, every request to the proxy catch-all must carry a valid token.
+#
+# type: "hs256" (default) — HMAC-SHA256. Requires signing_key.
+#       Inject via GATEWAY_AUTH_SIGNING_KEY; never store the secret here.
+# type: "jwks"            — RS256/JWKS. Requires jwks_url (a public JWKS endpoint).
+#       The gateway fetches and caches keys; the refresh goroutine exits on shutdown.
+#       Optionally set issuer and audience for claim validation.
+auth:
+  enabled: false
+  type: "hs256"           # hs256 | jwks
+  signing_key: ""         # hs256 only — inject via GATEWAY_AUTH_SIGNING_KEY
+  jwks_url: ""            # jwks only — e.g. "https://auth.example.com/.well-known/jwks.json"
+  jwks_refresh_secs: 300  # jwks only — how often to refresh the key set
+  issuer: ""              # optional — validate iss claim when non-empty
+  audience: ""            # optional — validate aud claim when non-empty
+  public_paths:           # path prefixes that bypass JWT validation
+    - "/auth/login"
+    - "/auth/register"
+
+# CORS — governs which browser origins may call the gateway.
+# An empty allowed_origins list disables the Access-Control-Allow-Origin header.
+cors:
+  allowed_origins:
+    - "http://localhost:3000"
+  allowed_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "OPTIONS"
+  allowed_headers:
+    - "Content-Type"
+    - "Authorization"
+  max_age_secs: 3600
+
+# Rate limiting — token-bucket algorithm, keyed by client IP.
+# enabled: false means the middleware is not added to the chain at all.
+# The token bucket is backed by golang.org/x/time/rate (stdlib, goroutine-safe).
+rate_limit:
+  enabled: false
+  requests_per_second: 100
+  burst_size: 200
+  # key_source controls which part of the request identifies the client.
+  # Behind a load balancer, change to "x-forwarded-for" or "x-real-ip" so each
+  # end-user gets their own bucket rather than sharing the LB's IP.
+  key_source: "ip"   # ip | x-forwarded-for | x-real-ip | header:<name> | jwt-subject
+
+# Circuit breaking — per-route three-state machine (Closed → Open → Half-Open).
+# When enabled, a breaker is created lazily per route name on first use.
+# trip condition: failure_ratio of requests fail within the interval window.
+# recovery:        after timeout_secs the circuit moves to Half-Open;
+#                  max_requests probing requests are let through to test recovery.
+circuit_breaker:
+  enabled: false
+  max_requests: 1        # probing requests allowed in half-open state
+  interval_secs: 60      # failure counting window; 0 = count since last transition
+  timeout_secs: 30       # seconds in open state before retrying
+  failure_ratio: 0.6     # open when ≥ 60% of requests fail (min 5 requests)
+
+# Distributed tracing — OpenTelemetry. Disabled by default.
+#
+# Exporters:
+#   stdout — pretty-prints spans as JSON to stdout; recommended for local dev.
+#   otlp   — sends spans to an OTLP/HTTP collector (e.g. Jaeger, Grafana Tempo).
+#            Set otlp_endpoint to the collector's host:port (default port: 4318).
+#            OTEL_EXPORTER_OTLP_ENDPOINT env var overrides otlp_endpoint at runtime.
+tracing:
+  enabled: false
+  service_name: "api-gateway"     # OTel resource attribute "service.name"
+  exporter: "stdout"              # stdout | otlp
+  otlp_endpoint: ""               # e.g. "otel-collector:4318"; only used when exporter=otlp
+
+# IP filtering — CIDR-based access control applied to every proxied request.
+# mode "allow": only IPs in cidrs are permitted; everything else gets 403.
+# mode "deny":  IPs in cidrs are blocked; everything else is permitted.
+# key_source mirrors rate_limit.key_source — use "x-forwarded-for" behind a LB.
+ip_filter:
+  enabled: false
+  mode: "deny"
+  cidrs: []          # e.g. ["10.0.0.0/8", "192.168.0.0/16"]
+  key_source: "ip"   # ip | x-forwarded-for | x-real-ip | header:<name> | jwt-subject
+
+# Compression — gzip response compression for qualifying Content-Types.
+# Applied outermost so even error responses from RecoveryMiddleware are compressed.
+# Disable (or raise min_size_bytes) for gRPC or already-compressed upstreams.
+compression:
+  enabled: false
+  min_size_bytes: 1024   # don't compress responses smaller than this (avoids overhead)
+  level: 6               # 1 (fastest) to 9 (best); 6 is the standard gzip default
+
+# Response caching — in-memory LRU+TTL cache for upstream responses.
+# Only GET and HEAD requests are cached; 200 OK responses only.
+# Cache key = method + path + query string + Accept header.
+# Per-route TTL overrides are set via upstream.cache_ttl_secs.
+#
+# memory: max_entries limits how many responses are held in the LRU cache.
+# When full, the least-recently-used entry is evicted to make room.
+cache:
+  enabled: false
+  max_entries: 1000           # max cached responses; set per available RAM budget
+  default_ttl_secs: 60        # default cache lifetime; override per route with cache_ttl_secs
+
+# Retry — exponential backoff on transient upstream errors.
+# retry.Transport wraps the URL-picker so each retry may land on a different
+# upstream endpoint when load balancing is active.
+#
+# max_attempts includes the initial try: max_attempts=3 means 1 try + 2 retries.
+# Must be ≥ 2 for any retries to occur; max_attempts=1 disables retries.
+# retryable_status lists HTTP status codes treated as transient failures.
+# Per-route overrides are set via upstream.retry.* fields.
+retry:
+  enabled: false
+  max_attempts: 3             # total attempts including the first
+  initial_backoff_ms: 100     # wait before the first retry (doubles each attempt)
+  multiplier: 2.0             # backoff growth factor
+  retryable_status:           # status codes that trigger a retry
+    - 502
+    - 503
+    - 504
+
+# Routes — ordered list of proxy rules evaluated top-to-bottom.
+# The first rule whose path_prefix matches the incoming request wins.
+routes:
+  # Single-upstream route — uses 'url' field (backward compatible).
+  - name: "identity-service"
+    match:
+      path_prefix: "/api/identity"
+      methods: []           # empty = all methods allowed
+      headers: {}           # empty = no header matching
+    upstream:
+      url: "http://identity-service:8080"
+      strip_prefix: "/api/identity"   # strip this prefix before forwarding
+      timeout_secs: 10                # per-route deadline; 0 uses global client timeout
+      websocket: false                # set true for WebSocket / SSE / gRPC-web upstreams
+      # tls: per-upstream mTLS — omit or leave all fields empty for plain HTTP.
+      # ca_file: "/certs/ca.pem"         # PEM CA cert to verify upstream's TLS cert
+      # cert_file: "/certs/client.pem"   # PEM client cert for mTLS (with key_file)
+      # key_file: "/certs/client-key.pem"
+      # insecure_skip_verify: false      # disable cert verification (local dev only)
+
+  # Multi-upstream route — uses 'urls' for round-robin load balancing.
+  # 'url' is ignored when 'urls' is present.
+  - name: "auth-server"
+    match:
+      path_prefix: "/auth"
+    upstream:
+      # url: "http://auth-server:8081"   # single-URL alternative
+      urls:
+        - "http://auth-server-1:8081"
+        - "http://auth-server-2:8081"
+      strip_prefix: ""     # keep the /auth prefix when forwarding
+      timeout_secs: 5      # auth paths should be fast; fail quickly if not
+      websocket: false
+
+  # Weighted route — uses 'weighted_urls' for proportional load balancing.
+  # 'url' and 'urls' are ignored when 'weighted_urls' is present.
+  # Entries with weight ≤ 0 are excluded. Relative weights are used:
+  # the primary backend here receives 3× the traffic of the canary.
+  # - name: "my-service"
+  #   match:
+  #     path_prefix: "/api/my-service"
+  #   upstream:
+  #     weighted_urls:
+  #       - url: "http://my-service-primary:8080"
+  #         weight: 3
+  #       - url: "http://my-service-canary:8080"
+  #         weight: 1
+  #     strip_prefix: "/api/my-service"
+  #     timeout_secs: 10
+  #     websocket: false
+  #     # Header transformation — applied per-request for this route.
+  #     # Request rules mutate outgoing headers before forwarding to the upstream.
+  #     # Response rules mutate incoming headers before returning to the client.
+  #     # Rules are applied in order: remove → set → add.
+  #     header_transform:
+  #       request:
+  #         set:
+  #           X-Gateway-Version: "v2"   # always set or overwrite
+  #         add:
+  #           X-Request-Source: "gateway"  # add only if not already present
+  #         remove:
+  #           - X-Internal-Debug          # strip before forwarding upstream
+  #       response:
+  #         set:
+  #           Cache-Control: "no-store"
+  #         remove:
+  #           - X-Powered-By              # hide implementation details from clients

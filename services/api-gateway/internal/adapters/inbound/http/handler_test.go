@@ -66,12 +66,33 @@ func (f *fakeMetrics) RecordRequest(routeName string, statusCode int, durationMS
 	f.calls = append(f.calls, metricsCall{routeName, statusCode, durationMS})
 }
 
+// fakeHealthAggregator is a test double for ports.HealthAggregator.
+// It returns a pre-canned report so tests can control the /health response
+// without spinning up real upstream services.
+type fakeHealthAggregator struct {
+	report ports.HealthReport
+}
+
+var _ ports.HealthAggregator = (*fakeHealthAggregator)(nil)
+
+func (f *fakeHealthAggregator) AggregateHealth(_ context.Context) ports.HealthReport {
+	return f.report
+}
+
 // --- helpers ---
 
+// newHandler creates a Handler with nil health aggregator (static /health response).
+// Use newHandlerWithHealth when the test exercises the aggregated health path.
 func newHandler(t *testing.T, router ports.RequestRouter, transport ports.UpstreamTransport, metrics ports.MetricsRecorder) *gatewayhttp.Handler {
 	t.Helper()
 	logger := logging.NewLogger(logging.Config{Output: io.Discard})
-	return gatewayhttp.NewHandler(router, transport, metrics, logger)
+	return gatewayhttp.NewHandler(router, transport, metrics, logger, nil)
+}
+
+func newHandlerWithHealth(t *testing.T, health ports.HealthAggregator) *gatewayhttp.Handler {
+	t.Helper()
+	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	return gatewayhttp.NewHandler(&fakeRouter{}, &fakeTransport{}, &fakeMetrics{}, logger, health)
 }
 
 func do(t *testing.T, h http.HandlerFunc, method, path string) *httptest.ResponseRecorder {
@@ -202,6 +223,8 @@ func TestHandler_Proxy_PassesHeadersToRouter(t *testing.T) {
 
 // --- Health tests ---
 
+// TestHandler_Health_Returns200WithStatusOK covers the static fallback path
+// used when no HealthAggregator is wired (e.g. minimal deployments and tests).
 func TestHandler_Health_Returns200WithStatusOK(t *testing.T) {
 	h := newHandler(t, &fakeRouter{}, &fakeTransport{}, &fakeMetrics{})
 
@@ -217,6 +240,154 @@ func TestHandler_Health_Returns200WithStatusOK(t *testing.T) {
 	}
 	if body["status"] != "ok" {
 		t.Errorf("health body status = %q, want %q", body["status"], "ok")
+	}
+}
+
+// TestHandler_Health_ReturnsAggregatedReport verifies that when a HealthAggregator
+// is wired the /health endpoint returns the full upstream report instead of the
+// static fallback. This exercises the Strategy pattern swap at the handler boundary.
+func TestHandler_Health_ReturnsAggregatedReport(t *testing.T) {
+	report := ports.HealthReport{
+		Status: "healthy",
+		Services: map[string]ports.ServiceHealth{
+			"/api/identity": {Status: "healthy", URL: "http://identity:8080"},
+		},
+	}
+	h := newHandlerWithHealth(t, &fakeHealthAggregator{report: report})
+
+	rr := do(t, h.Health, http.MethodGet, "/health")
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("got status %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var body ports.HealthReport
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Status != "healthy" {
+		t.Errorf("status = %q, want %q", body.Status, "healthy")
+	}
+	if _, ok := body.Services["/api/identity"]; !ok {
+		t.Error("expected /api/identity in services map")
+	}
+}
+
+// --- Readiness / two-phase graceful shutdown ---
+
+// TestHandler_Health_Returns503WhenNotReady verifies that calling SetReady(false)
+// causes /health to return 503 immediately with a "shutting_down" status, without
+// consulting the HealthAggregator. This is Phase 1 of the two-phase shutdown
+// sequence: the LB sees 503 and stops routing new traffic to this instance.
+func TestHandler_Health_Returns503WhenNotReady(t *testing.T) {
+	// Wire a healthy aggregator so the 503 cannot come from upstream health.
+	report := ports.HealthReport{Status: "healthy"}
+	h := newHandlerWithHealth(t, &fakeHealthAggregator{report: report})
+
+	h.SetReady(false)
+	rr := do(t, h.Health, http.MethodGet, "/health")
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want %d (expected 503 when not ready)", rr.Code, http.StatusServiceUnavailable)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["status"] != "shutting_down" {
+		t.Errorf("status = %q, want %q", body["status"], "shutting_down")
+	}
+}
+
+// TestHandler_Health_RecoveryAfterReady verifies that calling SetReady(true)
+// after a SetReady(false) restores normal health-check behaviour.
+func TestHandler_Health_RecoveryAfterReady(t *testing.T) {
+	h := newHandler(t, &fakeRouter{}, &fakeTransport{}, &fakeMetrics{})
+
+	h.SetReady(false)
+	h.SetReady(true) // restore
+
+	rr := do(t, h.Health, http.MethodGet, "/health")
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status after re-ready = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+// TestHandler_Health_Returns503WhenAllUnhealthy verifies that a fully unhealthy
+// report results in a 503 so load balancers stop routing to this instance.
+func TestHandler_Health_Returns503WhenAllUnhealthy(t *testing.T) {
+	report := ports.HealthReport{
+		Status: "unhealthy",
+		Services: map[string]ports.ServiceHealth{
+			"/api/identity": {Status: "unhealthy", URL: "http://identity:8080"},
+		},
+	}
+	h := newHandlerWithHealth(t, &fakeHealthAggregator{report: report})
+
+	rr := do(t, h.Health, http.MethodGet, "/health")
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("got status %d, want %d", rr.Code, http.StatusServiceUnavailable)
+	}
+}
+
+// --- Ready endpoint tests ---
+
+// TestHandler_Ready_Returns200WhenReady verifies the default (ready=true) state
+// returns 200 with status "ready".
+func TestHandler_Ready_Returns200WhenReady(t *testing.T) {
+	h := newHandler(t, &fakeRouter{}, &fakeTransport{}, &fakeMetrics{})
+
+	rr := do(t, h.Ready, http.MethodGet, "/ready")
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("got status %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode ready response: %v", err)
+	}
+	if body["status"] != "ready" {
+		t.Errorf("status = %q, want %q", body["status"], "ready")
+	}
+}
+
+// TestHandler_Ready_Returns503WhenNotReady verifies that SetReady(false) causes
+// /ready to return 503 with status "not_ready", without consulting upstream health.
+func TestHandler_Ready_Returns503WhenNotReady(t *testing.T) {
+	h := newHandler(t, &fakeRouter{}, &fakeTransport{}, &fakeMetrics{})
+
+	h.SetReady(false)
+	rr := do(t, h.Ready, http.MethodGet, "/ready")
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("got status %d, want %d", rr.Code, http.StatusServiceUnavailable)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode ready response: %v", err)
+	}
+	if body["status"] != "not_ready" {
+		t.Errorf("status = %q, want %q", body["status"], "not_ready")
+	}
+}
+
+// TestHandler_Ready_RecoveryAfterSetReady verifies that SetReady(true) after
+// SetReady(false) restores the 200 response.
+func TestHandler_Ready_RecoveryAfterSetReady(t *testing.T) {
+	h := newHandler(t, &fakeRouter{}, &fakeTransport{}, &fakeMetrics{})
+
+	h.SetReady(false)
+	h.SetReady(true)
+
+	rr := do(t, h.Ready, http.MethodGet, "/ready")
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status after re-ready = %d, want %d", rr.Code, http.StatusOK)
 	}
 }
 
