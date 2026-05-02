@@ -20,7 +20,7 @@ COPY libs/ libs/
 COPY services/ services/
 
 ARG SERVICE_NAME
-RUN go build -o /app/service ./services/${SERVICE_NAME}/...
+RUN go build -o /app/service ./services/${SERVICE_NAME}/cmd
 
 # =============================================================================
 # Runtime stage
