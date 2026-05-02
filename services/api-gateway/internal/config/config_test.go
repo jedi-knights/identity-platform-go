@@ -98,3 +98,80 @@ func TestConfig_ToDomainRoutes_NilHeadersArePropagated(t *testing.T) {
 		t.Errorf("expected nil headers, got %v", routes[0].Match.Headers)
 	}
 }
+
+func TestConfig_ToDomainRoutes_WebSocketFieldPropagated(t *testing.T) {
+	cfg := &config.Config{
+		Routes: []config.RouteConfig{
+			{
+				Name:     "ws-route",
+				Upstream: config.UpstreamConfig{URL: "http://svc:8080", WebSocket: true},
+			},
+			{
+				Name:     "http-route",
+				Upstream: config.UpstreamConfig{URL: "http://svc:8080", WebSocket: false},
+			},
+		},
+	}
+
+	routes := cfg.ToDomainRoutes()
+
+	if !routes[0].Upstream.WebSocket {
+		t.Error("ws-route: expected WebSocket=true, got false")
+	}
+	if routes[1].Upstream.WebSocket {
+		t.Error("http-route: expected WebSocket=false, got true")
+	}
+}
+
+// --- TLS config validation ---
+
+// tlsEnvTest runs Load() with the given environment variables set and returns
+// whatever Load returned. t.Setenv automatically restores each variable after
+// the test. The working directory during tests is the package source directory,
+// which has no gateway.yaml, so viper falls through to the ConfigFileNotFoundError
+// branch and continues with defaults + env vars only.
+func tlsEnvTest(t *testing.T, env map[string]string) error {
+	t.Helper()
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+	_, err := config.Load()
+	return err
+}
+
+// TestLoad_TLSCertWithoutKeyReturnsError verifies that providing tls_cert_file
+// without tls_key_file is rejected at startup so the operator gets an explicit
+// error instead of a silent HTTP-only fallback.
+func TestLoad_TLSCertWithoutKeyReturnsError(t *testing.T) {
+	err := tlsEnvTest(t, map[string]string{
+		"GATEWAY_SERVER_TLS_CERT_FILE": "/path/cert.pem",
+		// GATEWAY_SERVER_TLS_KEY_FILE deliberately not set
+	})
+	if err == nil {
+		t.Fatal("expected error when tls_cert_file is set without tls_key_file, got nil")
+	}
+}
+
+// TestLoad_TLSKeyWithoutCertReturnsError verifies that providing tls_key_file
+// without tls_cert_file is also rejected.
+func TestLoad_TLSKeyWithoutCertReturnsError(t *testing.T) {
+	err := tlsEnvTest(t, map[string]string{
+		"GATEWAY_SERVER_TLS_KEY_FILE": "/path/key.pem",
+		// GATEWAY_SERVER_TLS_CERT_FILE deliberately not set
+	})
+	if err == nil {
+		t.Fatal("expected error when tls_key_file is set without tls_cert_file, got nil")
+	}
+}
+
+// TestLoad_TLSBothFieldsSetIsAccepted verifies that when both cert and key are
+// provided the TLS validation passes (the file existence is not checked here).
+func TestLoad_TLSBothFieldsSetIsAccepted(t *testing.T) {
+	err := tlsEnvTest(t, map[string]string{
+		"GATEWAY_SERVER_TLS_CERT_FILE": "/path/cert.pem",
+		"GATEWAY_SERVER_TLS_KEY_FILE":  "/path/key.pem",
+	})
+	if err != nil {
+		t.Fatalf("expected no error when both TLS fields are set, got: %v", err)
+	}
+}

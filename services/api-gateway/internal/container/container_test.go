@@ -3,6 +3,7 @@
 package container_test
 
 import (
+	"context"
 	"io"
 	"testing"
 
@@ -25,7 +26,9 @@ func TestNew_ReturnsContainerWithHandler(t *testing.T) {
 	}
 	logger := logging.NewLogger(logging.Config{Output: io.Discard})
 
-	ctr, err := container.New(cfg, logger)
+	// context.Background() is the correct root context for tests; in production
+	// main.go passes a context cancelled on SIGTERM to stop background goroutines.
+	ctr, err := container.New(context.Background(), cfg, logger)
 
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
@@ -50,7 +53,7 @@ func TestNew_WorksWithNoRoutes(t *testing.T) {
 	}
 	logger := logging.NewLogger(logging.Config{Output: io.Discard})
 
-	ctr, err := container.New(cfg, logger)
+	ctr, err := container.New(context.Background(), cfg, logger)
 
 	if err != nil {
 		t.Fatalf("New() error: %v", err)

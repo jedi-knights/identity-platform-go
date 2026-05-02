@@ -1,0 +1,65 @@
+//go:build unit
+
+package slidingwindowcounter_test
+
+import (
+	"testing"
+	"time"
+
+	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/slidingwindowcounter"
+	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/domain"
+	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/ports"
+)
+
+var _ ports.RateLimiter = (*slidingwindowcounter.RateLimiter)(nil)
+
+func TestSlidingWindowCounter_AllowsUpToLimit(t *testing.T) {
+	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{
+		RequestsPerWindow: 3,
+		WindowDuration:    time.Second,
+	})
+	for i := range 3 {
+		if !rl.Allow("client") {
+			t.Fatalf("request %d should be allowed", i+1)
+		}
+	}
+}
+
+func TestSlidingWindowCounter_DeniesOverLimit(t *testing.T) {
+	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{
+		RequestsPerWindow: 2,
+		WindowDuration:    time.Second,
+	})
+	rl.Allow("client")
+	rl.Allow("client")
+	if rl.Allow("client") {
+		t.Fatal("third request should be denied")
+	}
+}
+
+func TestSlidingWindowCounter_ResetsAfterFullWindow(t *testing.T) {
+	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{
+		RequestsPerWindow: 2,
+		WindowDuration:    60 * time.Millisecond,
+	})
+	rl.Allow("client")
+	rl.Allow("client")
+	// Wait for both the current and previous windows to expire.
+	time.Sleep(130 * time.Millisecond)
+	if !rl.Allow("client") {
+		t.Fatal("request should be allowed after both windows have expired")
+	}
+}
+
+func TestSlidingWindowCounter_IndependentKeys(t *testing.T) {
+	rl := slidingwindowcounter.New(domain.SlidingWindowCounterRule{
+		RequestsPerWindow: 1,
+		WindowDuration:    time.Second,
+	})
+	if !rl.Allow("a") {
+		t.Fatal("a should be allowed")
+	}
+	if !rl.Allow("b") {
+		t.Fatal("b should be allowed — independent counters")
+	}
+}

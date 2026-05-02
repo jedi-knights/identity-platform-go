@@ -16,3 +16,16 @@ import (
 type UpstreamTransport interface {
 	Forward(w http.ResponseWriter, r *http.Request, route *domain.Route) error
 }
+
+// URLPicker selects one URL from a pool for the given route.
+//
+// Design: Strategy pattern — the selection algorithm (round-robin, random,
+// weighted, least-connections, etc.) is an implementation detail hidden behind
+// this interface. Callers receive a URL string and do not need to know how it
+// was chosen.
+//
+// routeName is used to maintain per-route state (e.g. a counter). urls is the
+// candidate pool; the picker must return one of its elements.
+type URLPicker interface {
+	Pick(routeName string, urls []string) string
+}
