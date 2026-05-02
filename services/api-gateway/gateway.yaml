@@ -167,68 +167,56 @@ retry:
 
 # Routes — ordered list of proxy rules evaluated top-to-bottom.
 # The first rule whose path_prefix matches the incoming request wins.
+#
+# Internal ports are the container ports (not the remapped host ports):
+#   auth-server:8080, identity-service:8081, client-registry-service:8082,
+#   token-introspection-service:8083, authorization-policy-service:8084,
+#   example-resource-service:8085
 routes:
-  # Single-upstream route — uses 'url' field (backward compatible).
-  - name: "identity-service"
-    match:
-      path_prefix: "/api/identity"
-      methods: []           # empty = all methods allowed
-      headers: {}           # empty = no header matching
-    upstream:
-      url: "http://identity-service:8080"
-      strip_prefix: "/api/identity"   # strip this prefix before forwarding
-      timeout_secs: 10                # per-route deadline; 0 uses global client timeout
-      websocket: false                # set true for WebSocket / SSE / gRPC-web upstreams
-      # tls: per-upstream mTLS — omit or leave all fields empty for plain HTTP.
-      # ca_file: "/certs/ca.pem"         # PEM CA cert to verify upstream's TLS cert
-      # cert_file: "/certs/client.pem"   # PEM client cert for mTLS (with key_file)
-      # key_file: "/certs/client-key.pem"
-      # insecure_skip_verify: false      # disable cert verification (local dev only)
-
-  # Multi-upstream route — uses 'urls' for round-robin load balancing.
-  # 'url' is ignored when 'urls' is present.
   - name: "auth-server"
+    match:
+      path_prefix: "/oauth"
+    upstream:
+      url: "http://auth-server:8080"
+      strip_prefix: ""
+      timeout_secs: 10
+
+  - name: "identity-service"
     match:
       path_prefix: "/auth"
     upstream:
-      # url: "http://auth-server:8081"   # single-URL alternative
-      urls:
-        - "http://auth-server-1:8081"
-        - "http://auth-server-2:8081"
-      strip_prefix: ""     # keep the /auth prefix when forwarding
-      timeout_secs: 5      # auth paths should be fast; fail quickly if not
-      websocket: false
+      url: "http://identity-service:8081"
+      strip_prefix: ""
+      timeout_secs: 10
 
-  # Weighted route — uses 'weighted_urls' for proportional load balancing.
-  # 'url' and 'urls' are ignored when 'weighted_urls' is present.
-  # Entries with weight ≤ 0 are excluded. Relative weights are used:
-  # the primary backend here receives 3× the traffic of the canary.
-  # - name: "my-service"
-  #   match:
-  #     path_prefix: "/api/my-service"
-  #   upstream:
-  #     weighted_urls:
-  #       - url: "http://my-service-primary:8080"
-  #         weight: 3
-  #       - url: "http://my-service-canary:8080"
-  #         weight: 1
-  #     strip_prefix: "/api/my-service"
-  #     timeout_secs: 10
-  #     websocket: false
-  #     # Header transformation — applied per-request for this route.
-  #     # Request rules mutate outgoing headers before forwarding to the upstream.
-  #     # Response rules mutate incoming headers before returning to the client.
-  #     # Rules are applied in order: remove → set → add.
-  #     header_transform:
-  #       request:
-  #         set:
-  #           X-Gateway-Version: "v2"   # always set or overwrite
-  #         add:
-  #           X-Request-Source: "gateway"  # add only if not already present
-  #         remove:
-  #           - X-Internal-Debug          # strip before forwarding upstream
-  #       response:
-  #         set:
-  #           Cache-Control: "no-store"
-  #         remove:
-  #           - X-Powered-By              # hide implementation details from clients
+  - name: "client-registry-service"
+    match:
+      path_prefix: "/clients"
+    upstream:
+      url: "http://client-registry-service:8082"
+      strip_prefix: ""
+      timeout_secs: 10
+
+  - name: "token-introspection-service"
+    match:
+      path_prefix: "/introspect"
+    upstream:
+      url: "http://token-introspection-service:8083"
+      strip_prefix: ""
+      timeout_secs: 10
+
+  - name: "authorization-policy-service"
+    match:
+      path_prefix: "/evaluate"
+    upstream:
+      url: "http://authorization-policy-service:8084"
+      strip_prefix: ""
+      timeout_secs: 10
+
+  - name: "example-resource-service"
+    match:
+      path_prefix: "/resources"
+    upstream:
+      url: "http://example-resource-service:8085"
+      strip_prefix: ""
+      timeout_secs: 10
