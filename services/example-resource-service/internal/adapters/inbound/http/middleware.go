@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -73,7 +74,11 @@ func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handl
 
 			claims, err := jwtutil.Parse(raw, signingKey)
 			if err != nil {
-				logger.Warn("invalid token", "error", err)
+				if errors.Is(err, jwtutil.ErrTokenExpired) {
+					logger.Info("expired token rejected", "error", err)
+				} else {
+					logger.Warn("invalid token rejected", "error", err)
+				}
 				w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service", error="invalid_token"`)
 				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid token"))
 				return
