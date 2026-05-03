@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -17,6 +18,7 @@ type Config struct {
 	IdentityService IdentityServiceConfig `mapstructure:"identity_service"`
 	Redis           RedisConfig           `mapstructure:"redis"`
 	Policy          PolicyConfig          `mapstructure:"policy"`
+	Introspection   IntrospectionConfig   `mapstructure:"introspection"`
 	DevSeedClients  bool                  `mapstructure:"dev_seed_clients"`
 	DevClientSecret string                `mapstructure:"dev_client_secret"` // AUTH_DEV_CLIENT_SECRET; only used when DevSeedClients=true
 }
@@ -27,8 +29,9 @@ type ServerConfig struct {
 }
 
 type JWTConfig struct {
-	SigningKey string `mapstructure:"signing_key"`
-	Issuer     string `mapstructure:"issuer"`
+	SigningKey string   `mapstructure:"signing_key"`
+	Issuer     string   `mapstructure:"issuer"`
+	Audience   []string `mapstructure:"audience"` // AUTH_JWT_AUDIENCE (comma-separated); included in all issued tokens per RFC 9068 §2.2
 }
 
 // TokenConfig holds token lifetime configuration.
@@ -41,6 +44,13 @@ type TokenConfig struct {
 // When URL is empty, tokens are issued without roles/permissions claims.
 type PolicyConfig struct {
 	URL string `mapstructure:"url"` // AUTH_POLICY_URL
+}
+
+// IntrospectionConfig holds the pre-shared secret for the introspection endpoint.
+// When Secret is set, callers must supply Authorization: Bearer <secret>.
+// When empty, the endpoint requires client credentials (Basic Auth or form body).
+type IntrospectionConfig struct {
+	Secret string `mapstructure:"secret"` // AUTH_INTROSPECTION_SECRET
 }
 
 type LogConfig struct {
@@ -85,6 +95,8 @@ func Load() (*Config, error) {
 	v.SetDefault("client_registry.url", "")
 	v.SetDefault("identity_service.url", "")
 	v.SetDefault("redis.url", "")
+	v.SetDefault("jwt.audience", []string{})
+	v.SetDefault("introspection.secret", "")
 	v.SetDefault("dev_seed_clients", false)
 	v.SetDefault("dev_client_secret", "")
 
@@ -98,7 +110,8 @@ func Load() (*Config, error) {
 	v.AutomaticEnv()
 
 	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+		var notFound viper.ConfigFileNotFoundError
+		if !errors.As(err, &notFound) {
 			return nil, fmt.Errorf("reading config: %w", err)
 		}
 	}
@@ -109,7 +122,7 @@ func Load() (*Config, error) {
 	}
 
 	if err := validateSigningKey(cfg.JWT.SigningKey); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("validating jwt signing key: %w", err)
 	}
 	return &cfg, nil
 }

@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -59,11 +60,14 @@ func IntrospectionAuthMiddleware(introspector ports.TokenIntrospector, logger lo
 // JWTAuthMiddleware validates the JWT Bearer token locally.
 // Used as a fallback when RESOURCE_INTROSPECTION_URL is not configured.
 //
+// When audience is non-empty, the token's aud claim must include that value
+// per RFC 9068 §4 (audience validation). When empty, audience is not checked.
+//
 // NOTE: Local validation cannot detect revoked tokens. Tokens revoked via
 // auth-server's /oauth/revoke remain valid here until they expire. For
 // revocation to work, configure RESOURCE_INTROSPECTION_URL to point at
 // token-introspection-service and use IntrospectionAuthMiddleware instead.
-func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handler) http.Handler {
+func JWTAuthMiddleware(signingKey []byte, audience string, logger logging.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw, ok := extractBearer(w, r)
@@ -71,9 +75,21 @@ func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handl
 				return
 			}
 
-			claims, err := jwtutil.Parse(raw, signingKey)
+			var (
+				claims *jwtutil.Claims
+				err    error
+			)
+			if audience != "" {
+				claims, err = jwtutil.ParseWithAudience(raw, signingKey, audience)
+			} else {
+				claims, err = jwtutil.Parse(raw, signingKey)
+			}
 			if err != nil {
-				logger.Warn("invalid token", "error", err)
+				if errors.Is(err, jwtutil.ErrTokenExpired) {
+					logger.Info("expired token rejected", "error", err)
+				} else {
+					logger.Warn("invalid token rejected", "error", err)
+				}
 				w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service", error="invalid_token"`)
 				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid token"))
 				return
@@ -93,7 +109,15 @@ func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handl
 // RequireScopeMiddleware enforces that the token has the required scope (Chain of Responsibility).
 // Returns 401 (not 403) when scopes are absent from context — this indicates the auth middleware
 // did not run or the token was missing, which is an authentication failure, not an authorization one.
+// Panics if requiredScope is empty — an empty scope matches nothing a real token carries and
+// indicates a wiring mistake, not a runtime condition.
 func RequireScopeMiddleware(requiredScope string) func(http.Handler) http.Handler {
+	if requiredScope == "" {
+		panic("RequireScopeMiddleware: requiredScope must not be empty")
+	}
+	if strings.ContainsAny(requiredScope, "\"\r\n\\") {
+		panic("RequireScopeMiddleware: requiredScope contains characters illegal in a quoted-string header value")
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			scopes, ok := r.Context().Value(contextKeyScopes).([]string)
@@ -113,8 +137,10 @@ func RequireScopeMiddleware(requiredScope string) func(http.Handler) http.Handle
 			}
 
 			// RFC 6750 §3.1: insufficient_scope responses must carry WWW-Authenticate
-			// with error="insufficient_scope" so clients can request broader authorization.
-			w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service", error="insufficient_scope"`)
+			// with error="insufficient_scope" and the required scope so clients can
+			// request broader authorization.
+			w.Header().Set("WWW-Authenticate",
+				`Bearer realm="example-resource-service", error="insufficient_scope", scope="`+requiredScope+`"`)
 			httputil.WriteError(w, apperrors.New(apperrors.ErrCodeForbidden, "insufficient scope"))
 		})
 	}
@@ -129,6 +155,9 @@ func RequireScopeMiddleware(requiredScope string) func(http.Handler) http.Handle
 func extractBearer(w http.ResponseWriter, r *http.Request) (string, bool) {
 	authHeader := r.Header.Get("Authorization")
 	// First check: missing header or wrong scheme (e.g. "Token xyz").
+	// The scheme match is intentionally case-sensitive ("Bearer", not "bearer").
+	// RFC 7235 permits case-insensitive schemes, but strict uppercase-B matching
+	// is simpler and all major OAuth2 clients send the canonical form.
 	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service"`)
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "missing or invalid authorization header"))

@@ -35,7 +35,7 @@ func TestClient_Introspect_ActiveToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := introspection.NewClient(srv.URL, srv.Client())
+	client := introspection.NewClient(srv.URL, srv.Client(), "")
 	result, err := client.Introspect(context.Background(), "some-token")
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -57,7 +57,7 @@ func TestClient_Introspect_InactiveToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := introspection.NewClient(srv.URL, srv.Client())
+	client := introspection.NewClient(srv.URL, srv.Client(), "")
 	result, err := client.Introspect(context.Background(), "expired-token")
 	if err != nil {
 		t.Fatalf("expected no error for inactive token, got: %v", err)
@@ -73,7 +73,7 @@ func TestClient_Introspect_ServiceUnavailable(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := introspection.NewClient(srv.URL, srv.Client())
+	client := introspection.NewClient(srv.URL, srv.Client(), "")
 	_, err := client.Introspect(context.Background(), "any-token")
 	if err == nil {
 		t.Fatal("expected error for service unavailable, got nil")
@@ -93,7 +93,7 @@ func TestClient_Introspect_WithRolesAndPermissions(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := introspection.NewClient(srv.URL, srv.Client())
+	client := introspection.NewClient(srv.URL, srv.Client(), "")
 
 	t.Run("active", func(t *testing.T) {
 		result, err := client.Introspect(context.Background(), "some-token")
@@ -126,6 +126,33 @@ func TestClient_Introspect_WithRolesAndPermissions(t *testing.T) {
 	})
 }
 
+// TestClient_Introspect_SendsAuthHeaderWhenSecretConfigured verifies that the client
+// sends Authorization: Bearer <secret> when a secret is configured (RFC 7662 §2.1).
+func TestClient_Introspect_SendsAuthHeaderWhenSecretConfigured(t *testing.T) {
+	const secret = "super-secret-key"
+	var gotAuth string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Arrange — capture the header the client sent
+		gotAuth = r.Header.Get("Authorization")
+		writeJSON(t, w, map[string]any{"active": true, "sub": "s1", "scope": "read"})
+	}))
+	defer srv.Close()
+
+	// Act
+	client := introspection.NewClient(srv.URL, srv.Client(), secret)
+	_, err := client.Introspect(context.Background(), "some-token")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Assert
+	want := "Bearer " + secret
+	if gotAuth != want {
+		t.Errorf("Authorization header = %q, want %q", gotAuth, want)
+	}
+}
+
 func TestClient_Introspect_NoRolesOrPermissions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, map[string]any{
@@ -137,7 +164,7 @@ func TestClient_Introspect_NoRolesOrPermissions(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := introspection.NewClient(srv.URL, srv.Client())
+	client := introspection.NewClient(srv.URL, srv.Client(), "")
 	result, err := client.Introspect(context.Background(), "some-token")
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
