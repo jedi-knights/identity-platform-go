@@ -60,11 +60,14 @@ func IntrospectionAuthMiddleware(introspector ports.TokenIntrospector, logger lo
 // JWTAuthMiddleware validates the JWT Bearer token locally.
 // Used as a fallback when RESOURCE_INTROSPECTION_URL is not configured.
 //
+// When audience is non-empty, the token's aud claim must include that value
+// per RFC 9068 §4 (audience validation). When empty, audience is not checked.
+//
 // NOTE: Local validation cannot detect revoked tokens. Tokens revoked via
 // auth-server's /oauth/revoke remain valid here until they expire. For
 // revocation to work, configure RESOURCE_INTROSPECTION_URL to point at
 // token-introspection-service and use IntrospectionAuthMiddleware instead.
-func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handler) http.Handler {
+func JWTAuthMiddleware(signingKey []byte, audience string, logger logging.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw, ok := extractBearer(w, r)
@@ -72,7 +75,15 @@ func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handl
 				return
 			}
 
-			claims, err := jwtutil.Parse(raw, signingKey)
+			var (
+				claims *jwtutil.Claims
+				err    error
+			)
+			if audience != "" {
+				claims, err = jwtutil.ParseWithAudience(raw, signingKey, audience)
+			} else {
+				claims, err = jwtutil.Parse(raw, signingKey)
+			}
 			if err != nil {
 				if errors.Is(err, jwtutil.ErrTokenExpired) {
 					logger.Info("expired token rejected", "error", err)
@@ -104,6 +115,9 @@ func RequireScopeMiddleware(requiredScope string) func(http.Handler) http.Handle
 	if requiredScope == "" {
 		panic("RequireScopeMiddleware: requiredScope must not be empty")
 	}
+	if strings.ContainsAny(requiredScope, "\"\r\n\\") {
+		panic("RequireScopeMiddleware: requiredScope contains characters illegal in a quoted-string header value")
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			scopes, ok := r.Context().Value(contextKeyScopes).([]string)
@@ -123,8 +137,10 @@ func RequireScopeMiddleware(requiredScope string) func(http.Handler) http.Handle
 			}
 
 			// RFC 6750 §3.1: insufficient_scope responses must carry WWW-Authenticate
-			// with error="insufficient_scope" so clients can request broader authorization.
-			w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service", error="insufficient_scope"`)
+			// with error="insufficient_scope" and the required scope so clients can
+			// request broader authorization.
+			w.Header().Set("WWW-Authenticate",
+				`Bearer realm="example-resource-service", error="insufficient_scope", scope="`+requiredScope+`"`)
 			httputil.WriteError(w, apperrors.New(apperrors.ErrCodeForbidden, "insufficient scope"))
 		})
 	}

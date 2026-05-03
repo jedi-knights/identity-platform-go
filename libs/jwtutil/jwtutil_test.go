@@ -234,3 +234,161 @@ func TestRoundTrip_RolesAndPermissionsRoundTrip(t *testing.T) {
 	assertStringSliceEqual(t, "Roles", got.Roles, roles)
 	assertStringSliceEqual(t, "Permissions", got.Permissions, permissions)
 }
+
+func TestRoundTrip_AudienceRoundTrip(t *testing.T) {
+	// Arrange
+	now := time.Now().Truncate(time.Second)
+	claims := jwtutil.NewClaims(jwtutil.ClaimsConfig{
+		Issuer:    "identity-platform",
+		Subject:   "client-abc",
+		TokenID:   "token-aud-1",
+		ClientID:  "client-abc",
+		Scope:     "read",
+		Audience:  []string{"example-resource-service"},
+		IssuedAt:  now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	// Act
+	raw := signedToken(t, claims)
+	got, err := jwtutil.Parse(raw, testKey)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	assertStringSliceEqual(t, "Audience", []string(got.Audience), []string{"example-resource-service"})
+}
+
+func TestRoundTrip_AudienceAbsentWhenNil(t *testing.T) {
+	// Arrange
+	now := time.Now().Truncate(time.Second)
+	claims := jwtutil.NewClaims(jwtutil.ClaimsConfig{
+		Issuer:    "identity-platform",
+		Subject:   "client-abc",
+		TokenID:   "token-noaud",
+		ClientID:  "client-abc",
+		Scope:     "read",
+		IssuedAt:  now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	// Act
+	raw := signedToken(t, claims)
+	got, err := jwtutil.Parse(raw, testKey)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(got.Audience) != 0 {
+		t.Errorf("Audience: expected empty when not set, got %v", got.Audience)
+	}
+}
+
+func TestSign_TypeHeader(t *testing.T) {
+	// Arrange
+	claims := jwtutil.NewClaims(jwtutil.ClaimsConfig{
+		Issuer:    "identity-platform",
+		Subject:   "sub",
+		TokenID:   "id",
+		ClientID:  "client",
+		Scope:     "read",
+		IssuedAt:  time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+
+	// Act
+	raw := signedToken(t, claims)
+	// Parse the header manually to check the typ field.
+	parsed, _, err := new(jwt.Parser).ParseUnverified(raw, &jwtutil.Claims{})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("ParseUnverified: %v", err)
+	}
+	typ, _ := parsed.Header["typ"].(string)
+	if typ != "at+jwt" {
+		t.Errorf("typ header = %q, want %q", typ, "at+jwt")
+	}
+}
+
+func TestParseWithAudience_ValidAudience(t *testing.T) {
+	// Arrange
+	now := time.Now().Truncate(time.Second)
+	claims := jwtutil.NewClaims(jwtutil.ClaimsConfig{
+		Issuer:    "identity-platform",
+		Subject:   "client-abc",
+		TokenID:   "token-pa-1",
+		ClientID:  "client-abc",
+		Scope:     "read",
+		Audience:  []string{"example-resource-service"},
+		IssuedAt:  now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+	raw := signedToken(t, claims)
+
+	// Act
+	got, err := jwtutil.ParseWithAudience(raw, testKey, "example-resource-service")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("ParseWithAudience: %v", err)
+	}
+	if got.Subject != "client-abc" {
+		t.Errorf("Subject = %q, want %q", got.Subject, "client-abc")
+	}
+}
+
+func TestParseWithAudience_WrongAudience(t *testing.T) {
+	// Arrange
+	now := time.Now().Truncate(time.Second)
+	claims := jwtutil.NewClaims(jwtutil.ClaimsConfig{
+		Issuer:    "identity-platform",
+		Subject:   "client-abc",
+		TokenID:   "token-pa-2",
+		ClientID:  "client-abc",
+		Scope:     "read",
+		Audience:  []string{"service-a"},
+		IssuedAt:  now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+	raw := signedToken(t, claims)
+
+	// Act
+	_, err := jwtutil.ParseWithAudience(raw, testKey, "service-b")
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error for wrong audience, got nil")
+	}
+	if !errors.Is(err, jwtutil.ErrTokenInvalid) {
+		t.Errorf("error = %v, want ErrTokenInvalid", err)
+	}
+}
+
+func TestParseWithAudience_MissingAudience(t *testing.T) {
+	// Arrange — token has no aud claim
+	now := time.Now().Truncate(time.Second)
+	claims := jwtutil.NewClaims(jwtutil.ClaimsConfig{
+		Issuer:    "identity-platform",
+		Subject:   "client-abc",
+		TokenID:   "token-pa-3",
+		ClientID:  "client-abc",
+		Scope:     "read",
+		IssuedAt:  now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+	raw := signedToken(t, claims)
+
+	// Act
+	_, err := jwtutil.ParseWithAudience(raw, testKey, "example-resource-service")
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error when aud claim is absent, got nil")
+	}
+	if !errors.Is(err, jwtutil.ErrTokenInvalid) {
+		t.Errorf("error = %v, want ErrTokenInvalid", err)
+	}
+}

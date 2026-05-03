@@ -18,6 +18,7 @@ import (
 	authhttp "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
+	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/ports"
 )
 
 // --- fakes ---
@@ -48,12 +49,25 @@ func (f *fakeRevoker) Revoke(_ context.Context, _ string) error {
 	return f.err
 }
 
+type fakeClientAuth struct {
+	err error
+}
+
+func (f *fakeClientAuth) Authenticate(_ context.Context, _, _ string) (*domain.Client, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &domain.Client{ID: "c1"}, nil
+}
+
+var _ ports.ClientAuthenticator = (*fakeClientAuth)(nil)
+
 // --- helpers ---
 
 func newTestHandler(t *testing.T, issuer *fakeIssuer, introspector *fakeIntrospector, revoker *fakeRevoker) *authhttp.Handler {
 	t.Helper()
 	logger := logging.NewLogger(logging.Config{Output: io.Discard})
-	return authhttp.NewHandler(issuer, introspector, revoker, logger)
+	return authhttp.NewHandler(issuer, introspector, revoker, &fakeClientAuth{}, logger, "")
 }
 
 // postForm posts the given form values to the handler and returns the recorded response.
@@ -296,16 +310,30 @@ func TestToken_CacheControlNoStore(t *testing.T) {
 
 // --- Introspect endpoint ---
 
-func TestIntrospect_MissingToken_Returns400(t *testing.T) {
+func TestIntrospect_MissingToken_Returns200Inactive(t *testing.T) {
+	// RFC 7662 §2.2: the introspection endpoint must return 200 with {"active": false}
+	// for a missing token — returning 400 would allow resource servers to misinterpret
+	// the response as a transient error and allow the request through.
+
 	// Arrange
 	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
 
 	// Act
-	w := postForm(t, h.Introspect, url.Values{})
+	w := postForm(t, h.Introspect, url.Values{
+		"client_id":     {"c1"},
+		"client_secret": {"s1"},
+	})
 
 	// Assert
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (RFC 7662 §2.2)", w.Code, http.StatusOK)
+	}
+	var resp domain.IntrospectResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Active {
+		t.Error("active = true, want false for missing token")
 	}
 }
 
@@ -319,7 +347,11 @@ func TestIntrospect_ActiveToken_Returns200(t *testing.T) {
 	h := newTestHandler(t, &fakeIssuer{}, introspector, &fakeRevoker{})
 
 	// Act
-	w := postForm(t, h.Introspect, url.Values{"token": {"some.jwt.token"}})
+	w := postForm(t, h.Introspect, url.Values{
+		"token":         {"some.jwt.token"},
+		"client_id":     {"c1"},
+		"client_secret": {"s1"},
+	})
 
 	// Assert
 	if w.Code != http.StatusOK {
@@ -343,7 +375,11 @@ func TestIntrospect_InactiveToken_Returns200WithActiveFalse(t *testing.T) {
 	h := newTestHandler(t, &fakeIssuer{}, introspector, &fakeRevoker{})
 
 	// Act
-	w := postForm(t, h.Introspect, url.Values{"token": {"expired.jwt"}})
+	w := postForm(t, h.Introspect, url.Values{
+		"token":         {"expired.jwt"},
+		"client_id":     {"c1"},
+		"client_secret": {"s1"},
+	})
 
 	// Assert
 	if w.Code != http.StatusOK {
@@ -361,7 +397,11 @@ func TestIntrospect_ServiceError_Returns200Inactive(t *testing.T) {
 	h := newTestHandler(t, &fakeIssuer{}, introspector, &fakeRevoker{})
 
 	// Act
-	w := postForm(t, h.Introspect, url.Values{"token": {"some.jwt.token"}})
+	w := postForm(t, h.Introspect, url.Values{
+		"token":         {"some.jwt.token"},
+		"client_id":     {"c1"},
+		"client_secret": {"s1"},
+	})
 
 	// Assert
 	if w.Code != http.StatusOK {
@@ -384,7 +424,11 @@ func TestIntrospect_CacheControlNoStore(t *testing.T) {
 		h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{err: errors.New("store down")}, &fakeRevoker{})
 
 		// Act
-		w := postForm(t, h.Introspect, url.Values{"token": {"tok"}})
+		w := postForm(t, h.Introspect, url.Values{
+			"token":         {"tok"},
+			"client_id":     {"c1"},
+			"client_secret": {"s1"},
+		})
 
 		// Assert
 		if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
@@ -398,7 +442,11 @@ func TestIntrospect_CacheControlNoStore(t *testing.T) {
 		h := newTestHandler(t, &fakeIssuer{}, intro, &fakeRevoker{})
 
 		// Act
-		w := postForm(t, h.Introspect, url.Values{"token": {"tok"}})
+		w := postForm(t, h.Introspect, url.Values{
+			"token":         {"tok"},
+			"client_id":     {"c1"},
+			"client_secret": {"s1"},
+		})
 
 		// Assert
 		if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
@@ -406,12 +454,15 @@ func TestIntrospect_CacheControlNoStore(t *testing.T) {
 		}
 	})
 
-	t.Run("missing token 400 path", func(t *testing.T) {
+	t.Run("missing token inactive path", func(t *testing.T) {
 		// Arrange
 		h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
 
 		// Act
-		w := postForm(t, h.Introspect, url.Values{})
+		w := postForm(t, h.Introspect, url.Values{
+			"client_id":     {"c1"},
+			"client_secret": {"s1"},
+		})
 
 		// Assert
 		if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
@@ -427,7 +478,10 @@ func TestRevoke_MissingToken_Returns400(t *testing.T) {
 	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
 
 	// Act
-	w := postForm(t, h.Revoke, url.Values{})
+	w := postForm(t, h.Revoke, url.Values{
+		"client_id":     {"c1"},
+		"client_secret": {"s1"},
+	})
 
 	// Assert
 	if w.Code != http.StatusBadRequest {
@@ -440,7 +494,11 @@ func TestRevoke_SuccessfulRevocation_Returns200(t *testing.T) {
 	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
 
 	// Act
-	w := postForm(t, h.Revoke, url.Values{"token": {"tok.abc"}})
+	w := postForm(t, h.Revoke, url.Values{
+		"token":         {"tok.abc"},
+		"client_id":     {"c1"},
+		"client_secret": {"s1"},
+	})
 
 	// Assert
 	if w.Code != http.StatusOK {
@@ -456,7 +514,11 @@ func TestRevoke_TokenNotFound_Returns200Idempotent(t *testing.T) {
 	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, revoker)
 
 	// Act
-	w := postForm(t, h.Revoke, url.Values{"token": {"already-revoked.tok"}})
+	w := postForm(t, h.Revoke, url.Values{
+		"token":         {"already-revoked.tok"},
+		"client_id":     {"c1"},
+		"client_secret": {"s1"},
+	})
 
 	// Assert
 	if w.Code != http.StatusOK {
@@ -464,17 +526,28 @@ func TestRevoke_TokenNotFound_Returns200Idempotent(t *testing.T) {
 	}
 }
 
-func TestRevoke_InfrastructureError_Returns500(t *testing.T) {
+func TestRevoke_InfrastructureError_Returns500WithRFC6749Body(t *testing.T) {
 	// Arrange
 	revoker := &fakeRevoker{err: errors.New("redis connection refused")}
 	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, revoker)
 
 	// Act
-	w := postForm(t, h.Revoke, url.Values{"token": {"tok.abc"}})
+	w := postForm(t, h.Revoke, url.Values{
+		"token":         {"tok.abc"},
+		"client_id":     {"c1"},
+		"client_secret": {"s1"},
+	})
 
 	// Assert
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+	body := decodeOAuthError(t, w)
+	if body["error"] != "server_error" {
+		t.Errorf("error = %q, want %q (RFC 6749 §5.2)", body["error"], "server_error")
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want %q", cc, "no-store")
 	}
 }
 
@@ -492,6 +565,71 @@ func TestAuthorize_ReturnsNotImplemented(t *testing.T) {
 	// Assert
 	if w.Code != http.StatusNotImplemented {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusNotImplemented)
+	}
+}
+
+// --- Introspect with pre-shared secret ---
+
+func newTestHandlerWithSecret(t *testing.T, issuer *fakeIssuer, introspector *fakeIntrospector, revoker *fakeRevoker, secret string) *authhttp.Handler {
+	t.Helper()
+	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	return authhttp.NewHandler(issuer, introspector, revoker, &fakeClientAuth{}, logger, secret)
+}
+
+func TestIntrospect_WithSecret_CorrectSecret_Returns200(t *testing.T) {
+	// Arrange
+	intro := &fakeIntrospector{resp: &domain.IntrospectResponse{Active: true, ClientID: "c1"}}
+	h := newTestHandlerWithSecret(t, &fakeIssuer{}, intro, &fakeRevoker{}, "test-secret")
+	r := httptest.NewRequest(http.MethodPost, "/oauth/introspect", strings.NewReader(url.Values{"token": {"tok"}}.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Authorization", "Bearer test-secret")
+	w := httptest.NewRecorder()
+
+	// Act
+	h.Introspect(w, r)
+
+	// Assert
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestIntrospect_WithSecret_WrongSecret_Returns401WithBearerChallenge(t *testing.T) {
+	// Arrange
+	h := newTestHandlerWithSecret(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{}, "correct-secret")
+	r := httptest.NewRequest(http.MethodPost, "/oauth/introspect", strings.NewReader(url.Values{"token": {"tok"}}.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Authorization", "Bearer wrong-secret")
+	w := httptest.NewRecorder()
+
+	// Act
+	h.Introspect(w, r)
+
+	// Assert
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+	if wwa := w.Header().Get("WWW-Authenticate"); !strings.HasPrefix(wwa, "Bearer ") {
+		t.Errorf("WWW-Authenticate = %q, want Bearer challenge", wwa)
+	}
+	if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want %q (RFC 7662 §2.4)", cc, "no-store")
+	}
+}
+
+func TestIntrospect_WithSecret_MissingHeader_Returns401(t *testing.T) {
+	// Arrange
+	h := newTestHandlerWithSecret(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{}, "secret")
+	r := httptest.NewRequest(http.MethodPost, "/oauth/introspect", strings.NewReader(url.Values{"token": {"tok"}}.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	// Act
+	h.Introspect(w, r)
+
+	// Assert
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
 }
 

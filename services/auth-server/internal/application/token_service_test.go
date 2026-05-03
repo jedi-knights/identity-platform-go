@@ -13,7 +13,7 @@ var testSigningKey = []byte("test-signing-key-32-bytes-long!!")
 
 func TestTokenService_Introspect_ValidToken(t *testing.T) {
 	tokenRepo := newMockTokenRepo()
-	gen := application.NewJWTTokenGenerator(testSigningKey, "test-issuer")
+	gen := application.NewJWTTokenGenerator(testSigningKey, "test-issuer", nil)
 
 	domainToken := &domain.Token{
 		ID:        "t1",
@@ -51,7 +51,7 @@ func TestTokenService_Introspect_ValidToken(t *testing.T) {
 
 func TestTokenService_Introspect_ExpiredToken(t *testing.T) {
 	tokenRepo := newMockTokenRepo()
-	gen := application.NewJWTTokenGenerator(testSigningKey, "test-issuer")
+	gen := application.NewJWTTokenGenerator(testSigningKey, "test-issuer", nil)
 
 	domainToken := &domain.Token{
 		ID:        "t2",
@@ -85,7 +85,7 @@ func TestTokenService_Introspect_RevokedToken(t *testing.T) {
 	// A token that passes JWT validation but has been removed from the store
 	// (i.e., was revoked) must be reported as inactive.
 	tokenRepo := newMockTokenRepo()
-	gen := application.NewJWTTokenGenerator(testSigningKey, "test-issuer")
+	gen := application.NewJWTTokenGenerator(testSigningKey, "test-issuer", nil)
 
 	domainToken := &domain.Token{
 		ID:        "t4",
@@ -118,7 +118,7 @@ func TestTokenService_Introspect_RevokedToken(t *testing.T) {
 
 func TestTokenService_Revoke(t *testing.T) {
 	tokenRepo := newMockTokenRepo()
-	gen := application.NewJWTTokenGenerator(testSigningKey, "test-issuer")
+	gen := application.NewJWTTokenGenerator(testSigningKey, "test-issuer", nil)
 
 	domainToken := &domain.Token{
 		ID:        "t3",

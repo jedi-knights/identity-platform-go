@@ -36,12 +36,19 @@ type LogConfig struct {
 
 type JWTConfig struct {
 	SigningKey string `mapstructure:"signing_key"`
+	// Audience is the expected audience value for locally-validated JWTs.
+	// When set, tokens must carry a matching aud claim (RFC 9068 §4).
+	// Maps to RESOURCE_JWT_AUDIENCE. Empty disables audience validation.
+	Audience string `mapstructure:"audience"` // RESOURCE_JWT_AUDIENCE
 }
 
-// IntrospectionConfig holds the URL for token-introspection-service.
+// IntrospectionConfig holds the URL and optional pre-shared secret for token-introspection-service.
 // When URL is empty, the service falls back to local JWT validation.
 type IntrospectionConfig struct {
 	URL string `mapstructure:"url"` // RESOURCE_INTROSPECTION_URL
+	// Secret is sent as Authorization: Bearer <secret> when calling token-introspection-service.
+	// When empty, no auth header is sent. Must match INTROSPECT_SECRET_KEY on that service.
+	Secret string `mapstructure:"secret"` // RESOURCE_INTROSPECTION_SECRET
 }
 
 // PolicyConfig holds the URL for authorization-policy-service.
@@ -59,7 +66,9 @@ func Load() (*Config, error) {
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.environment", "development")
 	v.SetDefault("jwt.signing_key", "")
+	v.SetDefault("jwt.audience", "")
 	v.SetDefault("introspection.url", "")
+	v.SetDefault("introspection.secret", "")
 	v.SetDefault("database.url", "")
 	v.SetDefault("policy.url", "")
 
@@ -87,7 +96,7 @@ func Load() (*Config, error) {
 	// Signing key is required only when introspection service is not configured.
 	if cfg.Introspection.URL == "" {
 		if err := validateSigningKey(cfg.JWT.SigningKey); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("validating jwt signing key: %w", err)
 		}
 	}
 	return &cfg, nil

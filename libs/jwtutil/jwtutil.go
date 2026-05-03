@@ -51,6 +51,7 @@ type ClaimsConfig struct {
 	TokenID     string
 	ClientID    string
 	Scope       string
+	Audience    []string // RFC 9068 §2.2: resource server identifiers this token is intended for
 	Roles       []string
 	Permissions []string
 	IssuedAt    time.Time
@@ -63,10 +64,15 @@ type ClaimsConfig struct {
 // their slices after calling NewClaims without affecting the returned Claims.
 // Nil slices in cfg produce nil fields, which are omitted from the JWT (omitempty).
 func NewClaims(cfg ClaimsConfig) *Claims {
+	var audience jwt.ClaimStrings
+	if len(cfg.Audience) > 0 {
+		audience = append(jwt.ClaimStrings(nil), cfg.Audience...)
+	}
 	return &Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    cfg.Issuer,
 			Subject:   cfg.Subject,
+			Audience:  audience,
 			ID:        cfg.TokenID,
 			IssuedAt:  jwt.NewNumericDate(cfg.IssuedAt),
 			ExpiresAt: jwt.NewNumericDate(cfg.ExpiresAt),
@@ -89,6 +95,9 @@ func Sign(claims *Claims, signingKey []byte) (string, error) {
 		return "", fmt.Errorf("signing token: signing key must not be empty")
 	}
 	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	// RFC 9068 §2.1: access tokens MUST carry typ:"at+jwt" in the JOSE header to
+	// distinguish them from ID tokens and prevent token-type confusion attacks.
+	t.Header["typ"] = "at+jwt"
 	raw, err := t.SignedString(signingKey)
 	if err != nil {
 		return "", fmt.Errorf("signing token: %w", err)
@@ -111,6 +120,32 @@ func Parse(raw string, signingKey []byte) (*Claims, error) {
 		}
 		return signingKey, nil
 	})
+	if err != nil {
+		return nil, mapJWTError(err)
+	}
+
+	claims, ok := token.Claims.(*Claims)
+	if !ok || !token.Valid {
+		return nil, fmt.Errorf("parsing token: %w", ErrTokenInvalid)
+	}
+
+	return claims, nil
+}
+
+// ParseWithAudience parses and validates a raw JWT, additionally verifying that
+// the aud claim contains the expected audience value. Returns ErrTokenInvalid when
+// the audience is absent or does not match. Use this in resource servers that need
+// to enforce RFC 9068 §2.2 audience binding.
+func ParseWithAudience(raw string, signingKey []byte, audience string) (*Claims, error) {
+	if len(signingKey) == 0 {
+		return nil, fmt.Errorf("parsing token: %w", ErrTokenInvalid)
+	}
+	token, err := jwt.ParseWithClaims(raw, &Claims{}, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return signingKey, nil
+	}, jwt.WithAudience(audience))
 	if err != nil {
 		return nil, mapJWTError(err)
 	}
