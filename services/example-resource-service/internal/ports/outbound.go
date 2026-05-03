@@ -13,6 +13,7 @@ type IntrospectionResult struct {
 	Subject     string
 	ClientID    string
 	Scope       string   // space-delimited per RFC 9068
+	Audience    []string // RFC 7662 §2.2: aud claim from the token; nil when not set
 	Roles       []string // RBAC roles from JWT claims; nil when not present
 	Permissions []string // resolved permissions ("resource:action"); nil when not present
 }

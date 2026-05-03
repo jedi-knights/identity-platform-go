@@ -55,6 +55,11 @@ func NewHandler(
 // A named type prevents silent transposition with the description parameter.
 type oauthErrorCode string
 
+// unsupportedTokenType is the RFC 7009 §2.2 error code for token types the server
+// cannot revoke. Declared here so writeOAuthError callers use the typed constant
+// rather than a bare string, preventing silent transposition.
+const unsupportedTokenType oauthErrorCode = "unsupported_token_type"
+
 // writeOAuthError writes an RFC 6749-compliant JSON error response.
 // Sets both Cache-Control: no-store and Pragma: no-cache per RFC 6749 §5.1.
 func writeOAuthError(w http.ResponseWriter, logger logging.Logger, code oauthErrorCode, description string, httpStatus int) {
@@ -90,6 +95,8 @@ func writeOAuthError(w http.ResponseWriter, logger logging.Logger, code oauthErr
 func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 	// Per RFC 6819 §4.3.2: rate-limit by client IP to slow brute-force attacks.
 	if !h.rateLimiter.Allow(clientIP(r)) {
+		// RFC 6585 §4: include Retry-After on 429 responses.
+		w.Header().Set("Retry-After", "60")
 		writeOAuthError(w, h.logger, "server_error", "too many requests", http.StatusTooManyRequests)
 		return
 	}
@@ -208,6 +215,13 @@ func (h *Handler) Authorize(w http.ResponseWriter, _ *http.Request) {
 // @Failure      400  {object}  httputil.ErrorResponse
 // @Router       /oauth/introspect [post]
 func (h *Handler) Introspect(w http.ResponseWriter, r *http.Request) {
+	// Per RFC 6819 §4.3.2: apply the same per-IP rate limit as the token endpoint.
+	if !h.rateLimiter.Allow(clientIP(r)) {
+		w.Header().Set("Retry-After", "60")
+		writeOAuthError(w, h.logger, "server_error", "too many requests", http.StatusTooManyRequests)
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := r.ParseForm(); err != nil {
 		// RFC 7662 §2.2: always return 200 with {"active": false} rather than a 4xx.
@@ -222,6 +236,10 @@ func (h *Handler) Introspect(w http.ResponseWriter, r *http.Request) {
 	if !h.authenticateIntrospectionCaller(w, r) {
 		return
 	}
+
+	// RFC 7662 §2.1: token_type_hint is an optional hint. Accept the field but do
+	// not use it to optimize the lookup — optimization is not yet implemented.
+	_ = r.FormValue("token_type_hint")
 
 	token := r.FormValue("token")
 	if token == "" {
@@ -308,6 +326,13 @@ func (h *Handler) authenticateClientCredentials(w http.ResponseWriter, r *http.R
 // @Failure      400  {object}  httputil.ErrorResponse
 // @Router       /oauth/revoke [post]
 func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
+	// Per RFC 6819 §4.3.2: rate-limit revocation endpoint same as token endpoint.
+	if !h.rateLimiter.Allow(clientIP(r)) {
+		w.Header().Set("Retry-After", "60")
+		writeOAuthError(w, h.logger, "server_error", "too many requests", http.StatusTooManyRequests)
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := r.ParseForm(); err != nil {
 		writeOAuthError(w, h.logger, "invalid_request", "invalid form data", http.StatusBadRequest)
@@ -319,27 +344,49 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.validateTokenTypeHint(w, r) {
+		return
+	}
+
 	token := r.FormValue("token")
 	if token == "" {
 		writeOAuthError(w, h.logger, "invalid_request", "token is required", http.StatusBadRequest)
 		return
 	}
 
-	if err := h.revoker.Revoke(r.Context(), token); err != nil {
-		// RFC 7009 §2.2: return 200 when the token was not found or already expired.
-		// Return 500 for genuine infrastructure failures.
-		if !apperrors.IsNotFound(err) {
-			h.logger.Error("revocation failed", "error", err.Error())
-			writeOAuthError(w, h.logger, "server_error", "revocation failed", http.StatusInternalServerError)
-			return
-		}
-		// Token not found — treat as successful revocation per RFC 7009.
+	if !h.doRevoke(w, r, token) {
+		return
 	}
 
 	// Success path: all error paths above return early.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(http.StatusOK)
+}
+
+// doRevoke calls the revoker and writes any necessary error response.
+// Returns false only for genuine infrastructure failures (500 written).
+// Token-not-found is treated as success per RFC 7009 §2.2.
+func (h *Handler) doRevoke(w http.ResponseWriter, r *http.Request, token string) bool {
+	err := h.revoker.Revoke(r.Context(), token)
+	if err != nil && !apperrors.IsNotFound(err) {
+		h.logger.Error("revocation failed", "error", err.Error())
+		writeOAuthError(w, h.logger, "server_error", "revocation failed", http.StatusInternalServerError)
+		return false
+	}
+	return true
+}
+
+// validateTokenTypeHint validates token_type_hint per RFC 7009 §2.2.
+// Returns false and writes a 400 if the hint value is unrecognised.
+// Known values (access_token, refresh_token, and empty) are accepted as advisory.
+func (h *Handler) validateTokenTypeHint(w http.ResponseWriter, r *http.Request) bool {
+	hint := r.FormValue("token_type_hint")
+	if hint != "" && hint != "access_token" && hint != "refresh_token" {
+		writeOAuthError(w, h.logger, unsupportedTokenType, "unsupported token type hint", http.StatusBadRequest)
+		return false
+	}
+	return true
 }
 
 // Health handles GET /health.

@@ -225,6 +225,32 @@ func TestIntrospect_WithSecret_Returns401WhenMissing(t *testing.T) {
 	}
 }
 
+// TestIntrospect_RateLimited_Returns429 verifies that per-IP rate limiting is enforced
+// on the introspect endpoint (RFC 6819 §4.3.2). After the burst limit is exhausted,
+// the handler must return 429 with a Retry-After header (RFC 6585 §4).
+func TestIntrospect_RateLimited_Returns429(t *testing.T) {
+	// Arrange — use the default handler; all httptest requests share "192.0.2.1:1234"
+	h := inboundhttp.NewHandler(
+		&fakeIntrospector{result: &domain.IntrospectionResult{Active: true}},
+		testutil.NewTestLogger(),
+		"",
+	)
+
+	// Act — exhaust the per-IP limit (20 requests per minute)
+	var lastRR *httptest.ResponseRecorder
+	for i := 0; i < 21; i++ {
+		lastRR = postToken(t, h, "some.token.value")
+	}
+
+	// Assert — 21st request must be rejected with 429
+	if lastRR.Code != http.StatusTooManyRequests {
+		t.Errorf("status after limit = %d, want %d", lastRR.Code, http.StatusTooManyRequests)
+	}
+	if ra := lastRR.Header().Get("Retry-After"); ra != "60" {
+		t.Errorf("Retry-After = %q, want %q", ra, "60")
+	}
+}
+
 // TestIntrospect_WithSecret_Returns200WhenCorrect verifies that a valid pre-shared secret
 // allows the introspection to proceed normally.
 func TestIntrospect_WithSecret_Returns200WhenCorrect(t *testing.T) {

@@ -138,7 +138,7 @@ func TestToken_SuccessfulIssuance_Returns200WithAccessToken(t *testing.T) {
 	// Arrange
 	issuer := &fakeIssuer{resp: &domain.GrantResponse{
 		AccessToken: "tok.abc",
-		TokenType:   "bearer",
+		TokenType:   "Bearer",
 		ExpiresIn:   3600,
 		Scope:       "read write",
 	}}
@@ -286,7 +286,7 @@ func TestToken_CacheControlNoStore(t *testing.T) {
 		// Arrange
 		issuer := &fakeIssuer{resp: &domain.GrantResponse{
 			AccessToken: "tok.success",
-			TokenType:   "bearer",
+			TokenType:   "Bearer",
 			ExpiresIn:   3600,
 		}}
 		h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})

@@ -4,6 +4,7 @@ import "context"
 
 // IntrospectionResult is the result of token introspection per RFC 7662.
 // Scope is a space-delimited string per RFC 9068 §2.2.3.1 and RFC 7662 §2.2.
+// JTI and Audience are RFC 7662 §2.2 standard fields.
 // Roles and Permissions are non-standard extensions populated from JWT claims
 // when the token was issued with RBAC context. Resource services use these
 // for local authorization evaluation without an outbound policy service call.
@@ -16,6 +17,8 @@ type IntrospectionResult struct {
 	IssuedAt    int64    `json:"iat,omitempty"`
 	TokenType   string   `json:"token_type,omitempty"`
 	Issuer      string   `json:"iss,omitempty"`
+	JTI         string   `json:"jti,omitempty"`
+	Audience    []string `json:"aud,omitempty"`
 	Roles       []string `json:"roles,omitempty"`
 	Permissions []string `json:"permissions,omitempty"`
 }

@@ -55,7 +55,7 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 		logger.Info("Redis revocation check disabled (INTROSPECT_REDIS_URL not set); revoked tokens will be accepted until expiry")
 	}
 
-	validator := jwtadapter.NewValidator([]byte(cfg.JWT.SigningKey))
+	validator := jwtadapter.NewValidator([]byte(cfg.JWT.SigningKey), cfg.JWT.Issuer)
 	svc := application.NewIntrospectionService(validator, revocation)
 	handler := inboundhttp.NewHandler(svc, logger, cfg.Introspection.Secret)
 

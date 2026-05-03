@@ -34,7 +34,7 @@ func TestTokenService_Introspect_ValidToken(t *testing.T) {
 		t.Fatalf("unexpected save error: %v", err)
 	}
 
-	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo)
+	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo, "")
 	svc := application.NewTokenService(tokenRepo, nil, validator)
 
 	resp, err := svc.Introspect(context.Background(), raw)
@@ -69,7 +69,7 @@ func TestTokenService_Introspect_ExpiredToken(t *testing.T) {
 	}
 	domainToken.Raw = raw
 
-	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo)
+	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo, "")
 	svc := application.NewTokenService(tokenRepo, nil, validator)
 
 	resp, err := svc.Introspect(context.Background(), raw)
@@ -104,7 +104,7 @@ func TestTokenService_Introspect_RevokedToken(t *testing.T) {
 	domainToken.Raw = raw
 	// Do NOT save to tokenRepo — simulates a previously revoked token.
 
-	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo)
+	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo, "")
 	svc := application.NewTokenService(tokenRepo, nil, validator)
 
 	resp, err := svc.Introspect(context.Background(), raw)
@@ -139,7 +139,7 @@ func TestTokenService_Revoke(t *testing.T) {
 		t.Fatalf("unexpected save error: %v", err)
 	}
 
-	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo)
+	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo, "")
 	svc := application.NewTokenService(tokenRepo, nil, validator)
 
 	if err := svc.Revoke(context.Background(), raw); err != nil {

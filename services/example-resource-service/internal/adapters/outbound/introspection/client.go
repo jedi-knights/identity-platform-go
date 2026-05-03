@@ -21,6 +21,7 @@ type introspectResponse struct {
 	Subject     string   `json:"sub"`
 	ClientID    string   `json:"client_id"`
 	Scope       string   `json:"scope"`
+	Audience    []string `json:"aud"`
 	Roles       []string `json:"roles"`
 	Permissions []string `json:"permissions"`
 }
@@ -89,6 +90,7 @@ func (c *Client) Introspect(ctx context.Context, raw string) (_ *ports.Introspec
 		Subject:     ir.Subject,
 		ClientID:    ir.ClientID,
 		Scope:       ir.Scope,
+		Audience:    ir.Audience,
 		Roles:       ir.Roles,
 		Permissions: ir.Permissions,
 	}, nil

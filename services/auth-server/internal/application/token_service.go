@@ -59,17 +59,28 @@ func (g *JWTTokenGenerator) Generate(_ context.Context, token *domain.Token) (st
 type JWTTokenValidator struct {
 	signingKey []byte
 	tokenRepo  domain.TokenRepository
+	issuer     string // when non-empty, tokens must carry this iss claim (RFC 8725 §3.8)
 }
 
-func NewJWTTokenValidator(signingKey []byte, tokenRepo domain.TokenRepository) *JWTTokenValidator {
-	return &JWTTokenValidator{signingKey: signingKey, tokenRepo: tokenRepo}
+// NewJWTTokenValidator creates a JWTTokenValidator.
+// issuer may be empty — when set, tokens whose iss claim does not match are rejected.
+func NewJWTTokenValidator(signingKey []byte, tokenRepo domain.TokenRepository, issuer string) *JWTTokenValidator {
+	return &JWTTokenValidator{signingKey: signingKey, tokenRepo: tokenRepo, issuer: issuer}
 }
 
 func (v *JWTTokenValidator) Validate(_ context.Context, raw string) (*domain.Token, error) {
-	claims, err := jwtutil.Parse(raw, v.signingKey)
+	var (
+		claims *jwtutil.Claims
+		err    error
+	)
+	if v.issuer != "" {
+		claims, err = jwtutil.ParseWithIssuer(raw, v.signingKey, v.issuer)
+	} else {
+		claims, err = jwtutil.Parse(raw, v.signingKey)
+	}
 	if err != nil {
-		// All errors from jwtutil.Parse with a local key are token-validation failures
-		// (expired, bad signature, malformed), not infrastructure errors.
+		// All errors from jwtutil are token-validation failures (expired, bad sig,
+		// malformed, wrong issuer), not infrastructure errors.
 		// Callers should treat this as {active:false}.
 		return nil, fmt.Errorf("invalid token: %w", err)
 	}
@@ -79,6 +90,7 @@ func (v *JWTTokenValidator) Validate(_ context.Context, raw string) (*domain.Tok
 		ClientID:  claims.ClientID,
 		Subject:   claims.Subject,
 		Issuer:    claims.Issuer,
+		Audience:  []string(claims.Audience),
 		Scopes:    strings.Fields(claims.Scope),
 		ExpiresAt: claims.ExpiresAt.Time,
 		IssuedAt:  claims.IssuedAt.Time,
@@ -131,6 +143,8 @@ func (s *TokenService) Introspect(ctx context.Context, raw string) (*domain.Intr
 		ExpiresAt: token.ExpiresAt.Unix(),
 		IssuedAt:  token.IssuedAt.Unix(),
 		TokenType: string(token.TokenType),
+		JTI:       token.ID,
+		Audience:  token.Audience,
 	}, nil
 }
 

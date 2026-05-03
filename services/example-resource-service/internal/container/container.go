@@ -25,6 +25,7 @@ type Container struct {
 	Config        *config.Config
 	SigningKey    []byte
 	Audience      string
+	Issuer        string
 	Introspector  ports.TokenIntrospector
 	PolicyChecker ports.PolicyChecker
 	closer        func()
@@ -83,6 +84,7 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 		Config:        cfg,
 		SigningKey:    []byte(cfg.JWT.SigningKey),
 		Audience:      cfg.JWT.Audience,
+		Issuer:        cfg.JWT.Issuer,
 		Introspector:  introspector,
 		PolicyChecker: policyChecker,
 		closer:        closer,
