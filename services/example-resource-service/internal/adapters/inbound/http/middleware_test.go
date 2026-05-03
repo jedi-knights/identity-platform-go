@@ -31,7 +31,8 @@ func (f *fakeIntrospector) Introspect(_ context.Context, _ string) (*ports.Intro
 // --- helpers ---
 
 // okHandler is a trivial next handler that records whether it was called.
-func okHandler(called *bool) http.Handler {
+func okHandler(t *testing.T, called *bool) http.Handler {
+	t.Helper()
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		*called = true
 		w.WriteHeader(http.StatusOK)
@@ -39,6 +40,8 @@ func okHandler(called *bool) http.Handler {
 }
 
 // signHS256 creates a minimal HS256-signed JWT with the given claims.
+// ExpiresAt is optional — omitting it produces a non-expiring token, which is
+// fine for tests that are not checking expiry behaviour.
 func signHS256(t *testing.T, key []byte, claims jwtClaims) string {
 	t.Helper()
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, &claims)
@@ -49,26 +52,29 @@ func signHS256(t *testing.T, key []byte, claims jwtClaims) string {
 	return raw
 }
 
-func bearerRequest(token string) *http.Request {
+func bearerRequest(t *testing.T, token string) *http.Request {
+	t.Helper()
 	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
 	r.Header.Set("Authorization", "Bearer "+token)
 	return r
 }
 
-// --- extractBearer (tested indirectly through IntrospectionAuthMiddleware) ---
+// --- extractBearer ---
 
 func TestExtractBearer_MissingHeader_Returns401(t *testing.T) {
-	var called bool
-	mw := IntrospectionAuthMiddleware(&fakeIntrospector{result: &ports.IntrospectionResult{Active: true}}, testutil.NewTestLogger())
+	// Arrange
 	r := httptest.NewRequest(http.MethodGet, "/resources", nil) // no Authorization header
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, r)
 
+	// Act
+	_, ok := extractBearer(w, r)
+
+	// Assert
+	if ok {
+		t.Error("extractBearer returned ok=true for missing header, want false")
+	}
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
-	}
-	if called {
-		t.Error("next handler must not be called when Authorization header is missing")
 	}
 	if w.Header().Get("WWW-Authenticate") == "" {
 		t.Error("expected WWW-Authenticate header on 401")
@@ -76,59 +82,84 @@ func TestExtractBearer_MissingHeader_Returns401(t *testing.T) {
 }
 
 func TestExtractBearer_MalformedHeader_Returns401(t *testing.T) {
+	// Arrange
 	// "Token xyz" is not a valid Bearer header.
-	var called bool
-	mw := IntrospectionAuthMiddleware(&fakeIntrospector{result: &ports.IntrospectionResult{Active: true}}, testutil.NewTestLogger())
 	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
 	r.Header.Set("Authorization", "Token xyz")
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, r)
 
+	// Act
+	_, ok := extractBearer(w, r)
+
+	// Assert
+	if ok {
+		t.Error("extractBearer returned ok=true for wrong scheme, want false")
+	}
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
-	}
-	if called {
-		t.Error("next handler must not be called for malformed Authorization header")
 	}
 }
 
 func TestExtractBearer_WhitespaceOnlyToken_Returns401(t *testing.T) {
+	// Arrange
 	// "Bearer   " (spaces after "Bearer ") must be rejected, not forwarded as a token.
-	var called bool
-	mw := IntrospectionAuthMiddleware(&fakeIntrospector{result: &ports.IntrospectionResult{Active: true}}, testutil.NewTestLogger())
 	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
 	r.Header.Set("Authorization", "Bearer   ")
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, r)
 
+	// Act
+	_, ok := extractBearer(w, r)
+
+	// Assert
+	if ok {
+		t.Error("extractBearer returned ok=true for whitespace-only token, want false")
+	}
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
-	}
-	if called {
-		t.Error("next handler must not be called for whitespace-only bearer token")
 	}
 }
 
 func TestExtractBearer_EmptyToken_Returns401(t *testing.T) {
+	// Arrange
 	// "Bearer " with nothing after it is not a valid token.
-	var called bool
-	mw := IntrospectionAuthMiddleware(&fakeIntrospector{result: &ports.IntrospectionResult{Active: true}}, testutil.NewTestLogger())
 	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
 	r.Header.Set("Authorization", "Bearer ")
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, r)
 
+	// Act
+	_, ok := extractBearer(w, r)
+
+	// Assert
+	if ok {
+		t.Error("extractBearer returned ok=true for empty token, want false")
+	}
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
-	if called {
-		t.Error("next handler must not be called for empty bearer token")
+}
+
+func TestExtractBearer_ValidToken_ReturnsToken(t *testing.T) {
+	// Arrange
+	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
+	r.Header.Set("Authorization", "Bearer my.jwt.token")
+	w := httptest.NewRecorder()
+
+	// Act
+	raw, ok := extractBearer(w, r)
+
+	// Assert
+	if !ok {
+		t.Error("extractBearer returned ok=false for valid Bearer header, want true")
+	}
+	if raw != "my.jwt.token" {
+		t.Errorf("raw = %q, want %q", raw, "my.jwt.token")
 	}
 }
 
 // --- IntrospectionAuthMiddleware ---
 
 func TestIntrospectionAuthMiddleware_ActiveToken_CallsNext(t *testing.T) {
+	// Arrange
 	result := &ports.IntrospectionResult{
 		Active:   true,
 		Subject:  "user-1",
@@ -138,8 +169,11 @@ func TestIntrospectionAuthMiddleware_ActiveToken_CallsNext(t *testing.T) {
 	var called bool
 	mw := IntrospectionAuthMiddleware(&fakeIntrospector{result: result}, testutil.NewTestLogger())
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, bearerRequest("valid.jwt"))
 
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, bearerRequest(t, "valid.jwt"))
+
+	// Assert
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
@@ -149,12 +183,16 @@ func TestIntrospectionAuthMiddleware_ActiveToken_CallsNext(t *testing.T) {
 }
 
 func TestIntrospectionAuthMiddleware_InactiveToken_Returns401WithInvalidToken(t *testing.T) {
+	// Arrange
 	result := &ports.IntrospectionResult{Active: false}
 	var called bool
 	mw := IntrospectionAuthMiddleware(&fakeIntrospector{result: result}, testutil.NewTestLogger())
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, bearerRequest("revoked.jwt"))
 
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, bearerRequest(t, "revoked.jwt"))
+
+	// Assert
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
@@ -172,12 +210,16 @@ func TestIntrospectionAuthMiddleware_InactiveToken_Returns401WithInvalidToken(t 
 }
 
 func TestIntrospectionAuthMiddleware_ServiceError_Returns500(t *testing.T) {
+	// Arrange
 	introspector := &fakeIntrospector{err: apperrors.New(apperrors.ErrCodeInternal, "introspection unavailable")}
 	var called bool
 	mw := IntrospectionAuthMiddleware(introspector, testutil.NewTestLogger())
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, bearerRequest("some.jwt"))
 
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, bearerRequest(t, "some.jwt"))
+
+	// Assert
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
 	}
@@ -191,6 +233,7 @@ func TestIntrospectionAuthMiddleware_ServiceError_Returns500(t *testing.T) {
 }
 
 func TestIntrospectionAuthMiddleware_PropagatesContextValues(t *testing.T) {
+	// Arrange
 	result := &ports.IntrospectionResult{
 		Active:      true,
 		Subject:     "user-99",
@@ -212,8 +255,11 @@ func TestIntrospectionAuthMiddleware_PropagatesContextValues(t *testing.T) {
 	})
 	mw := IntrospectionAuthMiddleware(&fakeIntrospector{result: result}, testutil.NewTestLogger())
 	w := httptest.NewRecorder()
-	mw(captureHandler).ServeHTTP(w, bearerRequest("valid.jwt"))
 
+	// Act
+	mw(captureHandler).ServeHTTP(w, bearerRequest(t, "valid.jwt"))
+
+	// Assert
 	if gotSubject != "user-99" {
 		t.Errorf("contextKeySubject = %q, want %q", gotSubject, "user-99")
 	}
@@ -231,6 +277,7 @@ func TestIntrospectionAuthMiddleware_PropagatesContextValues(t *testing.T) {
 // --- JWTAuthMiddleware ---
 
 func TestJWTAuthMiddleware_ValidToken_CallsNext(t *testing.T) {
+	// Arrange
 	key := []byte("test-signing-key")
 	claims := jwtClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -241,12 +288,14 @@ func TestJWTAuthMiddleware_ValidToken_CallsNext(t *testing.T) {
 		Scope:    "read write",
 	}
 	raw := signHS256(t, key, claims)
-
 	var called bool
 	mw := JWTAuthMiddleware(key, testutil.NewTestLogger())
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, bearerRequest(raw))
 
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, bearerRequest(t, raw))
+
+	// Assert
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d — body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
@@ -256,6 +305,7 @@ func TestJWTAuthMiddleware_ValidToken_CallsNext(t *testing.T) {
 }
 
 func TestJWTAuthMiddleware_ExpiredToken_Returns401(t *testing.T) {
+	// Arrange
 	key := []byte("test-signing-key")
 	claims := jwtClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -264,12 +314,14 @@ func TestJWTAuthMiddleware_ExpiredToken_Returns401(t *testing.T) {
 		},
 	}
 	raw := signHS256(t, key, claims)
-
 	var called bool
 	mw := JWTAuthMiddleware(key, testutil.NewTestLogger())
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, bearerRequest(raw))
 
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, bearerRequest(t, raw))
+
+	// Assert
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
@@ -282,6 +334,7 @@ func TestJWTAuthMiddleware_ExpiredToken_Returns401(t *testing.T) {
 }
 
 func TestJWTAuthMiddleware_WrongSigningKey_Returns401(t *testing.T) {
+	// Arrange
 	claims := jwtClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   "user-1",
@@ -289,12 +342,14 @@ func TestJWTAuthMiddleware_WrongSigningKey_Returns401(t *testing.T) {
 		},
 	}
 	raw := signHS256(t, []byte("different-key"), claims)
-
 	var called bool
 	mw := JWTAuthMiddleware([]byte("actual-key"), testutil.NewTestLogger())
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, bearerRequest(raw))
 
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, bearerRequest(t, raw))
+
+	// Assert
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
@@ -307,11 +362,15 @@ func TestJWTAuthMiddleware_WrongSigningKey_Returns401(t *testing.T) {
 }
 
 func TestJWTAuthMiddleware_MalformedToken_Returns401(t *testing.T) {
+	// Arrange
 	var called bool
 	mw := JWTAuthMiddleware([]byte("key"), testutil.NewTestLogger())
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, bearerRequest("not.a.jwt"))
 
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, bearerRequest(t, "not.a.jwt"))
+
+	// Assert
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
@@ -321,12 +380,16 @@ func TestJWTAuthMiddleware_MalformedToken_Returns401(t *testing.T) {
 }
 
 func TestJWTAuthMiddleware_MissingAuthHeader_Returns401(t *testing.T) {
+	// Arrange
 	var called bool
 	mw := JWTAuthMiddleware([]byte("key"), testutil.NewTestLogger())
 	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, r)
 
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, r)
+
+	// Assert
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
@@ -336,6 +399,7 @@ func TestJWTAuthMiddleware_MissingAuthHeader_Returns401(t *testing.T) {
 }
 
 func TestJWTAuthMiddleware_PropagatesContextValues(t *testing.T) {
+	// Arrange
 	key := []byte("test-signing-key")
 	claims := jwtClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -347,7 +411,6 @@ func TestJWTAuthMiddleware_PropagatesContextValues(t *testing.T) {
 		Permissions: []string{"resources:read"},
 	}
 	raw := signHS256(t, key, claims)
-
 	var (
 		gotSubject  string
 		gotClientID string
@@ -362,8 +425,11 @@ func TestJWTAuthMiddleware_PropagatesContextValues(t *testing.T) {
 	})
 	mw := JWTAuthMiddleware(key, testutil.NewTestLogger())
 	w := httptest.NewRecorder()
-	mw(captureHandler).ServeHTTP(w, bearerRequest(raw))
 
+	// Act
+	mw(captureHandler).ServeHTTP(w, bearerRequest(t, raw))
+
+	// Assert
 	if gotSubject != "user-42" {
 		t.Errorf("subject = %q, want %q", gotSubject, "user-42")
 	}
@@ -381,13 +447,17 @@ func TestJWTAuthMiddleware_PropagatesContextValues(t *testing.T) {
 // --- RequireScopeMiddleware ---
 
 func TestRequireScopeMiddleware_ScopePresent_CallsNext(t *testing.T) {
+	// Arrange
 	var called bool
 	mw := RequireScopeMiddleware("read")
 	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
 	r = r.WithContext(context.WithValue(r.Context(), contextKeyScopes, []string{"read", "write"}))
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, r)
 
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, r)
+
+	// Assert
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
@@ -397,33 +467,69 @@ func TestRequireScopeMiddleware_ScopePresent_CallsNext(t *testing.T) {
 }
 
 func TestRequireScopeMiddleware_ScopeAbsent_Returns403(t *testing.T) {
+	// Arrange
 	var called bool
 	mw := RequireScopeMiddleware("admin")
 	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
 	r = r.WithContext(context.WithValue(r.Context(), contextKeyScopes, []string{"read"}))
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, r)
 
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, r)
+
+	// Assert
 	if w.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
 	}
 	if called {
 		t.Error("next handler must not be called when required scope is absent")
 	}
+	// RFC 6750 §3.1: insufficient_scope must include WWW-Authenticate with error="insufficient_scope".
+	if wwwAuth := w.Header().Get("WWW-Authenticate"); !strings.Contains(wwwAuth, `error="insufficient_scope"`) {
+		t.Errorf("WWW-Authenticate = %q, want it to contain error=\"insufficient_scope\"", wwwAuth)
+	}
 }
 
 func TestRequireScopeMiddleware_NoContextScopes_Returns401(t *testing.T) {
+	// Arrange
 	// Missing scopes in context means auth middleware did not run — treat as 401.
 	var called bool
 	mw := RequireScopeMiddleware("read")
 	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
 	w := httptest.NewRecorder()
-	mw(okHandler(&called)).ServeHTTP(w, r)
 
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, r)
+
+	// Assert
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
 	if called {
 		t.Error("next handler must not be called when scopes are absent from context")
+	}
+}
+
+func TestRequireScopeMiddleware_EmptyRequiredScope_CallsNext(t *testing.T) {
+	// Arrange
+	// RequireScopeMiddleware("") matches an empty string scope value in the context.
+	// A token whose scope string parses to [""] is unusual but possible (e.g. a scope
+	// value that is just spaces). This test documents the current behaviour: the empty
+	// string is treated as a valid scope name and "" == "" passes the check.
+	var called bool
+	mw := RequireScopeMiddleware("")
+	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
+	r = r.WithContext(context.WithValue(r.Context(), contextKeyScopes, []string{""}))
+	w := httptest.NewRecorder()
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, r)
+
+	// Assert
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if !called {
+		t.Error("next handler was not called when empty scope matched empty required scope")
 	}
 }
