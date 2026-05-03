@@ -16,12 +16,12 @@ import (
 //
 // Type selects the token-verification algorithm:
 //   - "hs256" (default) — HMAC-SHA256; requires SigningKey.
-//   - "jwks"            — RS256 via a JWKS endpoint; requires JWKSUrl.
+//   - "jwks"            — RS256 via a JWKS endpoint; requires JWKSURL.
 //
 // SigningKey is the HMAC-SHA256 secret for the hs256 type.
 // Inject it via GATEWAY_AUTH_SIGNING_KEY rather than storing it here.
 //
-// JWKSUrl is the HTTPS URL of the JWKS endpoint (e.g. "https://auth.example.com/.well-known/jwks.json").
+// JWKSURL is the HTTPS URL of the JWKS endpoint (e.g. "https://auth.example.com/.well-known/jwks.json").
 // Used only when Type is "jwks". The key set is cached and refreshed in the background.
 //
 // JWKSRefreshSecs controls how often the JWKS key set is re-fetched (default: 300).
@@ -35,7 +35,7 @@ type AuthConfig struct {
 	Enabled         bool     `mapstructure:"enabled"`
 	Type            string   `mapstructure:"type"`              // "hs256" | "jwks"
 	SigningKey      string   `mapstructure:"signing_key"`       // hs256 only
-	JWKSUrl         string   `mapstructure:"jwks_url"`          // jwks only
+	JWKSURL         string   `mapstructure:"jwks_url"`          // jwks only
 	JWKSRefreshSecs int      `mapstructure:"jwks_refresh_secs"` // jwks only
 	Issuer          string   `mapstructure:"issuer"`            // optional
 	Audience        string   `mapstructure:"audience"`          // optional
@@ -125,8 +125,8 @@ type IPFilterConfig struct {
 // 9 is slowest/most compressed. The default of 6 balances speed and ratio.
 type CompressionConfig struct {
 	Enabled      bool `mapstructure:"enabled"`
-	MinSizeBytes int  `mapstructure:"min_size_bytes"` // GATEWAY_COMPRESSION_MIN_SIZE_BYTES
-	Level        int  `mapstructure:"level"`          // GATEWAY_COMPRESSION_LEVEL
+	MinSizeBytes int  `mapstructure:"min_size_bytes"`
+	Level        int  `mapstructure:"level"`
 }
 
 // CacheConfig controls response caching for proxied GET and HEAD requests.
@@ -498,8 +498,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("retry.retryable_status", []int{502, 503, 504})
 }
 
+// envPrefix is the environment variable prefix used by bindEnv.
+// All config fields are addressable as GATEWAY_<SECTION>_<KEY> (dots → underscores).
+const envPrefix = "GATEWAY"
+
 func bindEnv(v *viper.Viper) {
-	v.SetEnvPrefix("GATEWAY")
+	v.SetEnvPrefix(envPrefix)
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 }
@@ -561,6 +565,8 @@ func validateRateLimitParams(rl RateLimitConfig) error {
 	case "concurrency":
 		return validateConcurrencyParams(rl)
 	}
+	// Unreachable: validateRateLimit already checked validRateLimitStrategies before
+	// calling here, so every valid strategy is handled by a case above.
 	return nil
 }
 
@@ -614,11 +620,30 @@ func validateServer(s ServerConfig) error {
 	return nil
 }
 
-// validateUpstream checks that a route's upstream has at least one configured URL.
+// validateUpstream checks that a route's upstream has at least one configured URL
+// and that its TLS settings are consistent.
 // Extracted to keep validate's cyclomatic complexity within the project limit of 7.
 func validateUpstream(idx int, name string, up UpstreamConfig) error {
 	if up.URL == "" && len(up.URLs) == 0 && len(up.WeightedURLs) == 0 {
 		return fmt.Errorf("routes[%d] (%q): upstream.url, upstream.urls, or upstream.weighted_urls is required", idx, name)
+	}
+	if err := validateUpstreamTLS(up.TLS); err != nil {
+		return fmt.Errorf("routes[%d] (%q): %w", idx, name, err)
+	}
+	return nil
+}
+
+// validateUpstreamTLS rejects contradictory TLS settings on an upstream.
+// Setting insecure_skip_verify alongside ca_file is meaningless — the custom CA
+// is ignored when verification is disabled — and almost always indicates a
+// misconfiguration rather than deliberate intent.
+func validateUpstreamTLS(t TLSConfig) error {
+	if t.InsecureSkipVerify && (t.CAFile != "" || t.CertFile != "" || t.KeyFile != "") {
+		return errors.New("insecure_skip_verify and tls cert/key/ca_file are mutually exclusive; " +
+			"custom TLS material is ignored when certificate verification is disabled")
+	}
+	if (t.CertFile == "") != (t.KeyFile == "") {
+		return errors.New("upstream tls.cert_file and tls.key_file must both be set for mTLS")
 	}
 	return nil
 }
@@ -626,10 +651,15 @@ func validateUpstream(idx int, name string, up UpstreamConfig) error {
 // ToDomainRoutes converts the config-layer route definitions to domain.Route values.
 // This is the single translation point between config concerns and domain concerns.
 func (c *Config) ToDomainRoutes() []*domain.Route {
-	routes := make([]*domain.Route, len(c.Routes))
-	for i, rc := range c.Routes {
+	routes := make([]*domain.Route, 0, len(c.Routes))
+	for _, rc := range c.Routes {
 		urls, weights := normalizeWeightedURLs(rc.Upstream.URL, rc.Upstream.URLs, rc.Upstream.WeightedURLs)
-		routes[i] = &domain.Route{
+		if len(urls) == 0 {
+			// Defensive guard for callers that bypass Load/validate. Under normal operation
+			// validateUpstream already rejects zero-URL upstreams before ToDomainRoutes runs.
+			continue
+		}
+		routes = append(routes, &domain.Route{
 			Name: rc.Name,
 			Match: domain.MatchCriteria{
 				PathPrefix: rc.Match.PathPrefix,
@@ -651,7 +681,7 @@ func (c *Config) ToDomainRoutes() []*domain.Route {
 				HeaderTransform: toHeaderTransform(rc.Upstream.HeaderTransform),
 				TLS:             toTLSConfig(rc.Upstream.TLS),
 			},
-		}
+		})
 	}
 	return routes
 }

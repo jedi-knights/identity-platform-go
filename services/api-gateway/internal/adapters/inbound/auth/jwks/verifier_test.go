@@ -58,7 +58,7 @@ func newJWKSVerifier(t *testing.T, key *rsa.PrivateKey) *jwks.Verifier {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	v, err := jwks.New(ctx, config.AuthConfig{JWKSUrl: srv.URL})
+	v, err := jwks.New(ctx, config.AuthConfig{JWKSURL: srv.URL})
 	if err != nil {
 		t.Fatalf("jwks.New: %v", err)
 	}
@@ -87,9 +87,9 @@ func signRS256Token(t *testing.T, key *rsa.PrivateKey, subject string, ttl time.
 }
 
 func TestJWKS_New_EmptyURL_ReturnsError(t *testing.T) {
-	_, err := jwks.New(context.Background(), config.AuthConfig{JWKSUrl: ""})
+	_, err := jwks.New(context.Background(), config.AuthConfig{JWKSURL: ""})
 	if err == nil {
-		t.Fatal("expected error for empty JWKSUrl, got nil")
+		t.Fatal("expected error for empty JWKSURL, got nil")
 	}
 }
 
