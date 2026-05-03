@@ -26,11 +26,13 @@ These RFCs are on the roadmap toward a complete auth/authz system. Do not implem
 
 | RFC | What it adds | Key design notes |
 |-----|-------------|-----------------|
+| [RFC 7521](https://datatracker.ietf.org/doc/html/rfc7521) / [RFC 7523](https://datatracker.ietf.org/doc/html/rfc7523) | Assertion Framework / JWT Bearer Grants — clients authenticate using a signed JWT instead of a client_secret | Enables service-to-service federation where a client proves identity with a private key. Requires JWKS (RFC 7517) to be in place first so the auth-server can retrieve the client's public key for assertion verification. |
 | [RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636) | PKCE — `code_challenge` / `code_verifier` | Parameters already parsed in `handler.go` and stored in `GrantRequest.CodeVerifier`; validation is the missing piece. Required before `authorization_code` can be considered complete. |
 | [RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517) | JSON Web Key Sets — `/.well-known/jwks.json` | Enables RS256 signing so resource servers can verify tokens without sharing the signing secret. Currently all signing is HS256 with a shared key. |
 | [RFC 7518](https://datatracker.ietf.org/doc/html/rfc7518) | JSON Web Algorithms — defines `RS256`, `HS256`, etc. | Governs valid `alg` values in JWTs. Becomes relevant when JWKS/RS256 support is added. |
 | [RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591) | Dynamic Client Registration | Standardizes the `client-registry-service` API. Any OAuth2-aware tool can register clients without custom integration. |
 | [RFC 8414](https://datatracker.ietf.org/doc/html/rfc8414) | Authorization Server Metadata — `/.well-known/oauth-authorization-server` | Required for OAuth2 client libraries to auto-configure. Without it, every consumer must be manually pointed at each endpoint. |
+| [RFC 9449](https://datatracker.ietf.org/doc/html/rfc9449) | DPoP — Demonstrating Proof of Possession | Binds access tokens to the client's private key, so a stolen token cannot be replayed from a different client. Requires JWKS (RFC 7517) and changes the token endpoint to accept a `DPoP` header. High implementation cost; most valuable when tokens are long-lived or carried over untrusted channels. |
 | [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html) | `id_token`, `/userinfo` endpoint, `nonce`, `openid` scope, authentication context | Bridges the gap between authorization and authentication. The `identity-service` does user auth but does not issue identity tokens. OIDC is what makes this an authentication system, not just an authorization one. |
 
 ### Considered (lower priority)
@@ -56,6 +58,9 @@ These are valid for a complete auth/authz system but have narrower applicability
 - **`Cache-Control: no-store`** must be set on all token endpoint responses. RFC 6749 §5.1.
 - **Scope resolution**: requested scopes are intersected with the client's allowed scopes — never grant more than the client is registered for.
 - **Secret comparison uses `subtle.ConstantTimeCompare`** to prevent timing attacks. Do not replace this with `==`.
+- **`error_uri` is intentionally omitted** from all OAuth2 error responses. RFC 6749 §5.2 defines it as optional. This implementation does not maintain a human-readable error catalogue, so the field is left out rather than providing a stub URL.
+- **`unsupported_token_type`** is the correct error code when a caller requests revocation or introspection for a token type the server does not recognise (RFC 7009 §2.2). The `unsupported_token_type` constant is defined in the auth-server handler alongside the other OAuth error codes. Currently only `access_token` is supported; `refresh_token` and other hint values are accepted as no-ops (the hint is logged and ignored) per RFC 7009 §2.1's guidance that hints are purely advisory.
+- **Signing key entropy**: all signing key env vars (`AUTH_JWT_SIGNING_KEY`, `INTROSPECT_JWT_SIGNING_KEY`, `RESOURCE_JWT_SIGNING_KEY`) must be set to at least 32 bytes of cryptographically random data. Generate with `openssl rand -hex 32`. A short or guessable key allows any party to forge tokens — this is a complete authentication bypass.
 
 ### Grant Types
 

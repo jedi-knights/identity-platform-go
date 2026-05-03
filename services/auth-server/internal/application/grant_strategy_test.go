@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -97,20 +98,6 @@ func (m *mockTokenGen) Generate(_ context.Context, _ *domain.Token) (string, err
 	return "mock-token-123", nil
 }
 
-// mockUserAuthenticator implements ports.UserAuthenticator for testing.
-type mockUserAuthenticator struct {
-	validEmail    string
-	validPassword string
-	returnUserID  string
-}
-
-func (m *mockUserAuthenticator) VerifyCredentials(_ context.Context, email, password string) (string, error) {
-	if email == m.validEmail && password == m.validPassword {
-		return m.returnUserID, nil
-	}
-	return "", fmt.Errorf("invalid user credentials")
-}
-
 func newTestClient(id, secret string, scopes []string, grants []domain.GrantType) *domain.Client {
 	return &domain.Client{
 		ID:         id,
@@ -150,8 +137,8 @@ func TestClientCredentialsStrategy_Handle_Success(t *testing.T) {
 	if resp.AccessToken != "mock-token-123" {
 		t.Errorf("expected mock-token-123, got: %s", resp.AccessToken)
 	}
-	if resp.TokenType != "bearer" {
-		t.Errorf("expected bearer token type, got: %s", resp.TokenType)
+	if resp.TokenType != "Bearer" {
+		t.Errorf("expected Bearer token type, got: %s", resp.TokenType)
 	}
 }
 
@@ -477,44 +464,20 @@ func TestClientCredentialsStrategy_Supports(t *testing.T) {
 	}
 }
 
-func TestAuthorizationCodeStrategy_Handle_CallsUserAuth(t *testing.T) {
-	userAuth := &mockUserAuthenticator{
-		validEmail:    "alice@example.com",
-		validPassword: "pass123",
-		returnUserID:  "user-42",
-	}
+func TestAuthorizationCodeStrategy_Handle_ReturnsNotImplemented(t *testing.T) {
+	// Arrange
+	strategy := application.NewAuthorizationCodeStrategy(nil, nil, nil, time.Hour, nil)
 
-	strategy := application.NewAuthorizationCodeStrategy(nil, nil, nil, time.Hour, userAuth)
-
+	// Act
 	_, err := strategy.Handle(context.Background(), domain.GrantRequest{
 		GrantType: domain.GrantTypeAuthorizationCode,
-		Username:  "alice@example.com",
-		Password:  "pass123",
 	})
-	// Expect "not yet fully implemented" — not an auth error — confirming userAuth was called.
+
+	// Assert — stub always returns ErrUnsupportedGrantType; credential fields no longer exist
 	if err == nil {
 		t.Fatal("expected stub error, got nil")
 	}
-	if err.Error() == "invalid user credentials" {
-		t.Errorf("user auth should have succeeded but got credential error: %v", err)
-	}
-}
-
-func TestAuthorizationCodeStrategy_Handle_InvalidUserCredentials(t *testing.T) {
-	userAuth := &mockUserAuthenticator{
-		validEmail:    "alice@example.com",
-		validPassword: "pass123",
-		returnUserID:  "user-42",
-	}
-
-	strategy := application.NewAuthorizationCodeStrategy(nil, nil, nil, time.Hour, userAuth)
-
-	_, err := strategy.Handle(context.Background(), domain.GrantRequest{
-		GrantType: domain.GrantTypeAuthorizationCode,
-		Username:  "alice@example.com",
-		Password:  "wrong-password",
-	})
-	if err == nil {
-		t.Fatal("expected error for wrong user credentials")
+	if !errors.Is(err, application.ErrUnsupportedGrantType) {
+		t.Errorf("error = %v, want ErrUnsupportedGrantType", err)
 	}
 }

@@ -195,7 +195,7 @@ func (s *ClientCredentialsStrategy) Handle(ctx context.Context, req domain.Grant
 
 	return &domain.GrantResponse{
 		AccessToken:  raw,
-		TokenType:    "bearer",
+		TokenType:    string(domain.TokenTypeBearer),
 		ExpiresIn:    int(s.ttl.Seconds()),
 		RefreshToken: refreshRaw,
 		Scope:        strings.Join(scopes, " "),
@@ -360,7 +360,7 @@ func (s *RefreshTokenStrategy) Handle(ctx context.Context, req domain.GrantReque
 
 	return &domain.GrantResponse{
 		AccessToken:  raw,
-		TokenType:    "bearer",
+		TokenType:    string(domain.TokenTypeBearer),
 		ExpiresIn:    int(s.ttl.Seconds()),
 		RefreshToken: newRefreshRaw,
 		Scope:        strings.Join(existing.Scopes, " "),
@@ -402,15 +402,10 @@ func (s *AuthorizationCodeStrategy) Supports(gt domain.GrantType) bool {
 	return gt == domain.GrantTypeAuthorizationCode
 }
 
-// Handle is a stub. When userAuth is wired, it validates user credentials as
-// the first step. Full PKCE / code-exchange flow is not yet implemented.
-func (s *AuthorizationCodeStrategy) Handle(ctx context.Context, req domain.GrantRequest) (*domain.GrantResponse, error) {
-	if s.userAuth != nil {
-		// Validate user credentials — the first step of the authorization_code flow.
-		// The rest of the flow (code issuance, PKCE, redirect URI check) is not yet implemented.
-		if _, err := s.userAuth.VerifyCredentials(ctx, req.Username, req.Password); err != nil {
-			return nil, err
-		}
-	}
+// Handle is a stub. Full PKCE / code-exchange flow is not yet implemented.
+// Resource owner credentials (username/password) do not belong on the token
+// endpoint; the authorization_code flow authenticates users at the authorization
+// endpoint, then exchanges the resulting code here.
+func (s *AuthorizationCodeStrategy) Handle(_ context.Context, req domain.GrantRequest) (*domain.GrantResponse, error) {
 	return nil, fmt.Errorf("%w: %s is not yet fully implemented", ErrUnsupportedGrantType, req.GrantType)
 }

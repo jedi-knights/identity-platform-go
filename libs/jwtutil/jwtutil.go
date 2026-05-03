@@ -106,6 +106,8 @@ func Sign(claims *Claims, signingKey []byte) (string, error) {
 }
 
 // Parse parses and validates a raw JWT string signed with HMAC-SHA256.
+// Rejects tokens that do not carry typ:"at+jwt" in the JOSE header (RFC 9068 §2.1 /
+// RFC 8725 §3.11) to prevent token-type confusion attacks.
 // Returns a sentinel error (ErrTokenExpired, ErrTokenInvalid, ErrTokenMalformed)
 // for specific failure modes so callers can distinguish them via errors.Is without
 // importing the jwt library. Any error means the token is not valid for use.
@@ -117,6 +119,9 @@ func Parse(raw string, signingKey []byte) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(raw, &Claims{}, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		if typ, _ := t.Header["typ"].(string); typ != "at+jwt" {
+			return nil, fmt.Errorf("unexpected token type: %v", t.Header["typ"])
 		}
 		return signingKey, nil
 	})
@@ -134,8 +139,8 @@ func Parse(raw string, signingKey []byte) (*Claims, error) {
 
 // ParseWithAudience parses and validates a raw JWT, additionally verifying that
 // the aud claim contains the expected audience value. Returns ErrTokenInvalid when
-// the audience is absent or does not match. Use this in resource servers that need
-// to enforce RFC 9068 §2.2 audience binding.
+// the audience is absent or does not match. Enforces typ:"at+jwt" (RFC 9068 §2.1).
+// Use this in resource servers that need to enforce RFC 9068 §2.2 audience binding.
 func ParseWithAudience(raw string, signingKey []byte, audience string) (*Claims, error) {
 	if len(signingKey) == 0 {
 		return nil, fmt.Errorf("parsing token: %w", ErrTokenInvalid)
@@ -144,8 +149,41 @@ func ParseWithAudience(raw string, signingKey []byte, audience string) (*Claims,
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
+		if typ, _ := t.Header["typ"].(string); typ != "at+jwt" {
+			return nil, fmt.Errorf("unexpected token type: %v", t.Header["typ"])
+		}
 		return signingKey, nil
 	}, jwt.WithAudience(audience))
+	if err != nil {
+		return nil, mapJWTError(err)
+	}
+
+	claims, ok := token.Claims.(*Claims)
+	if !ok || !token.Valid {
+		return nil, fmt.Errorf("parsing token: %w", ErrTokenInvalid)
+	}
+
+	return claims, nil
+}
+
+// ParseWithIssuer parses and validates a raw JWT, additionally verifying that
+// the iss claim matches the expected issuer value. Returns ErrTokenInvalid when
+// the issuer is absent or does not match. Enforces typ:"at+jwt" (RFC 9068 §2.1).
+// Use this in services that need RFC 8725 §3.8 issuer binding to prevent
+// tokens from one issuer being accepted by services expecting another.
+func ParseWithIssuer(raw string, signingKey []byte, issuer string) (*Claims, error) {
+	if len(signingKey) == 0 {
+		return nil, fmt.Errorf("parsing token: %w", ErrTokenInvalid)
+	}
+	token, err := jwt.ParseWithClaims(raw, &Claims{}, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		if typ, _ := t.Header["typ"].(string); typ != "at+jwt" {
+			return nil, fmt.Errorf("unexpected token type: %v", t.Header["typ"])
+		}
+		return signingKey, nil
+	}, jwt.WithIssuer(issuer))
 	if err != nil {
 		return nil, mapJWTError(err)
 	}
