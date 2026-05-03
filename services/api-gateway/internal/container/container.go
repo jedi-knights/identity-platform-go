@@ -189,7 +189,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*Conta
 // cfg.Auth.Type. Strategy pattern: the container selects the concrete algorithm
 // (HS256 or JWKS/RS256) so the inbound middleware never knows which is active.
 //
-// "jwks"  — RS256; keyfunc fetches and refreshes keys from cfg.Auth.JWKSUrl.
+// "jwks"  — RS256; keyfunc fetches and refreshes keys from cfg.Auth.JWKSURL.
 //
 //	ctx controls the background refresh goroutine lifetime.
 //
