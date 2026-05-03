@@ -98,7 +98,12 @@ func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handl
 // RequireScopeMiddleware enforces that the token has the required scope (Chain of Responsibility).
 // Returns 401 (not 403) when scopes are absent from context — this indicates the auth middleware
 // did not run or the token was missing, which is an authentication failure, not an authorization one.
+// Panics if requiredScope is empty — an empty scope matches nothing a real token carries and
+// indicates a wiring mistake, not a runtime condition.
 func RequireScopeMiddleware(requiredScope string) func(http.Handler) http.Handler {
+	if requiredScope == "" {
+		panic("RequireScopeMiddleware: requiredScope must not be empty")
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			scopes, ok := r.Context().Value(contextKeyScopes).([]string)
@@ -134,6 +139,9 @@ func RequireScopeMiddleware(requiredScope string) func(http.Handler) http.Handle
 func extractBearer(w http.ResponseWriter, r *http.Request) (string, bool) {
 	authHeader := r.Header.Get("Authorization")
 	// First check: missing header or wrong scheme (e.g. "Token xyz").
+	// The scheme match is intentionally case-sensitive ("Bearer", not "bearer").
+	// RFC 7235 permits case-insensitive schemes, but strict uppercase-B matching
+	// is simpler and all major OAuth2 clients send the canonical form.
 	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service"`)
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "missing or invalid authorization header"))
