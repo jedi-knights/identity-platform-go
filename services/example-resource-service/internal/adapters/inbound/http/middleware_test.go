@@ -10,9 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
+	"github.com/ocrosby/identity-platform-go/libs/jwtutil"
 	"github.com/ocrosby/identity-platform-go/libs/testutil"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/ports"
 )
@@ -39,13 +38,12 @@ func okHandler(t *testing.T, called *bool) http.Handler {
 	})
 }
 
-// signHS256 creates a minimal HS256-signed JWT with the given claims.
+// signHS256 creates a minimal HS256-signed JWT from cfg.
 // ExpiresAt is optional — omitting it produces a non-expiring token, which is
 // fine for tests that are not checking expiry behaviour.
-func signHS256(t *testing.T, key []byte, claims jwtClaims) string {
+func signHS256(t *testing.T, key []byte, cfg jwtutil.ClaimsConfig) string {
 	t.Helper()
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, &claims)
-	raw, err := tok.SignedString(key)
+	raw, err := jwtutil.Sign(jwtutil.NewClaims(cfg), key)
 	if err != nil {
 		t.Fatalf("signing test token: %v", err)
 	}
@@ -279,15 +277,12 @@ func TestIntrospectionAuthMiddleware_PropagatesContextValues(t *testing.T) {
 func TestJWTAuthMiddleware_ValidToken_CallsNext(t *testing.T) {
 	// Arrange
 	key := []byte("test-signing-key")
-	claims := jwtClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   "user-1",
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-		},
-		ClientID: "c1",
-		Scope:    "read write",
-	}
-	raw := signHS256(t, key, claims)
+	raw := signHS256(t, key, jwtutil.ClaimsConfig{
+		Subject:   "user-1",
+		ExpiresAt: time.Now().Add(time.Hour),
+		ClientID:  "c1",
+		Scope:     "read write",
+	})
 	var called bool
 	mw := JWTAuthMiddleware(key, testutil.NewTestLogger())
 	w := httptest.NewRecorder()
@@ -307,13 +302,10 @@ func TestJWTAuthMiddleware_ValidToken_CallsNext(t *testing.T) {
 func TestJWTAuthMiddleware_ExpiredToken_Returns401(t *testing.T) {
 	// Arrange
 	key := []byte("test-signing-key")
-	claims := jwtClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   "user-1",
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Hour)), // expired
-		},
-	}
-	raw := signHS256(t, key, claims)
+	raw := signHS256(t, key, jwtutil.ClaimsConfig{
+		Subject:   "user-1",
+		ExpiresAt: time.Now().Add(-time.Hour), // expired
+	})
 	var called bool
 	mw := JWTAuthMiddleware(key, testutil.NewTestLogger())
 	w := httptest.NewRecorder()
@@ -335,13 +327,10 @@ func TestJWTAuthMiddleware_ExpiredToken_Returns401(t *testing.T) {
 
 func TestJWTAuthMiddleware_WrongSigningKey_Returns401(t *testing.T) {
 	// Arrange
-	claims := jwtClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   "user-1",
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-		},
-	}
-	raw := signHS256(t, []byte("different-key"), claims)
+	raw := signHS256(t, []byte("different-key"), jwtutil.ClaimsConfig{
+		Subject:   "user-1",
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
 	var called bool
 	mw := JWTAuthMiddleware([]byte("actual-key"), testutil.NewTestLogger())
 	w := httptest.NewRecorder()
@@ -401,16 +390,13 @@ func TestJWTAuthMiddleware_MissingAuthHeader_Returns401(t *testing.T) {
 func TestJWTAuthMiddleware_PropagatesContextValues(t *testing.T) {
 	// Arrange
 	key := []byte("test-signing-key")
-	claims := jwtClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   "user-42",
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-		},
+	raw := signHS256(t, key, jwtutil.ClaimsConfig{
+		Subject:     "user-42",
+		ExpiresAt:   time.Now().Add(time.Hour),
 		ClientID:    "client-42",
 		Scope:       "read",
 		Permissions: []string{"resources:read"},
-	}
-	raw := signHS256(t, key, claims)
+	})
 	var (
 		gotSubject  string
 		gotClientID string
