@@ -626,23 +626,23 @@ When a library is released, every module that depends on it is also released in 
 
 **Library dependency chain**
 
-All four support libraries share `errors` as their foundation:
+`errors` and `logging` are standalone foundations. `httputil` sits above both; `testutil` sits above `logging`. `jwtutil` is fully standalone — it wraps `github.com/golang-jwt/jwt/v5` and uses only the stdlib `errors` package.
 
 ```mermaid
 graph LR
     httputil["libs/httputil"] --> errors["libs/errors"]
-    logging["libs/logging"]   --> errors
-    jwtutil["libs/jwtutil"]   --> errors
-    testutil["libs/testutil"] --> errors
+    httputil               --> logging["libs/logging"]
+    testutil["libs/testutil"] --> logging
+    jwtutil["libs/jwtutil"]
 ```
 
 **Service → library dependencies**
 
-Every service depends on `httputil` and `logging` as a baseline. Additional dependencies are listed below:
+Every service depends on `errors`, `httputil`, and `logging` as a baseline. Additional dependencies are listed below:
 
 | Service | Additional libraries |
 |---|---|
-| api-gateway | — |
+| api-gateway | `jwtutil` |
 | auth-server | `jwtutil` |
 | authorization-policy-service | — |
 | client-registry-service | — |
@@ -650,7 +650,7 @@ Every service depends on `httputil` and `logging` as a baseline. Additional depe
 | identity-service | — |
 | token-introspection-service | `jwtutil` |
 
-A change to `errors` cascades through every library and then every service. A change to `jwtutil` affects only `auth-server` and `token-introspection-service`.
+A change to `logging` cascades through `httputil`, `testutil`, and then every service. A change to `errors` cascades through `httputil` and then every service. A change to `jwtutil` affects only `api-gateway`, `auth-server`, and `token-introspection-service`.
 
 ### Tag Format
 
