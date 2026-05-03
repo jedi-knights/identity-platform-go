@@ -77,40 +77,51 @@ func decodeOAuthError(t *testing.T, w *httptest.ResponseRecorder) map[string]str
 
 // --- Token endpoint ---
 
-func TestToken_MissingGrantType_Returns400(t *testing.T) {
-	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
-	w := postForm(t, h.Token, url.Values{
-		"client_id":     {"c1"},
-		"client_secret": {"s1"},
-	})
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+func TestToken_MissingRequiredField_Returns400(t *testing.T) {
+	tests := []struct {
+		name   string
+		values url.Values
+	}{
+		{
+			name: "missing grant_type",
+			values: url.Values{
+				"client_id":     {"c1"},
+				"client_secret": {"s1"},
+			},
+		},
+		{
+			name: "missing client_id",
+			values: url.Values{
+				"grant_type":    {"client_credentials"},
+				"client_secret": {"s1"},
+			},
+		},
+		{
+			name: "missing client_secret",
+			values: url.Values{
+				"grant_type": {"client_credentials"},
+				"client_id":  {"c1"},
+			},
+		},
 	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
 
-func TestToken_MissingClientID_Returns400(t *testing.T) {
-	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
-	w := postForm(t, h.Token, url.Values{
-		"grant_type":    {"client_credentials"},
-		"client_secret": {"s1"},
-	})
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
-	}
-}
+			// Act
+			w := postForm(t, h.Token, tt.values)
 
-func TestToken_MissingClientSecret_Returns400(t *testing.T) {
-	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
-	w := postForm(t, h.Token, url.Values{
-		"grant_type": {"client_credentials"},
-		"client_id":  {"c1"},
-	})
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+			// Assert
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+			}
+		})
 	}
 }
 
 func TestToken_SuccessfulIssuance_Returns200WithAccessToken(t *testing.T) {
+	// Arrange
 	issuer := &fakeIssuer{resp: &domain.GrantResponse{
 		AccessToken: "tok.abc",
 		TokenType:   "bearer",
@@ -118,12 +129,16 @@ func TestToken_SuccessfulIssuance_Returns200WithAccessToken(t *testing.T) {
 		Scope:       "read write",
 	}}
 	h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
 	w := postForm(t, h.Token, url.Values{
 		"grant_type":    {"client_credentials"},
 		"client_id":     {"c1"},
 		"client_secret": {"s1"},
 		"scope":         {"read write"},
 	})
+
+	// Assert
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d — body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
@@ -137,13 +152,18 @@ func TestToken_SuccessfulIssuance_Returns200WithAccessToken(t *testing.T) {
 }
 
 func TestToken_UnsupportedGrantType_Returns400WithOAuthError(t *testing.T) {
+	// Arrange
 	issuer := &fakeIssuer{err: application.ErrUnsupportedGrantType}
 	h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
 	w := postForm(t, h.Token, url.Values{
 		"grant_type":    {"custom_grant"},
 		"client_id":     {"c1"},
 		"client_secret": {"s1"},
 	})
+
+	// Assert
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
@@ -155,13 +175,19 @@ func TestToken_UnsupportedGrantType_Returns400WithOAuthError(t *testing.T) {
 
 func TestToken_UnauthorizedError_Returns401WithWWWAuthenticate(t *testing.T) {
 	// RFC 6749 §5.2: invalid_client must be 401 with WWW-Authenticate.
+
+	// Arrange
 	issuer := &fakeIssuer{err: apperrors.New(apperrors.ErrCodeUnauthorized, "bad credentials")}
 	h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
 	w := postForm(t, h.Token, url.Values{
 		"grant_type":    {"client_credentials"},
 		"client_id":     {"c1"},
 		"client_secret": {"bad"},
 	})
+
+	// Assert
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
@@ -176,16 +202,22 @@ func TestToken_UnauthorizedError_Returns401WithWWWAuthenticate(t *testing.T) {
 
 func TestToken_ForbiddenError_Returns400WithInvalidScope(t *testing.T) {
 	// RFC 6749 §5.2: invalid_scope must use HTTP 400, not 403.
+
+	// Arrange
 	issuer := &fakeIssuer{err: apperrors.New(apperrors.ErrCodeForbidden, "scope not permitted")}
 	h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
 	w := postForm(t, h.Token, url.Values{
 		"grant_type":    {"client_credentials"},
 		"client_id":     {"c1"},
 		"client_secret": {"s1"},
 		"scope":         {"admin"},
 	})
+
+	// Assert
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d (RFC 6749 §5.2: invalid_scope is 400)", w.Code, http.StatusBadRequest)
+		t.Errorf("status = %d (RFC 6749 §5.2: invalid_scope is 400), want %d", w.Code, http.StatusBadRequest)
 	}
 	body := decodeOAuthError(t, w)
 	if body["error"] != "invalid_scope" {
@@ -194,13 +226,18 @@ func TestToken_ForbiddenError_Returns400WithInvalidScope(t *testing.T) {
 }
 
 func TestToken_InternalError_Returns500WithServerError(t *testing.T) {
+	// Arrange
 	issuer := &fakeIssuer{err: errors.New("unexpected db failure")}
 	h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
 	w := postForm(t, h.Token, url.Values{
 		"grant_type":    {"client_credentials"},
 		"client_id":     {"c1"},
 		"client_secret": {"s1"},
 	})
+
+	// Assert
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
 	}
@@ -210,59 +247,81 @@ func TestToken_InternalError_Returns500WithServerError(t *testing.T) {
 	}
 }
 
-func TestToken_CacheControlNoStore_OnErrorResponse(t *testing.T) {
+func TestToken_CacheControlNoStore(t *testing.T) {
 	// RFC 6749 §5.1 requires Cache-Control: no-store on all token endpoint responses.
-	issuer := &fakeIssuer{err: application.ErrUnsupportedGrantType}
-	h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
-	w := postForm(t, h.Token, url.Values{
-		"grant_type":    {"bad_grant"},
-		"client_id":     {"c1"},
-		"client_secret": {"s1"},
-	})
-	if got := w.Header().Get("Cache-Control"); got != "no-store" {
-		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
-	}
-}
 
-func TestToken_CacheControlNoStore_OnSuccessResponse(t *testing.T) {
-	// RFC 6749 §5.1: Cache-Control: no-store must be set on success responses too.
-	issuer := &fakeIssuer{resp: &domain.GrantResponse{
-		AccessToken: "tok.success",
-		TokenType:   "bearer",
-		ExpiresIn:   3600,
-	}}
-	h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
-	w := postForm(t, h.Token, url.Values{
-		"grant_type":    {"client_credentials"},
-		"client_id":     {"c1"},
-		"client_secret": {"s1"},
+	t.Run("error response", func(t *testing.T) {
+		// Arrange
+		issuer := &fakeIssuer{err: application.ErrUnsupportedGrantType}
+		h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
+
+		// Act
+		w := postForm(t, h.Token, url.Values{
+			"grant_type":    {"bad_grant"},
+			"client_id":     {"c1"},
+			"client_secret": {"s1"},
+		})
+
+		// Assert
+		if got := w.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("Cache-Control = %q, want %q", got, "no-store")
+		}
 	})
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
-	}
-	if got := w.Header().Get("Cache-Control"); got != "no-store" {
-		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
-	}
+
+	t.Run("success response", func(t *testing.T) {
+		// Arrange
+		issuer := &fakeIssuer{resp: &domain.GrantResponse{
+			AccessToken: "tok.success",
+			TokenType:   "bearer",
+			ExpiresIn:   3600,
+		}}
+		h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
+
+		// Act
+		w := postForm(t, h.Token, url.Values{
+			"grant_type":    {"client_credentials"},
+			"client_id":     {"c1"},
+			"client_secret": {"s1"},
+		})
+
+		// Assert
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+		if got := w.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("Cache-Control = %q, want %q", got, "no-store")
+		}
+	})
 }
 
 // --- Introspect endpoint ---
 
 func TestIntrospect_MissingToken_Returns400(t *testing.T) {
+	// Arrange
 	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
 	w := postForm(t, h.Introspect, url.Values{})
+
+	// Assert
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
 
 func TestIntrospect_ActiveToken_Returns200(t *testing.T) {
+	// Arrange
 	introspector := &fakeIntrospector{resp: &domain.IntrospectResponse{
 		Active:   true,
 		ClientID: "c1",
 		Subject:  "user-1",
 	}}
 	h := newTestHandler(t, &fakeIssuer{}, introspector, &fakeRevoker{})
+
+	// Act
 	w := postForm(t, h.Introspect, url.Values{"token": {"some.jwt.token"}})
+
+	// Assert
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d — body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
@@ -279,36 +338,111 @@ func TestIntrospect_ActiveToken_Returns200(t *testing.T) {
 }
 
 func TestIntrospect_InactiveToken_Returns200WithActiveFalse(t *testing.T) {
+	// Arrange
 	introspector := &fakeIntrospector{resp: &domain.IntrospectResponse{Active: false}}
 	h := newTestHandler(t, &fakeIssuer{}, introspector, &fakeRevoker{})
+
+	// Act
 	w := postForm(t, h.Introspect, url.Values{"token": {"expired.jwt"}})
+
+	// Assert
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
 
-func TestIntrospect_ServiceError_Returns500(t *testing.T) {
+func TestIntrospect_ServiceError_Returns200Inactive(t *testing.T) {
+	// RFC 7662 §2.2: infrastructure errors must return 200 with {"active": false},
+	// never a non-200 status. A non-200 could be misinterpreted by resource servers
+	// as "service unavailable, allow through" instead of "token invalid, deny".
+
+	// Arrange
 	introspector := &fakeIntrospector{err: errors.New("store unavailable")}
 	h := newTestHandler(t, &fakeIssuer{}, introspector, &fakeRevoker{})
+
+	// Act
 	w := postForm(t, h.Introspect, url.Values{"token": {"some.jwt.token"}})
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+
+	// Assert
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
 	}
+	var resp domain.IntrospectResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decoding response body: %v", err)
+	}
+	if resp.Active {
+		t.Error("active = true, want false on infrastructure error")
+	}
+}
+
+func TestIntrospect_CacheControlNoStore(t *testing.T) {
+	// RFC 7662 §2.4: introspection responses must not be cached.
+
+	t.Run("infrastructure error path", func(t *testing.T) {
+		// Arrange
+		h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{err: errors.New("store down")}, &fakeRevoker{})
+
+		// Act
+		w := postForm(t, h.Introspect, url.Values{"token": {"tok"}})
+
+		// Assert
+		if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("Cache-Control = %q, want %q", cc, "no-store")
+		}
+	})
+
+	t.Run("success path", func(t *testing.T) {
+		// Arrange
+		intro := &fakeIntrospector{resp: &domain.IntrospectResponse{Active: true}}
+		h := newTestHandler(t, &fakeIssuer{}, intro, &fakeRevoker{})
+
+		// Act
+		w := postForm(t, h.Introspect, url.Values{"token": {"tok"}})
+
+		// Assert
+		if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("Cache-Control = %q, want %q", cc, "no-store")
+		}
+	})
+
+	t.Run("missing token 400 path", func(t *testing.T) {
+		// Arrange
+		h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
+
+		// Act
+		w := postForm(t, h.Introspect, url.Values{})
+
+		// Assert
+		if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("Cache-Control = %q, want %q", cc, "no-store")
+		}
+	})
 }
 
 // --- Revoke endpoint ---
 
 func TestRevoke_MissingToken_Returns400(t *testing.T) {
+	// Arrange
 	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
 	w := postForm(t, h.Revoke, url.Values{})
+
+	// Assert
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
 
 func TestRevoke_SuccessfulRevocation_Returns200(t *testing.T) {
+	// Arrange
 	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
 	w := postForm(t, h.Revoke, url.Values{"token": {"tok.abc"}})
+
+	// Assert
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
@@ -316,18 +450,29 @@ func TestRevoke_SuccessfulRevocation_Returns200(t *testing.T) {
 
 func TestRevoke_TokenNotFound_Returns200Idempotent(t *testing.T) {
 	// RFC 7009 §2.2: revoking a non-existent or already-revoked token must return 200.
+
+	// Arrange
 	revoker := &fakeRevoker{err: apperrors.New(apperrors.ErrCodeNotFound, "token not found")}
 	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, revoker)
+
+	// Act
 	w := postForm(t, h.Revoke, url.Values{"token": {"already-revoked.tok"}})
+
+	// Assert
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d (RFC 7009 requires 200 for already-revoked token)", w.Code, http.StatusOK)
 	}
 }
 
 func TestRevoke_InfrastructureError_Returns500(t *testing.T) {
+	// Arrange
 	revoker := &fakeRevoker{err: errors.New("redis connection refused")}
 	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, revoker)
+
+	// Act
 	w := postForm(t, h.Revoke, url.Values{"token": {"tok.abc"}})
+
+	// Assert
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
 	}
@@ -336,10 +481,15 @@ func TestRevoke_InfrastructureError_Returns500(t *testing.T) {
 // --- Authorize endpoint ---
 
 func TestAuthorize_ReturnsNotImplemented(t *testing.T) {
+	// Arrange
 	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
 	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize", nil)
 	w := httptest.NewRecorder()
+
+	// Act
 	h.Authorize(w, r)
+
+	// Assert
 	if w.Code != http.StatusNotImplemented {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusNotImplemented)
 	}
@@ -348,10 +498,15 @@ func TestAuthorize_ReturnsNotImplemented(t *testing.T) {
 // --- Health endpoint ---
 
 func TestHealth_Returns200WithStatusOK(t *testing.T) {
+	// Arrange
 	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
 	r := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
+
+	// Act
 	h.Health(w, r)
+
+	// Assert
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}

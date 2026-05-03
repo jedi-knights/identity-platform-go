@@ -37,13 +37,17 @@ func NewHandler(
 	}
 }
 
+// oauthErrorCode is an RFC 6749 §5.2 error code sent in the "error" field.
+// A named type prevents silent transposition with the description parameter.
+type oauthErrorCode string
+
 // writeOAuthError writes an RFC 6749-compliant JSON error response.
-func writeOAuthError(w http.ResponseWriter, logger logging.Logger, code string, description string, httpStatus int) {
+func writeOAuthError(w http.ResponseWriter, logger logging.Logger, code oauthErrorCode, description string, httpStatus int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(httpStatus)
 	if err := json.NewEncoder(w).Encode(map[string]string{
-		"error":             code,
+		"error":             string(code),
 		"error_description": description,
 	}); err != nil {
 		logger.Error("failed to encode oauth error", "error", err)
@@ -130,7 +134,7 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request) (domain.GrantRequ
 // writeTokenError maps an application error to an RFC 6749-compliant OAuth2 error response.
 func writeTokenError(w http.ResponseWriter, logger logging.Logger, err error) {
 	if errors.Is(err, application.ErrUnsupportedGrantType) {
-		writeOAuthError(w, logger, "unsupported_grant_type", err.Error(), http.StatusBadRequest)
+		writeOAuthError(w, logger, "unsupported_grant_type", "grant type not supported", http.StatusBadRequest)
 		return
 	}
 	if apperrors.IsUnauthorized(err) {
@@ -169,27 +173,33 @@ func (h *Handler) Authorize(w http.ResponseWriter, _ *http.Request) {
 // @Param        token  formData  string  true  "Token to introspect"
 // @Success      200  {object}  domain.IntrospectResponse
 // @Failure      400  {object}  httputil.ErrorResponse
-// @Failure      500  {object}  httputil.ErrorResponse
 // @Router       /oauth/introspect [post]
 func (h *Handler) Introspect(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
+		w.Header().Set("Cache-Control", "no-store")
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid form data"))
 		return
 	}
 
 	token := r.FormValue("token")
 	if token == "" {
+		w.Header().Set("Cache-Control", "no-store")
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "token is required"))
 		return
 	}
 
 	resp, err := h.introspector.Introspect(r.Context(), token)
 	if err != nil {
-		h.logger.Error("introspection failed", "error", err.Error())
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeInternal, "introspection failed"))
+		// RFC 7662 §2.2: infrastructure errors must not produce a non-200 response.
+		// Resource servers may interpret non-200 as "allow through"; returning
+		// {"active": false} is the safe, spec-compliant failure mode.
+		logging.WithTraceFromContext(r.Context(), h.logger).Error("introspection failed", "error", err.Error())
+		w.Header().Set("Cache-Control", "no-store")
+		httputil.WriteJSON(w, http.StatusOK, domain.IntrospectResponse{Active: false})
 		return
 	}
 
+	w.Header().Set("Cache-Control", "no-store")
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -243,6 +253,8 @@ func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {
 }
 
 // tokenIssuerAdapter adapts the grant registry to the TokenIssuer port.
+// The indirection keeps the HTTP handler decoupled from the concrete registry type —
+// handler tests can stub IssueToken without wiring a full GrantStrategyRegistry.
 type tokenIssuerAdapter struct {
 	registry *application.GrantStrategyRegistry
 }
@@ -268,6 +280,8 @@ type revokerSvc interface {
 }
 
 // tokenIntrospectorAdapter adapts any introspectorSvc to the TokenIntrospector port.
+// Using the narrow introspectorSvc interface (defined here, not in application/) avoids
+// importing the concrete TokenService type into this adapter layer.
 type tokenIntrospectorAdapter struct {
 	svc introspectorSvc
 }
@@ -281,6 +295,7 @@ func (a *tokenIntrospectorAdapter) Introspect(ctx context.Context, raw string) (
 }
 
 // tokenRevokerAdapter adapts any revokerSvc to the TokenRevoker port.
+// Same decoupling rationale as tokenIntrospectorAdapter — see revokerSvc above.
 type tokenRevokerAdapter struct {
 	svc revokerSvc
 }
