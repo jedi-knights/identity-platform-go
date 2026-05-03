@@ -24,6 +24,7 @@ type Container struct {
 	Handler       *inboundhttp.Handler
 	Config        *config.Config
 	SigningKey    []byte
+	Audience      string
 	Introspector  ports.TokenIntrospector
 	PolicyChecker ports.PolicyChecker
 	closer        func()
@@ -61,7 +62,7 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 	var introspector ports.TokenIntrospector
 	if cfg.Introspection.URL != "" {
 		logger.Info("using remote token-introspection-service", "url", cfg.Introspection.URL)
-		introspector = introspection.NewClient(cfg.Introspection.URL, &http.Client{Timeout: 5 * time.Second})
+		introspector = introspection.NewClient(cfg.Introspection.URL, &http.Client{Timeout: 5 * time.Second}, cfg.Introspection.Secret)
 	} else {
 		logger.Info("using local JWT validation (RESOURCE_INTROSPECTION_URL not set); revoked tokens will not be rejected until expiry")
 	}
@@ -81,6 +82,7 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 		Handler:       handler,
 		Config:        cfg,
 		SigningKey:    []byte(cfg.JWT.SigningKey),
+		Audience:      cfg.JWT.Audience,
 		Introspector:  introspector,
 		PolicyChecker: policyChecker,
 		closer:        closer,

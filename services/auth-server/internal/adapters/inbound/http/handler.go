@@ -2,10 +2,13 @@ package http
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
@@ -20,20 +23,31 @@ type Handler struct {
 	issuer       ports.TokenIssuer
 	introspector ports.TokenIntrospector
 	revoker      ports.TokenRevoker
+	clientAuth   ports.ClientAuthenticator
 	logger       logging.Logger
+	// introspectionSecret is a pre-shared secret for the /oauth/introspect endpoint.
+	// When non-empty, callers must supply Authorization: Bearer <secret>.
+	// When empty, callers must authenticate with client credentials.
+	introspectionSecret string
+	rateLimiter         *fixedWindowLimiter
 }
 
 func NewHandler(
 	issuer ports.TokenIssuer,
 	introspector ports.TokenIntrospector,
 	revoker ports.TokenRevoker,
+	clientAuth ports.ClientAuthenticator,
 	logger logging.Logger,
+	introspectionSecret string,
 ) *Handler {
 	return &Handler{
-		issuer:       issuer,
-		introspector: introspector,
-		revoker:      revoker,
-		logger:       logger,
+		issuer:              issuer,
+		introspector:        introspector,
+		revoker:             revoker,
+		clientAuth:          clientAuth,
+		logger:              logger,
+		introspectionSecret: introspectionSecret,
+		rateLimiter:         newFixedWindowLimiter(20, time.Minute),
 	}
 }
 
@@ -42,9 +56,11 @@ func NewHandler(
 type oauthErrorCode string
 
 // writeOAuthError writes an RFC 6749-compliant JSON error response.
+// Sets both Cache-Control: no-store and Pragma: no-cache per RFC 6749 §5.1.
 func writeOAuthError(w http.ResponseWriter, logger logging.Logger, code oauthErrorCode, description string, httpStatus int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(httpStatus)
 	if err := json.NewEncoder(w).Encode(map[string]string{
 		"error":             string(code),
@@ -72,13 +88,19 @@ func writeOAuthError(w http.ResponseWriter, logger logging.Logger, code oauthErr
 // @Failure      400  {object}  httputil.ErrorResponse
 // @Router       /oauth/token [post]
 func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	if err := r.ParseForm(); err != nil {
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid form data"))
+	// Per RFC 6819 §4.3.2: rate-limit by client IP to slow brute-force attacks.
+	if !h.rateLimiter.Allow(clientIP(r)) {
+		writeOAuthError(w, h.logger, "server_error", "too many requests", http.StatusTooManyRequests)
 		return
 	}
 
-	req, ok := parseGrantRequest(w, r)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := r.ParseForm(); err != nil {
+		writeOAuthError(w, h.logger, "invalid_request", "invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	req, ok := parseGrantRequest(w, r, h.logger)
 	if !ok {
 		return
 	}
@@ -91,32 +113,39 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
-// parseGrantRequest extracts and validates the OAuth2 token request fields from the form.
-// It writes an error response and returns false if any required field is missing.
-func parseGrantRequest(w http.ResponseWriter, r *http.Request) (domain.GrantRequest, bool) {
+// parseGrantRequest extracts and validates the OAuth2 token request fields.
+// Checks Authorization: Basic first per RFC 6749 §2.3.1, then falls back to
+// form body parameters. Writes an RFC 6749 §5.2 invalid_request error and
+// returns false if any required field is missing.
+func parseGrantRequest(w http.ResponseWriter, r *http.Request, logger logging.Logger) (domain.GrantRequest, bool) {
 	grantType := domain.GrantType(r.FormValue("grant_type"))
-	clientID := r.FormValue("client_id")
-	clientSecret := r.FormValue("client_secret")
-
 	if grantType == "" {
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "grant_type is required"))
+		writeOAuthError(w, logger, "invalid_request", "grant_type is required", http.StatusBadRequest)
 		return domain.GrantRequest{}, false
 	}
+
+	// RFC 6749 §2.3.1: clients SHOULD use HTTP Basic Auth; form body is a fallback.
+	clientID, clientSecret, ok := r.BasicAuth()
+	if !ok {
+		clientID = r.FormValue("client_id")
+		clientSecret = r.FormValue("client_secret")
+	}
+
 	if clientID == "" {
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "client_id is required"))
+		writeOAuthError(w, logger, "invalid_request", "client_id is required", http.StatusBadRequest)
 		return domain.GrantRequest{}, false
 	}
 	if clientSecret == "" {
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "client_secret is required"))
+		writeOAuthError(w, logger, "invalid_request", "client_secret is required", http.StatusBadRequest)
 		return domain.GrantRequest{}, false
 	}
 
 	var scopes []string
 	if scopeStr := r.FormValue("scope"); scopeStr != "" {
-		// strings.Fields handles multiple spaces and trims — safer than Split.
 		scopes = strings.Fields(scopeStr)
 	}
 
@@ -165,6 +194,10 @@ func (h *Handler) Authorize(w http.ResponseWriter, _ *http.Request) {
 
 // Introspect handles POST /oauth/introspect.
 //
+// RFC 7662 §2.1: callers must authenticate. This endpoint accepts either a
+// pre-shared bearer secret (Authorization: Bearer <secret>) or client credentials
+// (Authorization: Basic or form body), whichever is configured.
+//
 // @Summary      Introspect token
 // @Description  Validates and returns metadata for a token per RFC 7662
 // @Tags         oauth
@@ -175,16 +208,27 @@ func (h *Handler) Authorize(w http.ResponseWriter, _ *http.Request) {
 // @Failure      400  {object}  httputil.ErrorResponse
 // @Router       /oauth/introspect [post]
 func (h *Handler) Introspect(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := r.ParseForm(); err != nil {
+		// RFC 7662 §2.2: always return 200 with {"active": false} rather than a 4xx.
+		// A 4xx from introspection can be misread by resource servers as a transient
+		// error, causing them to allow the request through.
 		w.Header().Set("Cache-Control", "no-store")
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid form data"))
+		w.Header().Set("Pragma", "no-cache")
+		httputil.WriteJSON(w, http.StatusOK, domain.IntrospectResponse{Active: false})
+		return
+	}
+
+	if !h.authenticateIntrospectionCaller(w, r) {
 		return
 	}
 
 	token := r.FormValue("token")
 	if token == "" {
+		// RFC 7662 §2.2: a missing token cannot be active — return inactive rather than 400.
 		w.Header().Set("Cache-Control", "no-store")
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "token is required"))
+		w.Header().Set("Pragma", "no-cache")
+		httputil.WriteJSON(w, http.StatusOK, domain.IntrospectResponse{Active: false})
 		return
 	}
 
@@ -195,15 +239,64 @@ func (h *Handler) Introspect(w http.ResponseWriter, r *http.Request) {
 		// {"active": false} is the safe, spec-compliant failure mode.
 		logging.WithTraceFromContext(r.Context(), h.logger).Error("introspection failed", "error", err.Error())
 		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Pragma", "no-cache")
 		httputil.WriteJSON(w, http.StatusOK, domain.IntrospectResponse{Active: false})
 		return
 	}
 
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
+// authenticateIntrospectionCaller enforces RFC 7662 §2.1 caller authentication.
+// When introspectionSecret is set: require Authorization: Bearer <secret>.
+// Otherwise: require client credentials (Basic Auth or form body).
+// Returns false and writes a 401 if authentication fails.
+func (h *Handler) authenticateIntrospectionCaller(w http.ResponseWriter, r *http.Request) bool {
+	if h.introspectionSecret != "" {
+		return authenticateWithSecret(w, r, h.introspectionSecret, h.logger)
+	}
+	return h.authenticateClientCredentials(w, r)
+}
+
+// authenticateWithSecret validates Authorization: Bearer <secret>.
+// Returns false and writes a 401 WWW-Authenticate challenge if the header is absent or wrong.
+func authenticateWithSecret(w http.ResponseWriter, r *http.Request, secret string, logger logging.Logger) bool {
+	auth := r.Header.Get("Authorization")
+	token := strings.TrimPrefix(auth, "Bearer ")
+	if !strings.HasPrefix(auth, "Bearer ") || subtle.ConstantTimeCompare([]byte(token), []byte(secret)) != 1 {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="auth-server"`)
+		writeOAuthError(w, logger, "invalid_client", "invalid introspection secret", http.StatusUnauthorized)
+		return false
+	}
+	return true
+}
+
+// authenticateClientCredentials validates client credentials from Basic Auth or form body.
+// Returns false and writes a 401 WWW-Authenticate challenge if credentials are missing or invalid.
+func (h *Handler) authenticateClientCredentials(w http.ResponseWriter, r *http.Request) bool {
+	clientID, clientSecret, ok := r.BasicAuth()
+	if !ok {
+		clientID = r.FormValue("client_id")
+		clientSecret = r.FormValue("client_secret")
+	}
+	if clientID == "" || clientSecret == "" {
+		w.Header().Set("WWW-Authenticate", `Basic realm="auth-server"`)
+		writeOAuthError(w, h.logger, "invalid_client", "client authentication required", http.StatusUnauthorized)
+		return false
+	}
+	if _, err := h.clientAuth.Authenticate(r.Context(), clientID, clientSecret); err != nil {
+		w.Header().Set("WWW-Authenticate", `Basic realm="auth-server"`)
+		writeOAuthError(w, h.logger, "invalid_client", "client authentication failed", http.StatusUnauthorized)
+		return false
+	}
+	return true
+}
+
 // Revoke handles POST /oauth/revoke.
+//
+// RFC 7009 §2: callers must authenticate with client credentials.
 //
 // @Summary      Revoke token
 // @Description  Revokes a token per RFC 7009
@@ -215,14 +308,20 @@ func (h *Handler) Introspect(w http.ResponseWriter, r *http.Request) {
 // @Failure      400  {object}  httputil.ErrorResponse
 // @Router       /oauth/revoke [post]
 func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := r.ParseForm(); err != nil {
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid form data"))
+		writeOAuthError(w, h.logger, "invalid_request", "invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	// RFC 7009 §2: the revocation endpoint requires client authentication.
+	if !h.authenticateClientCredentials(w, r) {
 		return
 	}
 
 	token := r.FormValue("token")
 	if token == "" {
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "token is required"))
+		writeOAuthError(w, h.logger, "invalid_request", "token is required", http.StatusBadRequest)
 		return
 	}
 
@@ -231,12 +330,15 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 		// Return 500 for genuine infrastructure failures.
 		if !apperrors.IsNotFound(err) {
 			h.logger.Error("revocation failed", "error", err.Error())
-			httputil.WriteError(w, apperrors.New(apperrors.ErrCodeInternal, "revocation failed"))
+			writeOAuthError(w, h.logger, "server_error", "revocation failed", http.StatusInternalServerError)
 			return
 		}
 		// Token not found — treat as successful revocation per RFC 7009.
 	}
 
+	// Success path: all error paths above return early.
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -250,6 +352,68 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 // @Router       /health [get]
 func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {
 	httputil.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// clientIP extracts the request's remote IP for rate-limiting.
+// Strips the port if present.
+func clientIP(r *http.Request) string {
+	// Trust X-Forwarded-For only when deployed behind a known reverse proxy.
+	// For the reference implementation, use the direct connection IP.
+	ip := r.RemoteAddr
+	if i := strings.LastIndex(ip, ":"); i > 0 {
+		ip = ip[:i]
+	}
+	return ip
+}
+
+// fixedWindowLimiter is a per-key fixed-window rate limiter.
+// maxReqs requests are allowed per window; excess requests are rejected.
+// Expired entries are evicted lazily on each window reset to prevent
+// unbounded map growth under high cardinality of unique keys.
+// Thread-safe via sync.Mutex.
+type fixedWindowLimiter struct {
+	mu      sync.Mutex
+	buckets map[string]windowBucket
+	maxReqs int
+	window  time.Duration
+}
+
+type windowBucket struct {
+	count int
+	reset time.Time
+}
+
+func newFixedWindowLimiter(maxReqs int, window time.Duration) *fixedWindowLimiter {
+	return &fixedWindowLimiter{
+		buckets: make(map[string]windowBucket),
+		maxReqs: maxReqs,
+		window:  window,
+	}
+}
+
+// Allow reports whether a request from key is within the rate limit.
+func (l *fixedWindowLimiter) Allow(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := time.Now()
+	b, ok := l.buckets[key]
+	if !ok || now.After(b.reset) {
+		// Evict all expired entries lazily to prevent unbounded map growth.
+		for k, v := range l.buckets {
+			if now.After(v.reset) {
+				delete(l.buckets, k)
+			}
+		}
+		l.buckets[key] = windowBucket{count: 1, reset: now.Add(l.window)}
+		return true
+	}
+	if b.count >= l.maxReqs {
+		return false
+	}
+	b.count++
+	l.buckets[key] = b
+	return true
 }
 
 // tokenIssuerAdapter adapts the grant registry to the TokenIssuer port.

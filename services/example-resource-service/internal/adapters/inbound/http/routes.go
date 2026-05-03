@@ -16,7 +16,10 @@ import (
 // When introspector is non-nil, IntrospectionAuthMiddleware is used — tokens are
 // validated remotely and revocation is honoured. When nil, JWTAuthMiddleware is used
 // as a fallback for local dev without the full stack running.
-func NewRouter(h *Handler, logger logging.Logger, signingKey []byte, introspector ports.TokenIntrospector) http.Handler {
+//
+// audience is passed to JWTAuthMiddleware for local validation. When empty, audience
+// validation is skipped. Ignored when introspector is non-nil.
+func NewRouter(h *Handler, logger logging.Logger, signingKey []byte, audience string, introspector ports.TokenIntrospector) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", h.Health)
@@ -29,7 +32,7 @@ func NewRouter(h *Handler, logger logging.Logger, signingKey []byte, introspecto
 	if introspector != nil {
 		authMiddleware = IntrospectionAuthMiddleware(introspector, logger)
 	} else {
-		authMiddleware = JWTAuthMiddleware(signingKey, logger)
+		authMiddleware = JWTAuthMiddleware(signingKey, audience, logger)
 	}
 
 	mux.Handle("GET /resources", authMiddleware(
@@ -42,9 +45,11 @@ func NewRouter(h *Handler, logger logging.Logger, signingKey []byte, introspecto
 		RequireScopeMiddleware("write")(http.HandlerFunc(h.CreateResource)),
 	))
 
-	return httputil.RecoveryMiddleware(logger)(
-		httputil.LoggingMiddleware(logger)(
-			httputil.TraceIDMiddleware(mux),
+	// TraceIDMiddleware must be outermost so trace IDs are in context when
+	// LoggingMiddleware reads them (it captures ctx before calling next).
+	return httputil.TraceIDMiddleware(
+		httputil.RecoveryMiddleware(logger)(
+			httputil.LoggingMiddleware(logger)(mux),
 		),
 	)
 }

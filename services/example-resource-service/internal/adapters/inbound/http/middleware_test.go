@@ -59,80 +59,40 @@ func bearerRequest(t *testing.T, token string) *http.Request {
 
 // --- extractBearer ---
 
-func TestExtractBearer_MissingHeader_Returns401(t *testing.T) {
-	// Arrange
-	r := httptest.NewRequest(http.MethodGet, "/resources", nil) // no Authorization header
-	w := httptest.NewRecorder()
-
-	// Act
-	_, ok := extractBearer(w, r)
-
-	// Assert
-	if ok {
-		t.Error("extractBearer returned ok=true for missing header, want false")
+func TestExtractBearer_InvalidHeaders_Return401(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+	}{
+		{name: "missing header", header: ""},
+		{name: "wrong scheme", header: "Token xyz"},
+		{name: "whitespace-only token", header: "Bearer   "},
+		{name: "empty token", header: "Bearer "},
 	}
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
-	}
-	if w.Header().Get("WWW-Authenticate") == "" {
-		t.Error("expected WWW-Authenticate header on 401")
-	}
-}
 
-func TestExtractBearer_MalformedHeader_Returns401(t *testing.T) {
-	// Arrange
-	// "Token xyz" is not a valid Bearer header.
-	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
-	r.Header.Set("Authorization", "Token xyz")
-	w := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			r := httptest.NewRequest(http.MethodGet, "/resources", nil)
+			if tt.header != "" {
+				r.Header.Set("Authorization", tt.header)
+			}
+			w := httptest.NewRecorder()
 
-	// Act
-	_, ok := extractBearer(w, r)
+			// Act
+			_, ok := extractBearer(w, r)
 
-	// Assert
-	if ok {
-		t.Error("extractBearer returned ok=true for wrong scheme, want false")
-	}
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
-	}
-}
-
-func TestExtractBearer_WhitespaceOnlyToken_Returns401(t *testing.T) {
-	// Arrange
-	// "Bearer   " (spaces after "Bearer ") must be rejected, not forwarded as a token.
-	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
-	r.Header.Set("Authorization", "Bearer   ")
-	w := httptest.NewRecorder()
-
-	// Act
-	_, ok := extractBearer(w, r)
-
-	// Assert
-	if ok {
-		t.Error("extractBearer returned ok=true for whitespace-only token, want false")
-	}
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
-	}
-}
-
-func TestExtractBearer_EmptyToken_Returns401(t *testing.T) {
-	// Arrange
-	// "Bearer " with nothing after it is not a valid token.
-	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
-	r.Header.Set("Authorization", "Bearer ")
-	w := httptest.NewRecorder()
-
-	// Act
-	_, ok := extractBearer(w, r)
-
-	// Assert
-	if ok {
-		t.Error("extractBearer returned ok=true for empty token, want false")
-	}
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+			// Assert
+			if ok {
+				t.Error("extractBearer returned ok=true, want false")
+			}
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+			}
+			if w.Header().Get("WWW-Authenticate") == "" {
+				t.Error("expected WWW-Authenticate header on 401")
+			}
+		})
 	}
 }
 
@@ -284,7 +244,7 @@ func TestJWTAuthMiddleware_ValidToken_CallsNext(t *testing.T) {
 		Scope:     "read write",
 	})
 	var called bool
-	mw := JWTAuthMiddleware(key, testutil.NewTestLogger())
+	mw := JWTAuthMiddleware(key, "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -307,7 +267,7 @@ func TestJWTAuthMiddleware_ExpiredToken_Returns401(t *testing.T) {
 		ExpiresAt: time.Now().Add(-time.Hour), // expired
 	})
 	var called bool
-	mw := JWTAuthMiddleware(key, testutil.NewTestLogger())
+	mw := JWTAuthMiddleware(key, "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -332,7 +292,7 @@ func TestJWTAuthMiddleware_WrongSigningKey_Returns401(t *testing.T) {
 		ExpiresAt: time.Now().Add(time.Hour),
 	})
 	var called bool
-	mw := JWTAuthMiddleware([]byte("actual-key"), testutil.NewTestLogger())
+	mw := JWTAuthMiddleware([]byte("actual-key"), "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -353,7 +313,7 @@ func TestJWTAuthMiddleware_WrongSigningKey_Returns401(t *testing.T) {
 func TestJWTAuthMiddleware_MalformedToken_Returns401(t *testing.T) {
 	// Arrange
 	var called bool
-	mw := JWTAuthMiddleware([]byte("key"), testutil.NewTestLogger())
+	mw := JWTAuthMiddleware([]byte("key"), "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -371,7 +331,7 @@ func TestJWTAuthMiddleware_MalformedToken_Returns401(t *testing.T) {
 func TestJWTAuthMiddleware_MissingAuthHeader_Returns401(t *testing.T) {
 	// Arrange
 	var called bool
-	mw := JWTAuthMiddleware([]byte("key"), testutil.NewTestLogger())
+	mw := JWTAuthMiddleware([]byte("key"), "", testutil.NewTestLogger())
 	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
 	w := httptest.NewRecorder()
 
@@ -409,7 +369,7 @@ func TestJWTAuthMiddleware_PropagatesContextValues(t *testing.T) {
 		gotScopes, _ = r.Context().Value(contextKeyScopes).([]string)
 		gotPerms, _ = r.Context().Value(contextKeyPermissions).([]string)
 	})
-	mw := JWTAuthMiddleware(key, testutil.NewTestLogger())
+	mw := JWTAuthMiddleware(key, "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -496,26 +456,82 @@ func TestRequireScopeMiddleware_NoContextScopes_Returns401(t *testing.T) {
 	}
 }
 
-func TestRequireScopeMiddleware_EmptyRequiredScope_CallsNext(t *testing.T) {
+func TestRequireScopeMiddleware_EmptyRequiredScope_Panics(t *testing.T) {
+	// Arrange / Act / Assert
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected RequireScopeMiddleware(\"\") to panic, got nil")
+		}
+	}()
+	RequireScopeMiddleware("")
+}
+
+func TestRequireScopeMiddleware_ScopeAbsent_IncludesScopeInWWWAuthenticate(t *testing.T) {
+	// RFC 6750 §3.1: insufficient_scope WWW-Authenticate must include the required scope.
+
 	// Arrange
-	// RequireScopeMiddleware("") matches an empty string scope value in the context.
-	// A token whose scope string parses to [""] is unusual but possible (e.g. a scope
-	// value that is just spaces). This test documents the current behaviour: the empty
-	// string is treated as a valid scope name and "" == "" passes the check.
 	var called bool
-	mw := RequireScopeMiddleware("")
+	mw := RequireScopeMiddleware("read")
 	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
-	r = r.WithContext(context.WithValue(r.Context(), contextKeyScopes, []string{""}))
+	r = r.WithContext(context.WithValue(r.Context(), contextKeyScopes, []string{"write"}))
 	w := httptest.NewRecorder()
 
 	// Act
 	mw(okHandler(t, &called)).ServeHTTP(w, r)
 
 	// Assert
+	wwwAuth := w.Header().Get("WWW-Authenticate")
+	if !strings.Contains(wwwAuth, `scope="read"`) {
+		t.Errorf("WWW-Authenticate = %q, want it to contain scope=\"read\"", wwwAuth)
+	}
+}
+
+func TestJWTAuthMiddleware_WithAudience_ValidAudience_CallsNext(t *testing.T) {
+	// Arrange
+	key := []byte("test-signing-key")
+	raw := signHS256(t, key, jwtutil.ClaimsConfig{
+		Subject:   "user-1",
+		ExpiresAt: time.Now().Add(time.Hour),
+		Audience:  []string{"my-resource-service"},
+	})
+	var called bool
+	mw := JWTAuthMiddleware(key, "my-resource-service", testutil.NewTestLogger())
+	w := httptest.NewRecorder()
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, bearerRequest(t, raw))
+
+	// Assert
 	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+		t.Errorf("status = %d, want %d — body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
 	if !called {
-		t.Error("next handler was not called when empty scope matched empty required scope")
+		t.Error("next handler was not called for a token with matching audience")
+	}
+}
+
+func TestJWTAuthMiddleware_WithAudience_WrongAudience_Returns401(t *testing.T) {
+	// RFC 9700 §2.3: tokens must be validated against the expected audience.
+
+	// Arrange
+	key := []byte("test-signing-key")
+	raw := signHS256(t, key, jwtutil.ClaimsConfig{
+		Subject:   "user-1",
+		ExpiresAt: time.Now().Add(time.Hour),
+		Audience:  []string{"other-service"},
+	})
+	var called bool
+	mw := JWTAuthMiddleware(key, "my-resource-service", testutil.NewTestLogger())
+	w := httptest.NewRecorder()
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, bearerRequest(t, raw))
+
+	// Assert
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+	if called {
+		t.Error("next handler must not be called for a token with wrong audience")
 	}
 }

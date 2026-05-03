@@ -28,10 +28,15 @@ type TokenValidator interface {
 type JWTTokenGenerator struct {
 	signingKey []byte
 	issuer     string
+	audience   []string // RFC 9068 §2.2: resource server identifiers; empty = no aud claim
 }
 
-func NewJWTTokenGenerator(signingKey []byte, issuer string) *JWTTokenGenerator {
-	return &JWTTokenGenerator{signingKey: signingKey, issuer: issuer}
+func NewJWTTokenGenerator(signingKey []byte, issuer string, audience []string) *JWTTokenGenerator {
+	return &JWTTokenGenerator{
+		signingKey: signingKey,
+		issuer:     issuer,
+		audience:   append([]string(nil), audience...),
+	}
 }
 
 func (g *JWTTokenGenerator) Generate(_ context.Context, token *domain.Token) (string, error) {
@@ -41,6 +46,7 @@ func (g *JWTTokenGenerator) Generate(_ context.Context, token *domain.Token) (st
 		TokenID:     token.ID,
 		ClientID:    token.ClientID,
 		Scope:       strings.Join(token.Scopes, " "),
+		Audience:    g.audience,
 		Roles:       token.Roles,
 		Permissions: token.Permissions,
 		IssuedAt:    token.IssuedAt,
@@ -72,6 +78,7 @@ func (v *JWTTokenValidator) Validate(_ context.Context, raw string) (*domain.Tok
 		ID:        claims.ID,
 		ClientID:  claims.ClientID,
 		Subject:   claims.Subject,
+		Issuer:    claims.Issuer,
 		Scopes:    strings.Fields(claims.Scope),
 		ExpiresAt: claims.ExpiresAt.Time,
 		IssuedAt:  claims.IssuedAt.Time,
@@ -119,6 +126,7 @@ func (s *TokenService) Introspect(ctx context.Context, raw string) (*domain.Intr
 		Active:    true,
 		ClientID:  token.ClientID,
 		Subject:   token.Subject,
+		Issuer:    token.Issuer,
 		Scope:     scopeStr,
 		ExpiresAt: token.ExpiresAt.Unix(),
 		IssuedAt:  token.IssuedAt.Unix(),

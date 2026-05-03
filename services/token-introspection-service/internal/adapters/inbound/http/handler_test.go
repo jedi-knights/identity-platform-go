@@ -99,7 +99,7 @@ func TestIntrospect_RFC7662_AlwaysHTTP200(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := inboundhttp.NewHandler(tc.introspector, testutil.NewTestLogger())
+			h := inboundhttp.NewHandler(tc.introspector, testutil.NewTestLogger(), "")
 			rr := postToken(t, h, tc.token)
 
 			if rr.Code != http.StatusOK {
@@ -120,7 +120,7 @@ func TestIntrospect_RFC7662_AlwaysHTTP200(t *testing.T) {
 // the 1 MiB limit triggers ParseForm failure, which must still return 200 {active:false}
 // per RFC 7662 §2.2 — the caller cannot distinguish a bad request from an invalid token.
 func TestIntrospect_OversizedBody_ReturnsInactive(t *testing.T) {
-	h := inboundhttp.NewHandler(&fakeIntrospector{result: &domain.IntrospectionResult{Active: false}}, testutil.NewTestLogger())
+	h := inboundhttp.NewHandler(&fakeIntrospector{result: &domain.IntrospectionResult{Active: false}}, testutil.NewTestLogger(), "")
 
 	// Build a body just over 1 MiB.
 	body := strings.Repeat("x", 1<<20+1)
@@ -139,12 +139,111 @@ func TestIntrospect_OversizedBody_ReturnsInactive(t *testing.T) {
 }
 
 func TestHealth_Returns200(t *testing.T) {
-	h := inboundhttp.NewHandler(&fakeIntrospector{}, testutil.NewTestLogger())
+	h := inboundhttp.NewHandler(&fakeIntrospector{}, testutil.NewTestLogger(), "")
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rr := httptest.NewRecorder()
 	h.Health(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rr.Code)
+	}
+}
+
+// TestIntrospect_CacheControlNoStore verifies that all introspection responses
+// include Cache-Control: no-store and Pragma: no-cache per RFC 7662 §2.4.
+func TestIntrospect_CacheControlNoStore(t *testing.T) {
+	cases := []struct {
+		name         string
+		introspector *fakeIntrospector
+		token        string
+	}{
+		{
+			name:         "active token",
+			introspector: &fakeIntrospector{result: &domain.IntrospectionResult{Active: true}},
+			token:        "valid.token",
+		},
+		{
+			name:         "service error",
+			introspector: &fakeIntrospector{err: errors.New("store down")},
+			token:        "any.token",
+		},
+		{
+			name:         "missing token",
+			introspector: &fakeIntrospector{},
+			token:        "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Arrange
+			h := inboundhttp.NewHandler(tc.introspector, testutil.NewTestLogger(), "")
+
+			// Act
+			rr := postToken(t, h, tc.token)
+
+			// Assert
+			if cc := rr.Header().Get("Cache-Control"); cc != "no-store" {
+				t.Errorf("Cache-Control = %q, want %q", cc, "no-store")
+			}
+			if pragma := rr.Header().Get("Pragma"); pragma != "no-cache" {
+				t.Errorf("Pragma = %q, want %q", pragma, "no-cache")
+			}
+		})
+	}
+}
+
+// TestIntrospect_WithSecret_Returns401WhenMissing verifies that when a pre-shared secret
+// is configured, callers without Authorization: Bearer <secret> receive a 401 per RFC 7662 §2.1.
+func TestIntrospect_WithSecret_Returns401WhenMissing(t *testing.T) {
+	// Arrange
+	h := inboundhttp.NewHandler(&fakeIntrospector{result: &domain.IntrospectionResult{Active: true}}, testutil.NewTestLogger(), "test-secret")
+
+	// Act — no Authorization header
+	form := url.Values{"token": {"valid.token"}}
+	req := httptest.NewRequest(http.MethodPost, "/introspect", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	h.Introspect(rr, req)
+
+	// Assert
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
+	}
+	if rr.Header().Get("WWW-Authenticate") == "" {
+		t.Error("expected WWW-Authenticate header on 401")
+	}
+	var body map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("expected JSON error body on 401, got decode error: %v", err)
+	}
+	if body["error"] == "" {
+		t.Error("expected non-empty error field in JSON body on 401")
+	}
+	if cc := rr.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want %q (RFC 7662 §2.4)", cc, "no-store")
+	}
+}
+
+// TestIntrospect_WithSecret_Returns200WhenCorrect verifies that a valid pre-shared secret
+// allows the introspection to proceed normally.
+func TestIntrospect_WithSecret_Returns200WhenCorrect(t *testing.T) {
+	// Arrange
+	h := inboundhttp.NewHandler(&fakeIntrospector{result: &domain.IntrospectionResult{Active: true}}, testutil.NewTestLogger(), "test-secret")
+
+	// Act
+	form := url.Values{"token": {"valid.token"}}
+	req := httptest.NewRequest(http.MethodPost, "/introspect", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer test-secret")
+	rr := httptest.NewRecorder()
+	h.Introspect(rr, req)
+
+	// Assert
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if !decodeActive(t, rr) {
+		t.Error("active = false, want true")
 	}
 }

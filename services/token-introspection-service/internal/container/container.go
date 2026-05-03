@@ -57,7 +57,7 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 
 	validator := jwtadapter.NewValidator([]byte(cfg.JWT.SigningKey))
 	svc := application.NewIntrospectionService(validator, revocation)
-	handler := inboundhttp.NewHandler(svc, logger)
+	handler := inboundhttp.NewHandler(svc, logger, cfg.Introspection.Secret)
 
 	return &Container{
 		Logger:  logger,
