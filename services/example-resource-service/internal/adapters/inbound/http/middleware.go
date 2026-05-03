@@ -5,10 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/golang-jwt/jwt/v5"
-
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
+	"github.com/ocrosby/identity-platform-go/libs/jwtutil"
 	"github.com/ocrosby/identity-platform-go/libs/logging"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/ports"
 )
@@ -21,13 +20,6 @@ const (
 	contextKeyClientID
 	contextKeyPermissions // JWT permissions claim; nil when absent (pre-RBAC tokens)
 )
-
-type jwtClaims struct {
-	jwt.RegisteredClaims
-	ClientID    string   `json:"client_id"`
-	Scope       string   `json:"scope"`       // RFC 9068 §2.2.3.1: space-delimited string
-	Permissions []string `json:"permissions"` // RBAC permissions; absent in pre-RBAC tokens
-}
 
 // IntrospectionAuthMiddleware validates the Bearer token by calling token-introspection-service.
 // Revoked tokens are correctly rejected because the introspection service checks the auth-server's
@@ -79,24 +71,11 @@ func JWTAuthMiddleware(signingKey []byte, logger logging.Logger) func(http.Handl
 				return
 			}
 
-			token, err := jwt.ParseWithClaims(raw, &jwtClaims{}, func(t *jwt.Token) (interface{}, error) {
-				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid signing method")
-				}
-				return signingKey, nil
-			})
-
-			if err != nil || !token.Valid {
+			claims, err := jwtutil.Parse(raw, signingKey)
+			if err != nil {
 				logger.Warn("invalid token", "error", err)
 				w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service", error="invalid_token"`)
 				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid token"))
-				return
-			}
-
-			claims, ok := token.Claims.(*jwtClaims)
-			if !ok {
-				w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service", error="invalid_token"`)
-				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid token claims"))
 				return
 			}
 

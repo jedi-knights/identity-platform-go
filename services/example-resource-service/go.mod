@@ -3,12 +3,13 @@ module github.com/ocrosby/identity-platform-go/services/example-resource-service
 go 1.26
 
 require (
-	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/ocrosby/identity-platform-go/libs/errors v0.0.0
 	github.com/ocrosby/identity-platform-go/libs/httputil v0.0.0
+	github.com/ocrosby/identity-platform-go/libs/jwtutil v0.0.0
 	github.com/ocrosby/identity-platform-go/libs/logging v0.0.0
+	github.com/ocrosby/identity-platform-go/libs/testutil v0.0.0-20260503120047-1ba1ef4abe7c
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.19.0
 	github.com/swaggo/http-swagger/v2 v2.0.2
@@ -23,6 +24,7 @@ require (
 	github.com/go-openapi/spec v0.20.15 // indirect
 	github.com/go-openapi/swag v0.22.10 // indirect
 	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -49,7 +51,7 @@ require (
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
 	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	golang.org/x/tools v0.38.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
@@ -59,5 +61,6 @@ require (
 replace (
 	github.com/ocrosby/identity-platform-go/libs/errors => ../../libs/errors
 	github.com/ocrosby/identity-platform-go/libs/httputil => ../../libs/httputil
+	github.com/ocrosby/identity-platform-go/libs/jwtutil => ../../libs/jwtutil
 	github.com/ocrosby/identity-platform-go/libs/logging => ../../libs/logging
 )
