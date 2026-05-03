@@ -63,15 +63,20 @@ This design ensures that business logic is framework-agnostic, independently tes
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                          Identity Platform                               │
 │                                                                          │
-│   Client App ──> auth-server (:8080) ──> identity-service (:8081)       │
+│   Client App ──> api-gateway (:8086)                                     │
 │                       │                                                  │
-│                       v                                                  │
-│               client-registry-service (:8082)                            │
+│              (path-prefix routing)                                       │
+│                       │                                                  │
+│         ┌─────────────┼──────────────────────┐                          │
+│         │             │                      │                          │
+│         v             v                      v                          │
+│   auth-server    identity-service    client-registry-service             │
+│    (:8080)          (:8081)                (:8082)                       │
+│   /oauth →       /auth →              /clients →                        │
 │                                                                          │
-│   token-introspection-service (:8083)                                    │
-│   authorization-policy-service (:8084)                                   │
-│                                                                          │
-│   example-resource-service (:8085)  <-- protected API                   │
+│   token-introspection-service (:8083)  /introspect →                    │
+│   authorization-policy-service (:8084) /evaluate →                      │
+│   example-resource-service (:8085)     /resources → (protected API)     │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -81,7 +86,15 @@ All inter-service communication is over **HTTP**. There is no shared database be
 
 ## Services
 
-### auth-server (`:8080`)
+### [api-gateway](services/api-gateway/README.md) (`:8086`)
+
+The single ingress point for all client traffic. Routes inbound requests to upstream services using longest-prefix path matching. Cross-cutting concerns (auth, rate limiting, circuit breaking, caching, retries, IP filtering) are opt-in middleware — disabled features cost nothing on the request path.
+
+- Path-prefix routing: `/oauth` → auth-server, `/auth` → identity-service, `/clients` → client-registry-service, `/introspect` → token-introspection-service, `/evaluate` → authorization-policy-service, `/resources` → example-resource-service
+- Configurable JWT auth, token-bucket rate limiting, circuit breaker (per route), retry with backoff, and in-memory response cache
+- Routes declared in `gateway.yaml` (or `/etc/gateway/gateway.yaml`) — restart required to pick up route changes
+
+### [auth-server](services/auth-server/README.md) (`:8080`)
 
 The core OAuth 2.0 authorization server. Issues access tokens, performs token introspection, and handles token revocation.
 
@@ -90,23 +103,23 @@ The core OAuth 2.0 authorization server. Issues access tokens, performs token in
 - Uses the **Strategy Pattern** via a `GrantStrategyRegistry` to route grant requests
 - JWT token generation with configurable signing key, issuer, and TTL
 
-### identity-service (`:8081`)
+### [identity-service](services/identity-service/README.md) (`:8081`)
 
 Handles user registration and authentication. Provides bcrypt-based password hashing with an in-memory user store.
 
-### client-registry-service (`:8082`)
+### [client-registry-service](services/client-registry-service/README.md) (`:8082`)
 
 Manages OAuth 2.0 client registrations. Provides full CRUD operations and client credential validation.
 
-### token-introspection-service (`:8083`)
+### [token-introspection-service](services/token-introspection-service/README.md) (`:8083`)
 
 Standalone JWT token validation and metadata extraction per [RFC 7662](https://datatracker.ietf.org/doc/html/rfc7662).
 
-### authorization-policy-service (`:8084`)
+### [authorization-policy-service](services/authorization-policy-service/README.md) (`:8084`)
 
 Fine-grained authorization using the **Strategy** and **Specification** patterns. Evaluates RBAC policies against subjects and resources.
 
-### example-resource-service (`:8085`)
+### [example-resource-service](services/example-resource-service/README.md) (`:8085`)
 
 A protected API that demonstrates JWT-based authentication and scope enforcement. Requires valid tokens with appropriate scopes (`read`, `write`) to access resources.
 
@@ -118,9 +131,10 @@ Located in `libs/`, these are independent Go modules shared across services:
 
 | Library          | Purpose                                            |
 |------------------|----------------------------------------------------|
-| `libs/logging`   | Structured `slog`-based logging with trace ID support |
 | `libs/errors`    | Typed application errors with HTTP status mapping  |
 | `libs/httputil`  | HTTP response helpers and middleware               |
+| `libs/jwtutil`   | Canonical `Claims` type, `Sign`, `Parse`, `NewClaims` — shared JWT structure across services |
+| `libs/logging`   | Structured `slog`-based logging with trace ID support |
 | `libs/testutil`  | Testing utilities                                  |
 
 ---
@@ -150,7 +164,7 @@ Located in `libs/`, these are independent Go modules shared across services:
 
 ### Running the Full Stack with Docker Compose
 
-The easiest way to run all six services together for local testing.
+The easiest way to run all seven services together for local testing.
 
 **Requirements:** [Docker](https://docs.docker.com/get-docker/) with the Compose plugin (`docker compose version` to verify).
 
@@ -173,21 +187,32 @@ Open `.env` and set the two required values:
 docker compose up --build
 ```
 
-All six services start in parallel. Health checks on each `/health` endpoint confirm readiness.
+All seven services start in parallel. Health checks on each `/health` endpoint confirm readiness.
 
-| Service | URL |
-|---------|-----|
-| auth-server | http://localhost:8080 |
-| identity-service | http://localhost:8081 |
-| client-registry-service | http://localhost:8082 |
-| token-introspection-service | http://localhost:8083 |
-| authorization-policy-service | http://localhost:8084 |
-| example-resource-service | http://localhost:8085 |
+| Service | Host URL (docker-compose) |
+|---------|--------------------------|
+| api-gateway | http://localhost:9086 |
+| auth-server | http://localhost:9080 |
+| identity-service | http://localhost:9081 |
+| client-registry-service | http://localhost:9082 |
+| token-introspection-service | http://localhost:9083 |
+| authorization-policy-service | http://localhost:9084 |
+| example-resource-service | http://localhost:9085 |
 
 #### 3. Request a token
 
+Route through the api-gateway (port 9086) or directly to auth-server (port 9080):
+
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:8080/oauth/token \
+# Via api-gateway (recommended)
+TOKEN=$(curl -s -X POST http://localhost:9086/oauth/token \
+  -d "grant_type=client_credentials" \
+  -d "client_id=test-client" \
+  -d "client_secret=<your DEV_CLIENT_SECRET>" \
+  -d "scope=read" | jq -r .access_token)
+
+# Or directly to auth-server
+TOKEN=$(curl -s -X POST http://localhost:9080/oauth/token \
   -d "grant_type=client_credentials" \
   -d "client_id=test-client" \
   -d "client_secret=<your DEV_CLIENT_SECRET>" \
@@ -197,20 +222,34 @@ TOKEN=$(curl -s -X POST http://localhost:8080/oauth/token \
 #### 4. Call the protected resource
 
 ```bash
-curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8085/resources
+# Via api-gateway
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:9086/resources
+
+# Or directly to example-resource-service
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:9085/resources
 ```
 
 #### 5. Introspect the token
 
 ```bash
-curl -s -X POST http://localhost:8083/introspect \
+# Via api-gateway
+curl -s -X POST http://localhost:9086/introspect \
+  -d "token=$TOKEN"
+
+# Or directly to token-introspection-service
+curl -s -X POST http://localhost:9083/introspect \
   -d "token=$TOKEN"
 ```
 
 #### 6. Revoke the token
 
 ```bash
-curl -s -X POST http://localhost:8080/oauth/revoke \
+# Via api-gateway
+curl -s -X POST http://localhost:9086/oauth/revoke \
+  -d "token=$TOKEN"
+
+# Or directly to auth-server
+curl -s -X POST http://localhost:9080/oauth/revoke \
   -d "token=$TOKEN"
 ```
 
@@ -245,7 +284,7 @@ cd services/auth-server && go run ./cmd/...
 ### Quick Test: Issue a Token (without Docker)
 
 ```bash
-# Start the auth server
+# Start the auth server (listens on :8080 when run directly)
 task run:auth-server
 
 # Request a token using client_credentials grant
@@ -267,7 +306,21 @@ task build
 
 ## Configuration
 
-Each service is configured via environment variables with a service-specific prefix, or through a `config.yaml` file loaded by [Viper](https://github.com/spf13/viper).
+Each service is configured via environment variables with a service-specific prefix, or through a `config.yaml` / `gateway.yaml` file loaded at startup.
+
+### api-gateway
+
+Routes are declared in `gateway.yaml` (or `/etc/gateway/gateway.yaml`). See [api-gateway README](services/api-gateway/README.md) for the full configuration reference.
+
+| Variable | Default | Description |
+|---|---|---|
+| `GATEWAY_SERVER_HOST` | `0.0.0.0` | Server bind host |
+| `GATEWAY_SERVER_PORT` | `8086` | Server port |
+| `GATEWAY_LOG_LEVEL` | `info` | Log level |
+| `GATEWAY_AUTH_TYPE` | `""` | Auth type (`hs256`, `jwks`, or empty to disable) |
+| `GATEWAY_JWT_SIGNING_KEY` | `""` | HMAC signing key (when `auth_type: hs256`) |
+| `GATEWAY_RATE_LIMIT_REQUESTS_PER_SECOND` | `10` | Token-bucket fill rate |
+| `GATEWAY_RATE_LIMIT_BURST_SIZE` | `20` | Token-bucket burst capacity |
 
 ### auth-server
 
@@ -317,6 +370,17 @@ Each service is configured via environment variables with a service-specific pre
 ---
 
 ## API Reference
+
+### api-gateway
+
+The gateway proxies all service endpoints — any path listed below can be called at `http://localhost:9086/<path>` in docker-compose (host port 9086). In addition, the gateway exposes its own operational endpoints:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Gateway health check |
+| GET | `/ready` | Readiness probe (returns 503 during drain) |
+
+All other paths are routed to upstream services by longest-prefix match (see [gateway.yaml](services/api-gateway/gateway.yaml)).
 
 ### auth-server
 
@@ -454,6 +518,17 @@ identity-platform-go/
 │   ├── logging/                     # Structured slog-based logging
 │   └── testutil/                    # Test utilities
 └── services/
+    ├── api-gateway/                 # Reverse proxy / ingress (entry point)
+    │   ├── cmd/                     # CLI (serve, version)
+    │   ├── gateway.yaml             # Route declarations
+    │   └── internal/
+    │       ├── adapters/inbound/    # HTTP handler, middleware
+    │       ├── adapters/outbound/   # Proxy, circuit breaker, retry, cache
+    │       ├── application/         # Route resolver
+    │       ├── config/              # Viper-based configuration
+    │       ├── container/           # Dependency injection
+    │       ├── domain/              # Route, rate-limit models
+    │       └── ports/               # Transport interfaces
     ├── auth-server/                 # OAuth2 authorization server
     │   ├── cmd/main.go
     │   ├── docs/                    # Generated Swagger specs
@@ -553,9 +628,11 @@ The following graph shows which modules depend on which. When a library is relea
 graph TD
     errors["libs/errors"]
     httputil["libs/httputil"]
+    jwtutil["libs/jwtutil"]
     logging["libs/logging"]
     testutil["libs/testutil"]
 
+    gateway["services/api-gateway"]
     auth["services/auth-server"]
     authz["services/authorization-policy-service"]
     clients["services/client-registry-service"]
@@ -564,11 +641,15 @@ graph TD
     introspect["services/token-introspection-service"]
 
     httputil --> errors
+    jwtutil --> errors
     logging --> errors
     testutil --> errors
 
+    gateway --> httputil
+    gateway --> logging
     auth --> httputil
     auth --> logging
+    auth --> jwtutil
     authz --> httputil
     authz --> logging
     clients --> httputil
@@ -579,6 +660,7 @@ graph TD
     identity --> logging
     introspect --> httputil
     introspect --> logging
+    introspect --> jwtutil
 ```
 
 > Arrows mean "depends on". A change to `libs/errors` will propagate all the way through to every service.
@@ -589,6 +671,7 @@ Each module uses a short, flat tag prefix defined in `.semantic-release.yaml`. T
 
 | Module | Tag prefix | Example tag |
 |---|---|---|
+| `services/api-gateway` | `api-gateway/` | `api-gateway/v1.0.0` |
 | `services/auth-server` | `auth-server/` | `auth-server/v1.3.0` |
 | `services/authorization-policy-service` | `authorization-policy-service/` | `authorization-policy-service/v1.0.2` |
 | `services/client-registry-service` | `client-registry-service/` | `client-registry-service/v0.4.1` |
@@ -597,6 +680,7 @@ Each module uses a short, flat tag prefix defined in `.semantic-release.yaml`. T
 | `services/token-introspection-service` | `token-introspection-service/` | `token-introspection-service/v1.0.0` |
 | `libs/errors` | `errors/` | `errors/v0.3.1` |
 | `libs/httputil` | `httputil/` | `httputil/v0.2.0` |
+| `libs/jwtutil` | `jwtutil/` | `jwtutil/v0.1.0` |
 | `libs/logging` | `logging/` | `logging/v0.2.0` |
 | `libs/testutil` | `testutil/` | `testutil/v0.1.0` |
 
