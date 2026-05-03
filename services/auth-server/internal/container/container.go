@@ -59,7 +59,7 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 	permsFetcher := buildPermsFetcher(cfg, logger)
 
 	signingKey := []byte(cfg.JWT.SigningKey)
-	tokenGen := application.NewJWTTokenGenerator(signingKey, cfg.JWT.Issuer)
+	tokenGen := application.NewJWTTokenGenerator(signingKey, cfg.JWT.Issuer, cfg.JWT.Audience)
 	tokenVal := application.NewJWTTokenValidator(signingKey, tokenRepo)
 
 	ttl := time.Duration(cfg.Token.TTLSeconds) * time.Second
@@ -74,7 +74,7 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 	issuer := inboundhttp.NewTokenIssuerAdapter(grantRegistry)
 	introspector := inboundhttp.NewTokenIntrospectorAdapter(tokenSvc)
 	revoker := inboundhttp.NewTokenRevokerAdapter(tokenSvc)
-	handler := inboundhttp.NewHandler(issuer, introspector, revoker, logger)
+	handler := inboundhttp.NewHandler(issuer, introspector, revoker, clientAuth, logger, cfg.Introspection.Secret)
 
 	return &Container{
 		Logger:  logger,

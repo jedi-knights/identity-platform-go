@@ -244,7 +244,7 @@ func TestJWTAuthMiddleware_ValidToken_CallsNext(t *testing.T) {
 		Scope:     "read write",
 	})
 	var called bool
-	mw := JWTAuthMiddleware(key, testutil.NewTestLogger())
+	mw := JWTAuthMiddleware(key, "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -267,7 +267,7 @@ func TestJWTAuthMiddleware_ExpiredToken_Returns401(t *testing.T) {
 		ExpiresAt: time.Now().Add(-time.Hour), // expired
 	})
 	var called bool
-	mw := JWTAuthMiddleware(key, testutil.NewTestLogger())
+	mw := JWTAuthMiddleware(key, "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -292,7 +292,7 @@ func TestJWTAuthMiddleware_WrongSigningKey_Returns401(t *testing.T) {
 		ExpiresAt: time.Now().Add(time.Hour),
 	})
 	var called bool
-	mw := JWTAuthMiddleware([]byte("actual-key"), testutil.NewTestLogger())
+	mw := JWTAuthMiddleware([]byte("actual-key"), "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -313,7 +313,7 @@ func TestJWTAuthMiddleware_WrongSigningKey_Returns401(t *testing.T) {
 func TestJWTAuthMiddleware_MalformedToken_Returns401(t *testing.T) {
 	// Arrange
 	var called bool
-	mw := JWTAuthMiddleware([]byte("key"), testutil.NewTestLogger())
+	mw := JWTAuthMiddleware([]byte("key"), "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -331,7 +331,7 @@ func TestJWTAuthMiddleware_MalformedToken_Returns401(t *testing.T) {
 func TestJWTAuthMiddleware_MissingAuthHeader_Returns401(t *testing.T) {
 	// Arrange
 	var called bool
-	mw := JWTAuthMiddleware([]byte("key"), testutil.NewTestLogger())
+	mw := JWTAuthMiddleware([]byte("key"), "", testutil.NewTestLogger())
 	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
 	w := httptest.NewRecorder()
 
@@ -369,7 +369,7 @@ func TestJWTAuthMiddleware_PropagatesContextValues(t *testing.T) {
 		gotScopes, _ = r.Context().Value(contextKeyScopes).([]string)
 		gotPerms, _ = r.Context().Value(contextKeyPermissions).([]string)
 	})
-	mw := JWTAuthMiddleware(key, testutil.NewTestLogger())
+	mw := JWTAuthMiddleware(key, "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -464,4 +464,74 @@ func TestRequireScopeMiddleware_EmptyRequiredScope_Panics(t *testing.T) {
 		}
 	}()
 	RequireScopeMiddleware("")
+}
+
+func TestRequireScopeMiddleware_ScopeAbsent_IncludesScopeInWWWAuthenticate(t *testing.T) {
+	// RFC 6750 §3.1: insufficient_scope WWW-Authenticate must include the required scope.
+
+	// Arrange
+	var called bool
+	mw := RequireScopeMiddleware("read")
+	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
+	r = r.WithContext(context.WithValue(r.Context(), contextKeyScopes, []string{"write"}))
+	w := httptest.NewRecorder()
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, r)
+
+	// Assert
+	wwwAuth := w.Header().Get("WWW-Authenticate")
+	if !strings.Contains(wwwAuth, `scope="read"`) {
+		t.Errorf("WWW-Authenticate = %q, want it to contain scope=\"read\"", wwwAuth)
+	}
+}
+
+func TestJWTAuthMiddleware_WithAudience_ValidAudience_CallsNext(t *testing.T) {
+	// Arrange
+	key := []byte("test-signing-key")
+	raw := signHS256(t, key, jwtutil.ClaimsConfig{
+		Subject:   "user-1",
+		ExpiresAt: time.Now().Add(time.Hour),
+		Audience:  []string{"my-resource-service"},
+	})
+	var called bool
+	mw := JWTAuthMiddleware(key, "my-resource-service", testutil.NewTestLogger())
+	w := httptest.NewRecorder()
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, bearerRequest(t, raw))
+
+	// Assert
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d — body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if !called {
+		t.Error("next handler was not called for a token with matching audience")
+	}
+}
+
+func TestJWTAuthMiddleware_WithAudience_WrongAudience_Returns401(t *testing.T) {
+	// RFC 9700 §2.3: tokens must be validated against the expected audience.
+
+	// Arrange
+	key := []byte("test-signing-key")
+	raw := signHS256(t, key, jwtutil.ClaimsConfig{
+		Subject:   "user-1",
+		ExpiresAt: time.Now().Add(time.Hour),
+		Audience:  []string{"other-service"},
+	})
+	var called bool
+	mw := JWTAuthMiddleware(key, "my-resource-service", testutil.NewTestLogger())
+	w := httptest.NewRecorder()
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, bearerRequest(t, raw))
+
+	// Assert
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+	if called {
+		t.Error("next handler must not be called for a token with wrong audience")
+	}
 }

@@ -9,10 +9,18 @@ import (
 )
 
 type Config struct {
-	Server ServerConfig `mapstructure:"server"`
-	Log    LogConfig    `mapstructure:"log"`
-	JWT    JWTConfig    `mapstructure:"jwt"`
-	Redis  RedisConfig  `mapstructure:"redis"`
+	Server        ServerConfig        `mapstructure:"server"`
+	Log           LogConfig           `mapstructure:"log"`
+	JWT           JWTConfig           `mapstructure:"jwt"`
+	Redis         RedisConfig         `mapstructure:"redis"`
+	Introspection IntrospectionConfig `mapstructure:"introspection"`
+}
+
+// IntrospectionConfig holds the pre-shared secret for the introspection endpoint.
+// When Secret is set, callers must supply Authorization: Bearer <secret>.
+// When empty, the endpoint requires no caller authentication (suitable for local dev).
+type IntrospectionConfig struct {
+	Secret string `mapstructure:"secret"` // INTROSPECT_SECRET_KEY
 }
 
 type ServerConfig struct {
@@ -47,6 +55,7 @@ func Load() (*Config, error) {
 	v.SetDefault("log.environment", "development")
 	v.SetDefault("jwt.signing_key", "")
 	v.SetDefault("redis.url", "")
+	v.SetDefault("introspection.secret", "")
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")

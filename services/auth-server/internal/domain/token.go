@@ -24,6 +24,7 @@ type Token struct {
 	ID          string
 	ClientID    string
 	Subject     string
+	Issuer      string
 	Scopes      []string
 	Roles       []string // RBAC roles embedded in JWT; resolved at issuance
 	Permissions []string // resolved permissions ("resource:action"); resolved at issuance
@@ -88,6 +89,7 @@ type IntrospectResponse struct {
 	Active    bool   `json:"active"`
 	ClientID  string `json:"client_id,omitempty"`
 	Subject   string `json:"sub,omitempty"`
+	Issuer    string `json:"iss,omitempty"`
 	Scope     string `json:"scope,omitempty"`
 	ExpiresAt int64  `json:"exp,omitempty"`
 	IssuedAt  int64  `json:"iat,omitempty"`
