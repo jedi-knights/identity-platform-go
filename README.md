@@ -582,12 +582,12 @@ Each service and library maintains its own semantic version tracked via its own 
 
 When a shared library is released, every service that declares it as a dependency is **also released in the same run** — even if that service has no new commits of its own. This is controlled by `dependency_propagation: true` in `.semantic-release.yaml`.
 
-**Why this matters:** if `libs/errors` ships a new minor version, all six services that depend on it (through `libs/httputil` and `libs/logging`) receive a patch-level version bump. This ensures every service tag always reflects the version of its dependencies at release time — there is never a published tag that silently points at a newer library than intended.
+**Why this matters:** if `libs/errors` ships a new minor version, all seven services that depend on it (through `libs/httputil` and `libs/logging`) receive a patch-level version bump. This ensures every service tag always reflects the version of its dependencies at release time — there is never a published tag that silently points at a newer library than intended.
 
 **Cascade example:** a `feat:` commit to `libs/errors` triggers:
 1. `errors` → minor bump (e.g., `errors/v0.2.0` → `errors/v0.3.0`)
 2. `httputil`, `logging`, `testutil` → patch bump (they depend on `errors`)
-3. All six services → patch bump (they depend on `httputil` and `logging`)
+3. All seven services → patch bump (they depend on `httputil` and `logging`)
 
 No service code needs to change for steps 2 and 3 to happen.
 
@@ -622,52 +622,35 @@ flowchart TD
 
 ### Module Dependency Graph
 
-The following graph shows which modules depend on which. When a library is released, all modules that depend on it are also scheduled for release in the same run — even if they have no new commits of their own. This ensures dependents are always tagged against the latest version of their dependencies.
+When a library is released, every module that depends on it is also released in the same run — even if it has no new commits of its own.
+
+**Library dependency chain**
+
+All four support libraries share `errors` as their foundation:
 
 ```mermaid
 graph LR
-    subgraph svc["Services"]
-        gateway["api-gateway"]
-        auth["auth-server"]
-        authz["authorization-policy-service"]
-        clients["client-registry-service"]
-        example["example-resource-service"]
-        identity["identity-service"]
-        introspect["token-introspection-service"]
-    end
-
-    subgraph lib["Shared Libraries"]
-        httputil["httputil"]
-        jwtutil["jwtutil"]
-        logging["logging"]
-        testutil["testutil"]
-        errors["errors"]
-    end
-
-    httputil --> errors
-    jwtutil --> errors
-    logging --> errors
-    testutil --> errors
-
-    gateway --> httputil
-    gateway --> logging
-    auth --> httputil
-    auth --> logging
-    auth --> jwtutil
-    authz --> httputil
-    authz --> logging
-    clients --> httputil
-    clients --> logging
-    example --> httputil
-    example --> logging
-    identity --> httputil
-    identity --> logging
-    introspect --> httputil
-    introspect --> logging
-    introspect --> jwtutil
+    httputil["libs/httputil"] --> errors["libs/errors"]
+    logging["libs/logging"]   --> errors
+    jwtutil["libs/jwtutil"]   --> errors
+    testutil["libs/testutil"] --> errors
 ```
 
-> Arrows mean "depends on". Services are on the left; shared libraries on the right. A change to `errors` propagates through every library and service.
+**Service → library dependencies**
+
+Every service depends on `httputil` and `logging` as a baseline. Additional dependencies are listed below:
+
+| Service | Additional libraries |
+|---|---|
+| api-gateway | — |
+| auth-server | `jwtutil` |
+| authorization-policy-service | — |
+| client-registry-service | — |
+| example-resource-service | — |
+| identity-service | — |
+| token-introspection-service | `jwtutil` |
+
+A change to `errors` cascades through every library and then every service. A change to `jwtutil` affects only `auth-server` and `token-introspection-service`.
 
 ### Tag Format
 
