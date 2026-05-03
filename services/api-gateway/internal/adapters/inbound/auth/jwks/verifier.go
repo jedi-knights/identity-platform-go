@@ -37,15 +37,15 @@ type Verifier struct {
 	audience string
 }
 
-// New creates a Verifier that fetches and caches the JWKS from cfg.JWKSUrl.
+// New creates a Verifier that fetches and caches the JWKS from cfg.JWKSURL.
 // ctx controls the background key-refresh goroutine — cancel it on shutdown.
 func New(ctx context.Context, cfg config.AuthConfig) (*Verifier, error) {
-	if cfg.JWKSUrl == "" {
+	if cfg.JWKSURL == "" {
 		return nil, fmt.Errorf("jwks: jwks_url must be set when auth.type is \"jwks\"")
 	}
-	kf, err := keyfunc.NewDefaultCtx(ctx, []string{cfg.JWKSUrl})
+	kf, err := keyfunc.NewDefaultCtx(ctx, []string{cfg.JWKSURL})
 	if err != nil {
-		return nil, fmt.Errorf("jwks: initialising keyfunc from %q: %w", cfg.JWKSUrl, err)
+		return nil, fmt.Errorf("jwks: initialising keyfunc from %q: %w", cfg.JWKSURL, err)
 	}
 	return &Verifier{kf: kf, issuer: cfg.Issuer, audience: cfg.Audience}, nil
 }
