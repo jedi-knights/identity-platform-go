@@ -59,80 +59,40 @@ func bearerRequest(t *testing.T, token string) *http.Request {
 
 // --- extractBearer ---
 
-func TestExtractBearer_MissingHeader_Returns401(t *testing.T) {
-	// Arrange
-	r := httptest.NewRequest(http.MethodGet, "/resources", nil) // no Authorization header
-	w := httptest.NewRecorder()
-
-	// Act
-	_, ok := extractBearer(w, r)
-
-	// Assert
-	if ok {
-		t.Error("extractBearer returned ok=true for missing header, want false")
+func TestExtractBearer_InvalidHeaders_Return401(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+	}{
+		{name: "missing header", header: ""},
+		{name: "wrong scheme", header: "Token xyz"},
+		{name: "whitespace-only token", header: "Bearer   "},
+		{name: "empty token", header: "Bearer "},
 	}
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
-	}
-	if w.Header().Get("WWW-Authenticate") == "" {
-		t.Error("expected WWW-Authenticate header on 401")
-	}
-}
 
-func TestExtractBearer_MalformedHeader_Returns401(t *testing.T) {
-	// Arrange
-	// "Token xyz" is not a valid Bearer header.
-	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
-	r.Header.Set("Authorization", "Token xyz")
-	w := httptest.NewRecorder()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			r := httptest.NewRequest(http.MethodGet, "/resources", nil)
+			if tt.header != "" {
+				r.Header.Set("Authorization", tt.header)
+			}
+			w := httptest.NewRecorder()
 
-	// Act
-	_, ok := extractBearer(w, r)
+			// Act
+			_, ok := extractBearer(w, r)
 
-	// Assert
-	if ok {
-		t.Error("extractBearer returned ok=true for wrong scheme, want false")
-	}
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
-	}
-}
-
-func TestExtractBearer_WhitespaceOnlyToken_Returns401(t *testing.T) {
-	// Arrange
-	// "Bearer   " (spaces after "Bearer ") must be rejected, not forwarded as a token.
-	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
-	r.Header.Set("Authorization", "Bearer   ")
-	w := httptest.NewRecorder()
-
-	// Act
-	_, ok := extractBearer(w, r)
-
-	// Assert
-	if ok {
-		t.Error("extractBearer returned ok=true for whitespace-only token, want false")
-	}
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
-	}
-}
-
-func TestExtractBearer_EmptyToken_Returns401(t *testing.T) {
-	// Arrange
-	// "Bearer " with nothing after it is not a valid token.
-	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
-	r.Header.Set("Authorization", "Bearer ")
-	w := httptest.NewRecorder()
-
-	// Act
-	_, ok := extractBearer(w, r)
-
-	// Assert
-	if ok {
-		t.Error("extractBearer returned ok=true for empty token, want false")
-	}
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+			// Assert
+			if ok {
+				t.Error("extractBearer returned ok=true, want false")
+			}
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+			}
+			if w.Header().Get("WWW-Authenticate") == "" {
+				t.Error("expected WWW-Authenticate header on 401")
+			}
+		})
 	}
 }
 
@@ -496,26 +456,12 @@ func TestRequireScopeMiddleware_NoContextScopes_Returns401(t *testing.T) {
 	}
 }
 
-func TestRequireScopeMiddleware_EmptyRequiredScope_CallsNext(t *testing.T) {
-	// Arrange
-	// RequireScopeMiddleware("") matches an empty string scope value in the context.
-	// A token whose scope string parses to [""] is unusual but possible (e.g. a scope
-	// value that is just spaces). This test documents the current behaviour: the empty
-	// string is treated as a valid scope name and "" == "" passes the check.
-	var called bool
-	mw := RequireScopeMiddleware("")
-	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
-	r = r.WithContext(context.WithValue(r.Context(), contextKeyScopes, []string{""}))
-	w := httptest.NewRecorder()
-
-	// Act
-	mw(okHandler(t, &called)).ServeHTTP(w, r)
-
-	// Assert
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
-	if !called {
-		t.Error("next handler was not called when empty scope matched empty required scope")
-	}
+func TestRequireScopeMiddleware_EmptyRequiredScope_Panics(t *testing.T) {
+	// Arrange / Act / Assert
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected RequireScopeMiddleware(\"\") to panic, got nil")
+		}
+	}()
+	RequireScopeMiddleware("")
 }
