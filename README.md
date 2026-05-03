@@ -625,20 +625,24 @@ flowchart TD
 The following graph shows which modules depend on which. When a library is released, all modules that depend on it are also scheduled for release in the same run — even if they have no new commits of their own. This ensures dependents are always tagged against the latest version of their dependencies.
 
 ```mermaid
-graph TD
-    errors["libs/errors"]
-    httputil["libs/httputil"]
-    jwtutil["libs/jwtutil"]
-    logging["libs/logging"]
-    testutil["libs/testutil"]
+graph LR
+    subgraph svc["Services"]
+        gateway["api-gateway"]
+        auth["auth-server"]
+        authz["authorization-policy-service"]
+        clients["client-registry-service"]
+        example["example-resource-service"]
+        identity["identity-service"]
+        introspect["token-introspection-service"]
+    end
 
-    gateway["services/api-gateway"]
-    auth["services/auth-server"]
-    authz["services/authorization-policy-service"]
-    clients["services/client-registry-service"]
-    example["services/example-resource-service"]
-    identity["services/identity-service"]
-    introspect["services/token-introspection-service"]
+    subgraph lib["Shared Libraries"]
+        httputil["httputil"]
+        jwtutil["jwtutil"]
+        logging["logging"]
+        testutil["testutil"]
+        errors["errors"]
+    end
 
     httputil --> errors
     jwtutil --> errors
@@ -663,7 +667,7 @@ graph TD
     introspect --> jwtutil
 ```
 
-> Arrows mean "depends on". A change to `libs/errors` will propagate all the way through to every service.
+> Arrows mean "depends on". Services are on the left; shared libraries on the right. A change to `errors` propagates through every library and service.
 
 ### Tag Format
 
