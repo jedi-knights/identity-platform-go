@@ -25,7 +25,10 @@ const (
 // IntrospectionAuthMiddleware validates the Bearer token by calling token-introspection-service.
 // Revoked tokens are correctly rejected because the introspection service checks the auth-server's
 // token store on every request.
-func IntrospectionAuthMiddleware(introspector ports.TokenIntrospector, logger logging.Logger) func(http.Handler) http.Handler {
+//
+// When expectedAudience is non-empty, the aud claim from the introspection result must contain
+// that value (RFC 9068 §2.2 audience binding at the resource server).
+func IntrospectionAuthMiddleware(introspector ports.TokenIntrospector, logger logging.Logger, expectedAudience string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw, ok := extractBearer(w, r)
@@ -46,6 +49,13 @@ func IntrospectionAuthMiddleware(introspector ports.TokenIntrospector, logger lo
 				return
 			}
 
+			// RFC 9068 §2.2: verify the token was issued for this resource server.
+			if expectedAudience != "" && !audienceContains(result.Audience, expectedAudience) {
+				w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service", error="invalid_token"`)
+				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "token audience does not include this resource server"))
+				return
+			}
+
 			// Propagate token claims to downstream handlers via context.
 			ctx := r.Context()
 			ctx = context.WithValue(ctx, contextKeySubject, result.Subject)
@@ -62,12 +72,14 @@ func IntrospectionAuthMiddleware(introspector ports.TokenIntrospector, logger lo
 //
 // When audience is non-empty, the token's aud claim must include that value
 // per RFC 9068 §4 (audience validation). When empty, audience is not checked.
+// When issuer is non-empty, the token's iss claim must match (RFC 8725 §3.8).
+// When empty, issuer is not checked.
 //
 // NOTE: Local validation cannot detect revoked tokens. Tokens revoked via
 // auth-server's /oauth/revoke remain valid here until they expire. For
 // revocation to work, configure RESOURCE_INTROSPECTION_URL to point at
 // token-introspection-service and use IntrospectionAuthMiddleware instead.
-func JWTAuthMiddleware(signingKey []byte, audience string, logger logging.Logger) func(http.Handler) http.Handler {
+func JWTAuthMiddleware(signingKey []byte, audience, issuer string, logger logging.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw, ok := extractBearer(w, r)
@@ -75,15 +87,7 @@ func JWTAuthMiddleware(signingKey []byte, audience string, logger logging.Logger
 				return
 			}
 
-			var (
-				claims *jwtutil.Claims
-				err    error
-			)
-			if audience != "" {
-				claims, err = jwtutil.ParseWithAudience(raw, signingKey, audience)
-			} else {
-				claims, err = jwtutil.Parse(raw, signingKey)
-			}
+			claims, err := parseJWT(raw, signingKey, audience, issuer)
 			if err != nil {
 				if errors.Is(err, jwtutil.ErrTokenExpired) {
 					logger.Info("expired token rejected", "error", err)
@@ -143,6 +147,37 @@ func RequireScopeMiddleware(requiredScope string) func(http.Handler) http.Handle
 				`Bearer realm="example-resource-service", error="insufficient_scope", scope="`+requiredScope+`"`)
 			httputil.WriteError(w, apperrors.New(apperrors.ErrCodeForbidden, "insufficient scope"))
 		})
+	}
+}
+
+// audienceContains reports whether expected appears in the audience slice.
+func audienceContains(audience []string, expected string) bool {
+	for _, aud := range audience {
+		if aud == expected {
+			return true
+		}
+	}
+	return false
+}
+
+// parseJWT parses and validates a JWT with the given constraints.
+// When both audience and issuer are set, audience is validated first, then
+// the issuer claim is checked against issuer. golang-jwt/v5 does not support
+// combining WithAudience and WithIssuer in a single parse call.
+func parseJWT(raw string, signingKey []byte, audience, issuer string) (*jwtutil.Claims, error) {
+	switch {
+	case audience != "" && issuer != "":
+		claims, err := jwtutil.ParseWithAudience(raw, signingKey, audience)
+		if err == nil && claims.Issuer != issuer {
+			return nil, jwtutil.ErrTokenInvalid
+		}
+		return claims, err
+	case audience != "":
+		return jwtutil.ParseWithAudience(raw, signingKey, audience)
+	case issuer != "":
+		return jwtutil.ParseWithIssuer(raw, signingKey, issuer)
+	default:
+		return jwtutil.Parse(raw, signingKey)
 	}
 }
 

@@ -392,3 +392,141 @@ func TestParseWithAudience_MissingAudience(t *testing.T) {
 		t.Errorf("error = %v, want ErrTokenInvalid", err)
 	}
 }
+
+// TestParse_RejectsTokenWithoutAtJWTTyp verifies that Parse rejects tokens whose
+// JOSE header does not carry typ:"at+jwt" (RFC 9068 §2.1 / RFC 8725 §3.11).
+func TestParse_RejectsTokenWithoutAtJWTTyp(t *testing.T) {
+	// Arrange — craft a valid HMAC-signed JWT without setting typ header.
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &jwtutil.Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "sub",
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	})
+	// Do NOT set token.Header["typ"] — leave the library default ("JWT").
+	raw, err := token.SignedString(testKey)
+	if err != nil {
+		t.Fatalf("signing token: %v", err)
+	}
+
+	// Act
+	_, err = jwtutil.Parse(raw, testKey)
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error for token missing typ:at+jwt, got nil")
+	}
+	if !errors.Is(err, jwtutil.ErrTokenInvalid) {
+		t.Errorf("error = %v, want ErrTokenInvalid", err)
+	}
+}
+
+// TestParseWithAudience_RejectsTokenWithoutAtJWTTyp mirrors the above for ParseWithAudience.
+func TestParseWithAudience_RejectsTokenWithoutAtJWTTyp(t *testing.T) {
+	// Arrange
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &jwtutil.Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "sub",
+			Audience:  jwt.ClaimStrings{"example-resource-service"},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	})
+	raw, err := token.SignedString(testKey)
+	if err != nil {
+		t.Fatalf("signing token: %v", err)
+	}
+
+	// Act
+	_, err = jwtutil.ParseWithAudience(raw, testKey, "example-resource-service")
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error for token missing typ:at+jwt, got nil")
+	}
+	if !errors.Is(err, jwtutil.ErrTokenInvalid) {
+		t.Errorf("error = %v, want ErrTokenInvalid", err)
+	}
+}
+
+// TestParseWithIssuer_ValidIssuer verifies that ParseWithIssuer accepts a token
+// whose iss claim matches the expected issuer (RFC 8725 §3.8).
+func TestParseWithIssuer_ValidIssuer(t *testing.T) {
+	// Arrange
+	now := time.Now().Truncate(time.Second)
+	claims := jwtutil.NewClaims(jwtutil.ClaimsConfig{
+		Issuer:    "identity-platform",
+		Subject:   "client-abc",
+		TokenID:   "token-iss-1",
+		ClientID:  "client-abc",
+		Scope:     "read",
+		IssuedAt:  now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+	raw := signedToken(t, claims)
+
+	// Act
+	got, err := jwtutil.ParseWithIssuer(raw, testKey, "identity-platform")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("ParseWithIssuer: %v", err)
+	}
+	if got.Subject != "client-abc" {
+		t.Errorf("Subject = %q, want %q", got.Subject, "client-abc")
+	}
+}
+
+// TestParseWithIssuer_WrongIssuer verifies that ParseWithIssuer rejects a token
+// whose iss claim does not match the expected issuer.
+func TestParseWithIssuer_WrongIssuer(t *testing.T) {
+	// Arrange
+	now := time.Now().Truncate(time.Second)
+	claims := jwtutil.NewClaims(jwtutil.ClaimsConfig{
+		Issuer:    "identity-platform",
+		Subject:   "client-abc",
+		TokenID:   "token-iss-2",
+		ClientID:  "client-abc",
+		Scope:     "read",
+		IssuedAt:  now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+	raw := signedToken(t, claims)
+
+	// Act
+	_, err := jwtutil.ParseWithIssuer(raw, testKey, "wrong-issuer")
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error for wrong issuer, got nil")
+	}
+	if !errors.Is(err, jwtutil.ErrTokenInvalid) {
+		t.Errorf("error = %v, want ErrTokenInvalid", err)
+	}
+}
+
+// TestParseWithIssuer_MissingIssuer verifies that ParseWithIssuer rejects a token
+// that carries no iss claim at all.
+func TestParseWithIssuer_MissingIssuer(t *testing.T) {
+	// Arrange — token with empty Issuer
+	now := time.Now().Truncate(time.Second)
+	claims := jwtutil.NewClaims(jwtutil.ClaimsConfig{
+		Subject:   "client-abc",
+		TokenID:   "token-iss-3",
+		ClientID:  "client-abc",
+		Scope:     "read",
+		IssuedAt:  now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+	raw := signedToken(t, claims)
+
+	// Act
+	_, err := jwtutil.ParseWithIssuer(raw, testKey, "identity-platform")
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error when iss claim is absent, got nil")
+	}
+	if !errors.Is(err, jwtutil.ErrTokenInvalid) {
+		t.Errorf("error = %v, want ErrTokenInvalid", err)
+	}
+}

@@ -125,7 +125,7 @@ func TestIntrospectionAuthMiddleware_ActiveToken_CallsNext(t *testing.T) {
 		Scope:    "read write",
 	}
 	var called bool
-	mw := IntrospectionAuthMiddleware(&fakeIntrospector{result: result}, testutil.NewTestLogger())
+	mw := IntrospectionAuthMiddleware(&fakeIntrospector{result: result}, testutil.NewTestLogger(), "")
 	w := httptest.NewRecorder()
 
 	// Act
@@ -144,7 +144,7 @@ func TestIntrospectionAuthMiddleware_InactiveToken_Returns401WithInvalidToken(t 
 	// Arrange
 	result := &ports.IntrospectionResult{Active: false}
 	var called bool
-	mw := IntrospectionAuthMiddleware(&fakeIntrospector{result: result}, testutil.NewTestLogger())
+	mw := IntrospectionAuthMiddleware(&fakeIntrospector{result: result}, testutil.NewTestLogger(), "")
 	w := httptest.NewRecorder()
 
 	// Act
@@ -171,7 +171,7 @@ func TestIntrospectionAuthMiddleware_ServiceError_Returns500(t *testing.T) {
 	// Arrange
 	introspector := &fakeIntrospector{err: apperrors.New(apperrors.ErrCodeInternal, "introspection unavailable")}
 	var called bool
-	mw := IntrospectionAuthMiddleware(introspector, testutil.NewTestLogger())
+	mw := IntrospectionAuthMiddleware(introspector, testutil.NewTestLogger(), "")
 	w := httptest.NewRecorder()
 
 	// Act
@@ -211,7 +211,7 @@ func TestIntrospectionAuthMiddleware_PropagatesContextValues(t *testing.T) {
 		gotScopes, _ = r.Context().Value(contextKeyScopes).([]string)
 		gotPerms, _ = r.Context().Value(contextKeyPermissions).([]string)
 	})
-	mw := IntrospectionAuthMiddleware(&fakeIntrospector{result: result}, testutil.NewTestLogger())
+	mw := IntrospectionAuthMiddleware(&fakeIntrospector{result: result}, testutil.NewTestLogger(), "")
 	w := httptest.NewRecorder()
 
 	// Act
@@ -244,7 +244,7 @@ func TestJWTAuthMiddleware_ValidToken_CallsNext(t *testing.T) {
 		Scope:     "read write",
 	})
 	var called bool
-	mw := JWTAuthMiddleware(key, "", testutil.NewTestLogger())
+	mw := JWTAuthMiddleware(key, "", "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -267,7 +267,7 @@ func TestJWTAuthMiddleware_ExpiredToken_Returns401(t *testing.T) {
 		ExpiresAt: time.Now().Add(-time.Hour), // expired
 	})
 	var called bool
-	mw := JWTAuthMiddleware(key, "", testutil.NewTestLogger())
+	mw := JWTAuthMiddleware(key, "", "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -292,7 +292,7 @@ func TestJWTAuthMiddleware_WrongSigningKey_Returns401(t *testing.T) {
 		ExpiresAt: time.Now().Add(time.Hour),
 	})
 	var called bool
-	mw := JWTAuthMiddleware([]byte("actual-key"), "", testutil.NewTestLogger())
+	mw := JWTAuthMiddleware([]byte("actual-key"), "", "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -313,7 +313,7 @@ func TestJWTAuthMiddleware_WrongSigningKey_Returns401(t *testing.T) {
 func TestJWTAuthMiddleware_MalformedToken_Returns401(t *testing.T) {
 	// Arrange
 	var called bool
-	mw := JWTAuthMiddleware([]byte("key"), "", testutil.NewTestLogger())
+	mw := JWTAuthMiddleware([]byte("key"), "", "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -331,7 +331,7 @@ func TestJWTAuthMiddleware_MalformedToken_Returns401(t *testing.T) {
 func TestJWTAuthMiddleware_MissingAuthHeader_Returns401(t *testing.T) {
 	// Arrange
 	var called bool
-	mw := JWTAuthMiddleware([]byte("key"), "", testutil.NewTestLogger())
+	mw := JWTAuthMiddleware([]byte("key"), "", "", testutil.NewTestLogger())
 	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
 	w := httptest.NewRecorder()
 
@@ -369,7 +369,7 @@ func TestJWTAuthMiddleware_PropagatesContextValues(t *testing.T) {
 		gotScopes, _ = r.Context().Value(contextKeyScopes).([]string)
 		gotPerms, _ = r.Context().Value(contextKeyPermissions).([]string)
 	})
-	mw := JWTAuthMiddleware(key, "", testutil.NewTestLogger())
+	mw := JWTAuthMiddleware(key, "", "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -495,7 +495,7 @@ func TestJWTAuthMiddleware_WithAudience_ValidAudience_CallsNext(t *testing.T) {
 		Audience:  []string{"my-resource-service"},
 	})
 	var called bool
-	mw := JWTAuthMiddleware(key, "my-resource-service", testutil.NewTestLogger())
+	mw := JWTAuthMiddleware(key, "my-resource-service", "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
@@ -521,7 +521,7 @@ func TestJWTAuthMiddleware_WithAudience_WrongAudience_Returns401(t *testing.T) {
 		Audience:  []string{"other-service"},
 	})
 	var called bool
-	mw := JWTAuthMiddleware(key, "my-resource-service", testutil.NewTestLogger())
+	mw := JWTAuthMiddleware(key, "my-resource-service", "", testutil.NewTestLogger())
 	w := httptest.NewRecorder()
 
 	// Act
