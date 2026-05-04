@@ -15,7 +15,10 @@ var ErrTokenNotFound = errors.New("token not found")
 type TokenType string
 
 const (
-	TokenTypeBearer TokenType = "bearer"
+	// TokenTypeBearer is the RFC 6750 token type value. RFC 6750 §6.1.1 specifies
+	// the registered "Bearer" value with a capital B — this matches what must appear
+	// in the token_type field of RFC 6749 §5.1 token responses.
+	TokenTypeBearer TokenType = "Bearer"
 	TokenTypeOpaque TokenType = "opaque"
 )
 
@@ -25,6 +28,7 @@ type Token struct {
 	ClientID    string
 	Subject     string
 	Issuer      string
+	Audience    []string // RFC 9068 §2.2: resource server identifiers; nil when not set
 	Scopes      []string
 	Roles       []string // RBAC roles embedded in JWT; resolved at issuance
 	Permissions []string // resolved permissions ("resource:action"); resolved at issuance
@@ -85,13 +89,16 @@ type RefreshTokenRepository interface {
 }
 
 // IntrospectResponse is the result of token introspection per RFC 7662.
+// JTI and Audience are RFC 7662 §2.2 standard fields; both are omitted when empty.
 type IntrospectResponse struct {
-	Active    bool   `json:"active"`
-	ClientID  string `json:"client_id,omitempty"`
-	Subject   string `json:"sub,omitempty"`
-	Issuer    string `json:"iss,omitempty"`
-	Scope     string `json:"scope,omitempty"`
-	ExpiresAt int64  `json:"exp,omitempty"`
-	IssuedAt  int64  `json:"iat,omitempty"`
-	TokenType string `json:"token_type,omitempty"`
+	Active    bool     `json:"active"`
+	ClientID  string   `json:"client_id,omitempty"`
+	Subject   string   `json:"sub,omitempty"`
+	Issuer    string   `json:"iss,omitempty"`
+	Scope     string   `json:"scope,omitempty"`
+	ExpiresAt int64    `json:"exp,omitempty"`
+	IssuedAt  int64    `json:"iat,omitempty"`
+	TokenType string   `json:"token_type,omitempty"`
+	JTI       string   `json:"jti,omitempty"`
+	Audience  []string `json:"aud,omitempty"`
 }

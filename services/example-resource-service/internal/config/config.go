@@ -40,6 +40,10 @@ type JWTConfig struct {
 	// When set, tokens must carry a matching aud claim (RFC 9068 §4).
 	// Maps to RESOURCE_JWT_AUDIENCE. Empty disables audience validation.
 	Audience string `mapstructure:"audience"` // RESOURCE_JWT_AUDIENCE
+	// Issuer is the expected iss claim for locally-validated JWTs (RFC 8725 §3.8).
+	// When set, tokens whose iss claim does not match are rejected.
+	// Maps to RESOURCE_JWT_ISSUER. Empty disables issuer validation.
+	Issuer string `mapstructure:"issuer"` // RESOURCE_JWT_ISSUER
 }
 
 // IntrospectionConfig holds the URL and optional pre-shared secret for token-introspection-service.
@@ -67,6 +71,7 @@ func Load() (*Config, error) {
 	v.SetDefault("log.environment", "development")
 	v.SetDefault("jwt.signing_key", "")
 	v.SetDefault("jwt.audience", "")
+	v.SetDefault("jwt.issuer", "")
 	v.SetDefault("introspection.url", "")
 	v.SetDefault("introspection.secret", "")
 	v.SetDefault("database.url", "")

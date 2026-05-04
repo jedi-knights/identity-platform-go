@@ -17,10 +17,11 @@ type Config struct {
 }
 
 // IntrospectionConfig holds the pre-shared secret for the introspection endpoint.
-// When Secret is set, callers must supply Authorization: Bearer <secret>.
-// When empty, the endpoint requires no caller authentication (suitable for local dev).
+// Callers must supply Authorization: Bearer <secret>. RFC 7662 §2.1 requires some
+// form of caller authentication on this endpoint; an empty secret is rejected at
+// startup. Set via INTROSPECT_INTROSPECTION_SECRET.
 type IntrospectionConfig struct {
-	Secret string `mapstructure:"secret"` // INTROSPECT_SECRET_KEY
+	Secret string `mapstructure:"secret"` // INTROSPECT_INTROSPECTION_SECRET
 }
 
 type ServerConfig struct {
@@ -36,6 +37,10 @@ type LogConfig struct {
 
 type JWTConfig struct {
 	SigningKey string `mapstructure:"signing_key"`
+	// Issuer is the expected iss claim value for tokens validated by this service.
+	// When set, tokens whose iss claim does not match are treated as inactive (RFC 8725 §3.8).
+	// Maps to INTROSPECT_JWT_ISSUER. Empty disables issuer validation.
+	Issuer string `mapstructure:"issuer"` // INTROSPECT_JWT_ISSUER
 }
 
 // RedisConfig holds connection settings for the optional Redis revocation store.
@@ -54,6 +59,7 @@ func Load() (*Config, error) {
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.environment", "development")
 	v.SetDefault("jwt.signing_key", "")
+	v.SetDefault("jwt.issuer", "")
 	v.SetDefault("redis.url", "")
 	v.SetDefault("introspection.secret", "")
 
@@ -80,6 +86,9 @@ func Load() (*Config, error) {
 
 	if err := validateSigningKey(cfg.JWT.SigningKey); err != nil {
 		return nil, err
+	}
+	if cfg.Introspection.Secret == "" {
+		return nil, fmt.Errorf("validating introspection secret: INTROSPECT_INTROSPECTION_SECRET must not be empty — RFC 7662 §2.1 requires caller authentication on the introspection endpoint")
 	}
 	return &cfg, nil
 }

@@ -60,7 +60,7 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 
 	signingKey := []byte(cfg.JWT.SigningKey)
 	tokenGen := application.NewJWTTokenGenerator(signingKey, cfg.JWT.Issuer, cfg.JWT.Audience)
-	tokenVal := application.NewJWTTokenValidator(signingKey, tokenRepo)
+	tokenVal := application.NewJWTTokenValidator(signingKey, tokenRepo, cfg.JWT.Issuer)
 
 	ttl := time.Duration(cfg.Token.TTLSeconds) * time.Second
 	refreshTTL := time.Duration(cfg.Token.RefreshTokenTTLSeconds) * time.Second

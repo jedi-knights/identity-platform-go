@@ -17,6 +17,7 @@ import (
 func makeToken(t *testing.T, key []byte, claims gojwt.MapClaims) string {
 	t.Helper()
 	token := gojwt.NewWithClaims(gojwt.SigningMethodHS256, claims)
+	token.Header["typ"] = "at+jwt"
 	raw, err := token.SignedString(key)
 	if err != nil {
 		t.Fatalf("failed to sign token: %v", err)
@@ -133,7 +134,7 @@ func TestValidator_Validate(t *testing.T) {
 		},
 	}
 
-	v := jwtadapter.NewValidator(signingKey)
+	v := jwtadapter.NewValidator(signingKey, "")
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
