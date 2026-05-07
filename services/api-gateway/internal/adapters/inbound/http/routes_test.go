@@ -26,7 +26,15 @@ func newRouter(t *testing.T, router ports.RequestRouter, transport ports.Upstrea
 	t.Helper()
 	logger := logging.NewLogger(logging.Config{Output: io.Discard})
 	h := gatewayhttp.NewHandler(router, transport, &fakeMetrics{}, logger, nil)
-	return gatewayhttp.NewRouter(h, logger, config.CORSConfig{}, nil, nil, nil, nil, "ip", nil, nil, nil, nil)
+	mcp := gatewayhttp.NewMCPHandler(&fakeMCPInvoker{}, transport, logger)
+	return gatewayhttp.NewRouter(h, mcp, logger, config.CORSConfig{}, nil, nil, nil, nil, "ip", nil, nil, nil, nil)
+}
+
+// fakeMCPInvoker is a no-op MCPInvoker for routing tests that don't exercise the MCP path.
+type fakeMCPInvoker struct{}
+
+func (f *fakeMCPInvoker) Invoke(_ context.Context, _ domain.MCPToolRequest, _ string) (domain.MCPRoutingDecision, domain.MCPTool, error) {
+	return domain.MCPRoutingDecision{Decision: domain.DecisionDeny}, domain.MCPTool{}, nil
 }
 
 func TestNewRouter_HealthEndpointReturns200(t *testing.T) {

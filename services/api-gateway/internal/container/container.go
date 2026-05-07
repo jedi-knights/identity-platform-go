@@ -18,6 +18,7 @@ import (
 	hs256auth "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/auth/hs256"
 	jwksauth "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/auth/jwks"
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/http"
+	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/anthropic"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/circuitbreaker"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/fixedwindow"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/outbound/healthhttp"
@@ -72,6 +73,8 @@ type Container struct {
 //   - MetricsRecorder:   prometheusout.MetricsRecorder — exposes /metrics
 //   - HealthChecker:     healthhttp.Checker — probes each upstream's /health
 //   - RateLimiter:       strategy selected by cfg.RateLimit.Strategy; nil when disabled
+//   - MCPDecider:        Anthropic Claude adapter when GATEWAY_MCP_ANTHROPIC_API_KEY is set; static fallback otherwise
+//   - MCPRateLimiter:    in-memory adapter (replace with Redis adapter for multi-instance deployments)
 func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*Container, error) {
 	// --- Route resolver (static; restart required to pick up config changes) ---
 	ptrRoutes := cfg.ToDomainRoutes()
@@ -165,8 +168,30 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*Conta
 	// Handler is thin: it extracts HTTP primitives and delegates to port interfaces.
 	// Router applies the middleware chain (Decorator pattern) and wires system routes.
 	handler := inboundhttp.NewHandler(gateway, transport, promRecorder, logger, healthAgg)
+
+	// --- MCP tool routing ---
+	mcpTools := cfg.MCPTools()
+	mcpRateLimiter := memory.NewMCPRateLimiter(ctx, cfg.MCP)
+
+	var mcpDecider ports.MCPDecider
+	if cfg.MCP.AnthropicAPIKey != "" {
+		mcpDecider = anthropic.NewMCPDecider(cfg.MCP.AnthropicAPIKey, cfg.MCP.Model, logger)
+	} else {
+		mcpDecider = static.NewMCPStaticDecider(mcpTools)
+	}
+
+	mcpGateway := application.NewMCPGatewayService(
+		mcpDecider,
+		mcpRateLimiter,
+		mcpTools,
+		cfg.MCP.ClientTiers,
+		[]byte(cfg.MCP.JWTSigningKey),
+		logger,
+	)
+	mcpHandler := inboundhttp.NewMCPHandler(mcpGateway, transport, logger)
+
 	router := inboundhttp.NewRouter(
-		handler, logger, cfg.CORS,
+		handler, mcpHandler, logger, cfg.CORS,
 		authMiddleware,
 		buildIPFilterMiddleware(cfg, logger),
 		limiter, concLimiter, cfg.RateLimit.KeySource,

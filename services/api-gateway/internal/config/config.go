@@ -11,6 +11,9 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/domain"
 )
 
+// defaultMCPModel is used when no model is explicitly configured.
+const defaultMCPModel = "claude-sonnet-4-6"
+
 // AuthConfig governs JWT Bearer token authentication for API traffic.
 // When Enabled is false the middleware is not added to the chain.
 //
@@ -162,6 +165,40 @@ type RetryConfig struct {
 	RetryableStatus  []int   `mapstructure:"retryable_status"`
 }
 
+// MCPConfig holds configuration for the MCP tool-routing capability.
+// AnthropicAPIKey and JWTSigningKey are loaded from environment variables
+// (GATEWAY_MCP_ANTHROPIC_API_KEY, GATEWAY_MCP_JWT_SIGNING_KEY) and must never
+// be set in the YAML config file.
+type MCPConfig struct {
+	AnthropicAPIKey string                       `mapstructure:"anthropic_api_key"`
+	Model           string                       `mapstructure:"model"`
+	JWTSigningKey   string                       `mapstructure:"jwt_signing_key"`
+	Tools           []MCPToolConfig              `mapstructure:"tools"`
+	ClientTiers     map[string]string            `mapstructure:"client_tiers"`
+	RateLimits      map[string]MCPTierRateConfig `mapstructure:"rate_limits"`
+}
+
+// MCPToolConfig is the config-layer representation of a single registered tool.
+type MCPToolConfig struct {
+	Name        string `mapstructure:"name"`
+	Tier        string `mapstructure:"tier"`
+	RateGroup   string `mapstructure:"rate_group"`
+	Description string `mapstructure:"description"`
+	UpstreamURL string `mapstructure:"upstream_url"`
+}
+
+// MCPTierRateConfig defines rate limits for a single user tier.
+type MCPTierRateConfig struct {
+	WindowSeconds int                       `mapstructure:"window_seconds"`
+	Limit         int                       `mapstructure:"limit"`
+	Groups        map[string]MCPGroupConfig `mapstructure:"groups"`
+}
+
+// MCPGroupConfig defines the limit for a single named rate group.
+type MCPGroupConfig struct {
+	Limit int `mapstructure:"limit"`
+}
+
 // Config holds all api-gateway configuration.
 type Config struct {
 	Server         ServerConfig         `mapstructure:"server"`
@@ -175,6 +212,7 @@ type Config struct {
 	Compression    CompressionConfig    `mapstructure:"compression"`
 	Cache          CacheConfig          `mapstructure:"cache"`
 	Retry          RetryConfig          `mapstructure:"retry"`
+	MCP            MCPConfig            `mapstructure:"mcp"`
 	Routes         []RouteConfig        `mapstructure:"routes"`
 }
 
@@ -496,6 +534,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("retry.initial_backoff_ms", 100)
 	v.SetDefault("retry.multiplier", 2.0)
 	v.SetDefault("retry.retryable_status", []int{502, 503, 504})
+
+	// MCP model defaults to claude-sonnet-4-6 when not explicitly configured.
+	v.SetDefault("mcp.model", defaultMCPModel)
 }
 
 // envPrefix is the environment variable prefix used by bindEnv.
@@ -516,8 +557,16 @@ func validate(cfg *Config) error {
 	if err := validateRateLimit(cfg.RateLimit); err != nil {
 		return err
 	}
-	seen := make(map[string]struct{}, len(cfg.Routes))
-	for i, r := range cfg.Routes {
+	if err := validateRoutes(cfg.Routes); err != nil {
+		return err
+	}
+	return validateMCPTools(cfg.MCP.Tools)
+}
+
+// validateRoutes checks that each route has a unique name and a non-empty upstream URL.
+func validateRoutes(routes []RouteConfig) error {
+	seen := make(map[string]struct{}, len(routes))
+	for i, r := range routes {
 		if r.Name == "" {
 			return fmt.Errorf("routes[%d]: name is required", i)
 		}
@@ -646,6 +695,36 @@ func validateUpstreamTLS(t TLSConfig) error {
 		return errors.New("upstream tls.cert_file and tls.key_file must both be set for mTLS")
 	}
 	return nil
+}
+
+// validateMCPTools checks that each MCP tool has a name and an upstream URL.
+func validateMCPTools(tools []MCPToolConfig) error {
+	for i, t := range tools {
+		if t.Name == "" {
+			return fmt.Errorf("mcp.tools[%d]: name is required", i)
+		}
+		if t.UpstreamURL == "" {
+			return fmt.Errorf("mcp.tools[%d] (%q): upstream_url is required", i, t.Name)
+		}
+	}
+	return nil
+}
+
+// MCPTools converts the config-layer tool definitions to domain.MCPTool values.
+// This is the single translation point between config concerns and domain concerns
+// for the MCP tool registry.
+func (c *Config) MCPTools() []domain.MCPTool {
+	tools := make([]domain.MCPTool, len(c.MCP.Tools))
+	for i, tc := range c.MCP.Tools {
+		tools[i] = domain.MCPTool{
+			Name:        tc.Name,
+			Tier:        domain.UserTier(tc.Tier),
+			RateGroup:   tc.RateGroup,
+			Description: tc.Description,
+			UpstreamURL: tc.UpstreamURL,
+		}
+	}
+	return tools
 }
 
 // ToDomainRoutes converts the config-layer route definitions to domain.Route values.

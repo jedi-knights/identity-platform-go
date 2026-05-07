@@ -13,6 +13,8 @@ import (
 )
 
 // NewRouter registers all routes and applies the middleware chain.
+// System routes (/health, /swagger/, /mcp/tools/) are registered explicitly;
+// all other paths fall through to the gateway Proxy handler.
 //
 // Design: Decorator pattern — each middleware wraps the next handler, adding
 // one cross-cutting concern without modifying the handlers themselves.
@@ -28,6 +30,7 @@ import (
 //	            → CORSMiddleware
 //	              → mux
 //	                → [system routes: /health, /ready, /swagger/, /metrics]
+//	                → [mcp route: POST /mcp/tools/{toolName}]
 //	                → [proxy catch-all]:
 //	                    JWTMiddleware (optional)
 //	                      → IPFilterMiddleware (optional)
@@ -45,6 +48,8 @@ import (
 //   - Compression is outermost so it can compress error responses from Recovery.
 //
 // Parameters:
+//   - h:                  main gateway handler (health, ready, swagger, proxy).
+//   - mcp:                MCP tool invocation handler; registered at POST /mcp/tools/{toolName}.
 //   - corsCfg:            CORS settings; an empty struct disables CORS headers.
 //   - authMiddleware:     JWT middleware; nil disables authentication.
 //   - ipFilterMiddleware: IP allow/deny middleware; nil disables IP filtering.
@@ -57,6 +62,7 @@ import (
 //   - cacheMW:            Response cache middleware; nil disables caching.
 func NewRouter(
 	h *Handler,
+	mcp *MCPHandler,
 	logger logging.Logger,
 	corsCfg config.CORSConfig,
 	authMiddleware func(http.Handler) http.Handler,
@@ -81,6 +87,9 @@ func NewRouter(
 	if metricsHandler != nil {
 		mux.Handle("GET /metrics", metricsHandler)
 	}
+
+	// MCP tool invocations: authenticated, Claude-routed.
+	mux.HandleFunc("POST /mcp/tools/{toolName}", mcp.InvokeTool)
 
 	// Proxy catch-all — execution order: auth → ip-filter → concurrency → rate-limit → cache → proxy.
 	mux.Handle("/", buildProxyChain(h, logger, authMiddleware, ipFilterMiddleware, limiter, concLimiter, rateLimitKeySource, cacheMW))
