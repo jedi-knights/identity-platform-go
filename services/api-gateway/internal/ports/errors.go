@@ -6,3 +6,7 @@ import "errors"
 // route matches the inbound request attributes. Callers should treat this as a
 // client-facing 404 rather than an infrastructure failure.
 var ErrNoRouteMatched = errors.New("no route matched")
+
+// ErrRateLimitExceeded is returned by MCPRateLimiter.Consume when the budget for
+// the user is exhausted and consumption would take the counter below zero.
+var ErrRateLimitExceeded = errors.New("rate limit exceeded")
