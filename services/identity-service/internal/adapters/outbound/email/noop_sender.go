@@ -23,3 +23,8 @@ func NewNoopSender() *NoopSender {
 func (NoopSender) SendVerificationEmail(_ context.Context, _ domain.VerificationEmail) error {
 	return nil
 }
+
+// SendPasswordResetEmail returns nil without doing anything.
+func (NoopSender) SendPasswordResetEmail(_ context.Context, _ domain.PasswordResetEmail) error {
+	return nil
+}

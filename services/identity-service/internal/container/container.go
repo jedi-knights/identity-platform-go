@@ -45,7 +45,7 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 		return nil, fmt.Errorf("config is required")
 	}
 
-	userRepo, tokenRepo, closer, err := buildRepositories(cfg)
+	repos, closer, err := buildRepositories(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("building repositories: %w", err)
 	}
@@ -56,18 +56,28 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 	}
 
 	hasher := application.NewBCryptHasher(bcrypt.DefaultCost)
-	authSvc := application.NewAuthService(userRepo, hasher)
+	authSvc := application.NewAuthService(repos.users, hasher)
 	verifierSvc := application.NewEmailVerificationService(
-		userRepo,
-		tokenRepo,
+		repos.users,
+		repos.verificationTokens,
 		sender,
 		application.EmailVerificationConfig{
-			TokenTTL:                time.Duration(cfg.Email.TokenTTLSeconds) * time.Second,
+			TokenTTL:                time.Duration(cfg.Email.VerificationTokenTTLSeconds) * time.Second,
 			VerificationURLTemplate: cfg.Email.VerificationURLTemplate,
 		},
 	)
+	resetSvc := application.NewPasswordResetService(
+		repos.users,
+		repos.passwordResetTokens,
+		sender,
+		hasher,
+		application.PasswordResetConfig{
+			TokenTTL:         time.Duration(cfg.Email.PasswordResetTokenTTLSeconds) * time.Second,
+			ResetURLTemplate: cfg.Email.PasswordResetURLTemplate,
+		},
+	)
 
-	handler := inboundhttp.NewHandler(authSvc, authSvc, verifierSvc, logger)
+	handler := inboundhttp.NewHandler(authSvc, authSvc, verifierSvc, resetSvc, logger)
 
 	return &Container{
 		Logger:  logger,
@@ -77,22 +87,28 @@ func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
 	}, nil
 }
 
+// repos bundles the three repository handles so the wiring stays readable.
+type repos struct {
+	users               domain.UserRepository
+	verificationTokens  domain.VerificationTokenRepository
+	passwordResetTokens domain.PasswordResetTokenRepository
+}
+
 // buildRepositories selects the repository backends based on whether a
 // database URL is configured. PostgreSQL is preferred when available;
 // in-memory is the fallback for zero-dependency local/dev usage.
 // The returned closer must be called when the repositories are no longer needed.
-func buildRepositories(cfg *config.Config) (
-	domain.UserRepository,
-	domain.VerificationTokenRepository,
-	func(),
-	error,
-) {
+func buildRepositories(cfg *config.Config) (repos, func(), error) {
 	if cfg.Database.URL == "" {
-		return memory.NewUserRepository(), memory.NewVerificationTokenRepository(), func() {}, nil
+		return repos{
+			users:               memory.NewUserRepository(),
+			verificationTokens:  memory.NewVerificationTokenRepository(),
+			passwordResetTokens: memory.NewPasswordResetTokenRepository(),
+		}, func() {}, nil
 	}
 
 	if err := postgres.RunMigrations(cfg.Database.URL); err != nil {
-		return nil, nil, func() {}, fmt.Errorf("running postgres migrations: %w", err)
+		return repos{}, func() {}, fmt.Errorf("running postgres migrations: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -100,13 +116,14 @@ func buildRepositories(cfg *config.Config) (
 
 	pool, err := postgres.Connect(ctx, cfg.Database.URL)
 	if err != nil {
-		return nil, nil, func() {}, fmt.Errorf("connecting to postgres: %w", err)
+		return repos{}, func() {}, fmt.Errorf("connecting to postgres: %w", err)
 	}
 
-	return postgres.NewUserRepository(pool),
-		postgres.NewVerificationTokenRepository(pool),
-		pool.Close,
-		nil
+	return repos{
+		users:               postgres.NewUserRepository(pool),
+		verificationTokens:  postgres.NewVerificationTokenRepository(pool),
+		passwordResetTokens: postgres.NewPasswordResetTokenRepository(pool),
+	}, pool.Close, nil
 }
 
 // buildEmailSender selects an email-sender adapter based on the EmailConfig.

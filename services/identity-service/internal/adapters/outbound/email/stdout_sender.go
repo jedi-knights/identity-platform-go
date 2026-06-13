@@ -46,3 +46,15 @@ func (s *StdoutSender) SendVerificationEmail(_ context.Context, msg domain.Verif
 	)
 	return nil
 }
+
+// SendPasswordResetEmail logs the message.
+func (s *StdoutSender) SendPasswordResetEmail(_ context.Context, msg domain.PasswordResetEmail) error {
+	s.logger.Info(
+		"email.send",
+		"kind", "password_reset",
+		"to", msg.To,
+		"name", msg.Name,
+		"reset_url", msg.ResetURL,
+	)
+	return nil
+}

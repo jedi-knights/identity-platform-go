@@ -17,6 +17,7 @@ type Handler struct {
 	authenticator ports.Authenticator
 	registrar     ports.UserRegistrar
 	verifier      ports.EmailVerifier
+	resetter      ports.PasswordResetter
 	logger        logging.Logger
 }
 
@@ -24,12 +25,14 @@ func NewHandler(
 	authenticator ports.Authenticator,
 	registrar ports.UserRegistrar,
 	verifier ports.EmailVerifier,
+	resetter ports.PasswordResetter,
 	logger logging.Logger,
 ) *Handler {
 	return &Handler{
 		authenticator: authenticator,
 		registrar:     registrar,
 		verifier:      verifier,
+		resetter:      resetter,
 		logger:        logger,
 	}
 }
@@ -161,6 +164,68 @@ func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 		var ae *apperrors.AppError
 		if !errors.As(err, &ae) || ae.Code() == apperrors.ErrCodeInternal {
 			h.logger.Error("email verification failed", "error", err.Error())
+		}
+		httputil.WriteError(w, err)
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, resp)
+}
+
+// RequestPasswordReset handles POST /auth/request-password-reset.
+// Always returns 204 to prevent user enumeration.
+//
+// @Summary      Request a password-reset email
+// @Tags         auth
+// @Accept       json
+// @Param        request  body  domain.RequestPasswordResetRequest  true  "Email"
+// @Success      204
+// @Failure      400      {object}  httputil.ErrorResponse
+// @Router       /auth/request-password-reset [post]
+func (h *Handler) RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
+	var req domain.RequestPasswordResetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
+		return
+	}
+
+	if err := h.resetter.RequestReset(r.Context(), req); err != nil {
+		var ae *apperrors.AppError
+		if errors.As(err, &ae) && ae.Code() == apperrors.ErrCodeBadRequest {
+			httputil.WriteError(w, err)
+			return
+		}
+		h.logger.Error("request password reset failed", "error", err.Error())
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ResetPassword handles POST /auth/reset-password.
+//
+// @Summary      Reset password with a token
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request  body      domain.ResetPasswordRequest   true  "Token + new password"
+// @Success      200      {object}  domain.ResetPasswordResponse
+// @Failure      400      {object}  httputil.ErrorResponse
+// @Failure      401      {object}  httputil.ErrorResponse
+// @Router       /auth/reset-password [post]
+func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
+	var req domain.ResetPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
+		return
+	}
+
+	resp, err := h.resetter.ResetPassword(r.Context(), req)
+	if err != nil {
+		var ae *apperrors.AppError
+		if !errors.As(err, &ae) || ae.Code() == apperrors.ErrCodeInternal {
+			h.logger.Error("password reset failed", "error", err.Error())
 		}
 		httputil.WriteError(w, err)
 		return
