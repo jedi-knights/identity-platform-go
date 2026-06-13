@@ -753,4 +753,4 @@ semantic-release --project auth-server --dry-run --no-ci
 
 ## License
 
-This project is a reference implementation for educational and demonstration purposes.
+Licensed under the [Apache License, Version 2.0](LICENSE). This project is a reference implementation for educational and demonstration purposes.
