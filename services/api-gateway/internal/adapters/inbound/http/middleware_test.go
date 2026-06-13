@@ -3,6 +3,8 @@
 package http_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -678,6 +680,89 @@ func TestCompressionMiddleware_DoesNotDoubleCompress(t *testing.T) {
 	if rr.Body.String() != "already-compressed" {
 		t.Errorf("body = %q, expected upstream value to pass through unchanged", rr.Body.String())
 	}
+	// Assert — upstream's Content-Encoding must survive; deleting it leaves the client
+	// with encoded bytes labelled as identity, which renders as garbage.
+	if got := rr.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Errorf("Content-Encoding = %q, want %q (upstream-set header must be preserved)", got, "gzip")
+	}
+}
+
+// TestCompressionMiddleware_CompressedBodyDecodes verifies the gzip stream the
+// middleware emits round-trips back to the original bytes. Asserting only on the
+// Content-Encoding header would miss the case where the header is set but the
+// body never made it through the gzip writer (the inverse of issue #39).
+func TestCompressionMiddleware_CompressedBodyDecodes(t *testing.T) {
+	// Arrange
+	cfg := config.CompressionConfig{Enabled: true, MinSizeBytes: 10, Level: 6}
+	body := strings.Repeat(`<html><body>hello world</body></html>`, 10)
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(body))
+	})
+	mw := gatewayhttp.CompressionMiddleware(cfg, logging.NewLogger(logging.Config{Output: io.Discard}))(upstream)
+	req := httptest.NewRequest(http.MethodGet, "/sign-up", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rr := httptest.NewRecorder()
+
+	// Act
+	mw.ServeHTTP(rr, req)
+
+	// Assert
+	if got := rr.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want %q", got, "gzip")
+	}
+	r, err := gzip.NewReader(bytes.NewReader(rr.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("response body is not a valid gzip stream: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("decompress failed: %v", err)
+	}
+	if string(got) != body {
+		t.Errorf("decompressed body = %q, want %q", got, body)
+	}
+}
+
+// TestCompressionMiddleware_SetsVaryAcceptEncoding verifies the middleware
+// adds Vary: Accept-Encoding when it compresses, so downstream caches do not
+// serve the gzipped response to a client that did not advertise gzip support.
+func TestCompressionMiddleware_SetsVaryAcceptEncoding(t *testing.T) {
+	// Arrange
+	cfg := config.CompressionConfig{Enabled: true, MinSizeBytes: 10, Level: 6}
+	body := strings.Repeat(`{"k":"v"}`, 20)
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	})
+	mw := gatewayhttp.CompressionMiddleware(cfg, logging.NewLogger(logging.Config{Output: io.Discard}))(upstream)
+	req := httptest.NewRequest(http.MethodGet, "/api", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rr := httptest.NewRecorder()
+
+	// Act
+	mw.ServeHTTP(rr, req)
+
+	// Assert
+	vary := rr.Header().Values("Vary")
+	if !containsToken(vary, "Accept-Encoding") {
+		t.Errorf("Vary = %v, want to contain %q", vary, "Accept-Encoding")
+	}
+}
+
+// containsToken returns true if any Vary header value contains the named
+// token (case-insensitive, comma-delimited per RFC 7231 §7.1.4).
+func containsToken(values []string, token string) bool {
+	target := strings.ToLower(token)
+	for _, v := range values {
+		for _, part := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), target) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // --- RateLimitMiddleware rejection tests ---

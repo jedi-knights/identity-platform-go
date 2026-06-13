@@ -532,7 +532,9 @@ func (g *gzipResponseWriter) flushBuffered() {
 	if !alreadyEncoded && len(g.buf) >= g.minSizeBytes && isCompressible(ct) {
 		g.armGzip()
 	} else {
-		g.ResponseWriter.Header().Del("Content-Encoding")
+		// Preserve any upstream-set Content-Encoding — the body is encoded
+		// according to it. Deleting it leaves the client decoding gzip bytes
+		// as identity (issue #39).
 		g.ResponseWriter.WriteHeader(g.status)
 	}
 	g.headersDone = true
@@ -544,10 +546,26 @@ func (g *gzipResponseWriter) flushBuffered() {
 func (g *gzipResponseWriter) armGzip() {
 	g.ResponseWriter.Header().Set("Content-Encoding", "gzip")
 	g.ResponseWriter.Header().Del("Content-Length") // length changes after compression
+	addVaryToken(g.ResponseWriter.Header(), "Accept-Encoding")
 	g.ResponseWriter.WriteHeader(g.status)
 	// NewWriterLevel only errors on out-of-range level; level is clamped in newGzipResponseWriter.
 	gz, _ := gzip.NewWriterLevel(g.ResponseWriter, g.level)
 	g.gz = gz
+}
+
+// addVaryToken appends token to the Vary header without duplicating it.
+// Required by RFC 7231 §7.1.4 when the response varies by request header:
+// caches must key on Accept-Encoding so an identity-only client never receives
+// the gzip variant.
+func addVaryToken(h http.Header, token string) {
+	for _, v := range h.Values("Vary") {
+		for _, part := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), token) {
+				return
+			}
+		}
+	}
+	h.Add("Vary", token)
 }
 
 func (g *gzipResponseWriter) writeThrough(b []byte) (int, error) {
