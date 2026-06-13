@@ -18,6 +18,7 @@ func newRouterUnderTest() http.Handler {
 		&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{},
 		&fakeClaims{resp: &domain.UserClaims{Subject: "u-1"}},
 		&fakePreferences{},
+		&fakeResetter{},
 		testutil.NewTestLogger(),
 	)
 	return NewRouter(h, testutil.NewTestLogger())
