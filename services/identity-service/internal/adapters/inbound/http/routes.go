@@ -16,6 +16,8 @@ func NewRouter(h *Handler, logger logging.Logger) http.Handler {
 
 	mux.HandleFunc("POST /auth/login", h.Login)
 	mux.HandleFunc("POST /auth/register", h.Register)
+	mux.HandleFunc("POST /auth/request-verification", h.RequestVerification)
+	mux.HandleFunc("POST /auth/verify-email", h.VerifyEmail)
 	mux.HandleFunc("GET /health", h.Health)
 	mux.Handle("GET /swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),

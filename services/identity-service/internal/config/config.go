@@ -13,6 +13,22 @@ type Config struct {
 	Server   ServerConfig   `mapstructure:"server"`
 	Log      LogConfig      `mapstructure:"log"`
 	Database DatabaseConfig `mapstructure:"database"`
+	Email    EmailConfig    `mapstructure:"email"`
+}
+
+// EmailConfig holds the email-sender configuration. The flow is:
+//
+//	sender:                  which adapter to use (stdout | noop)
+//	verification_url_template: how the verification URL is rendered before
+//	                           it is handed to the sender. Must contain
+//	                           "{{token}}" — the application substitutes the
+//	                           one-time token at send time.
+//	token_ttl_secs:           how long a fresh verification token remains
+//	                           redeemable. Defaults to 86400 (24 hours).
+type EmailConfig struct {
+	Sender                  string `mapstructure:"sender"`
+	VerificationURLTemplate string `mapstructure:"verification_url_template"`
+	TokenTTLSeconds         int    `mapstructure:"token_ttl_secs"`
 }
 
 // DatabaseConfig holds PostgreSQL connection settings.
@@ -46,6 +62,9 @@ func Load() (*Config, error) {
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.environment", "development")
 	v.SetDefault("database.url", "")
+	v.SetDefault("email.sender", "stdout")
+	v.SetDefault("email.verification_url_template", "")
+	v.SetDefault("email.token_ttl_secs", 86400) // 24h
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")

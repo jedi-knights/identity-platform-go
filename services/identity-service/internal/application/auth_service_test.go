@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/application"
@@ -48,6 +49,17 @@ func (m *mockUserRepo) Save(_ context.Context, u *domain.User) error {
 func (m *mockUserRepo) Update(_ context.Context, u *domain.User) error {
 	m.byID[u.ID] = u
 	m.byEmail[u.Email] = u
+	return nil
+}
+
+func (m *mockUserRepo) MarkEmailVerified(_ context.Context, userID string, verifiedAt time.Time) error {
+	u, ok := m.byID[userID]
+	if !ok {
+		return apperrors.New(apperrors.ErrCodeNotFound, "user not found")
+	}
+	stamp := verifiedAt
+	u.EmailVerifiedAt = &stamp
+	u.UpdatedAt = verifiedAt
 	return nil
 }
 
