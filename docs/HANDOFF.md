@@ -70,7 +70,7 @@ If step 1 returns `501 not yet implemented`, then `AUTH_LOGIN_UI_URL` wasn't set
 
 ## Pending PRs / branches
 
-- `origin/feat/password-reset` — 2 commits ahead of main: **substantive unmerged work** (identity-service password reset flow with `/auth/request-password-reset` and `/auth/reset-password`, separate token table, email sender extension, migrations). Decide whether to merge, rebase, or close. Tip: `gh pr list --state all --head feat/password-reset` to see PR history.
+- `feat/password-reset` was ported onto current `main` as a single `feat(identity-service): password reset flow` PR (renumbered Postgres migration to `000004`, added the SQLite adapter and migration `000003`, kept `email.token_ttl_secs` unchanged). The old branch is superseded.
 
 Local has been cleaned: only `main` remains; all other local branches were merged-and-deleted upstreams.
 

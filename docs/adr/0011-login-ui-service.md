@@ -252,7 +252,7 @@ var _ ports.SessionStore = (*SessionStore)(nil)
 
 ### What this ADR does NOT define
 
-- **Password reset.** `identity-service` does not yet expose forgot/reset endpoints. Adding them is a separate, small ADR that mirrors the existing email-verification machinery — out of scope here.
+- **Password reset.** `identity-service` exposes `POST /auth/request-password-reset` and `POST /auth/reset-password` (mirroring the email-verification machinery), but `login-ui` has no forgot/reset screens yet — out of scope here.
 - **Federated login** (Sign in with Google, GitHub, etc.). Separate ADR — would add an `IdentityProvider` strategy slot on `login-ui` and a corresponding linking flow on `identity-service`.
 - **MFA.** Touches `identity-service` (factor storage), `auth-server` (`amr` claim widening), and `login-ui` (second-factor step). Large enough to deserve its own ADR.
 - **Account linking.** Same as federated login — separate ADR.

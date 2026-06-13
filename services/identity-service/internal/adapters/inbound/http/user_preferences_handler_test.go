@@ -15,7 +15,7 @@ import (
 func newActiveAccountHandler(prefs *fakePreferences) *Handler {
 	return NewHandler(
 		&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{},
-		&fakeClaims{}, prefs,
+		&fakeClaims{}, prefs, &fakeResetter{},
 		testutil.NewTestLogger(),
 	)
 }
