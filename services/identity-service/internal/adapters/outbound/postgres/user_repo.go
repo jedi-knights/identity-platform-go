@@ -8,6 +8,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	pgxmigrate "github.com/golang-migrate/migrate/v4/database/pgx/v5"
@@ -91,10 +92,10 @@ func RunMigrations(databaseURL string) error {
 func (r *UserRepository) FindByID(ctx context.Context, id string) (*domain.User, error) {
 	var u domain.User
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, email, name, password_hash, active, created_at, updated_at
+		`SELECT id, email, name, password_hash, active, created_at, updated_at, email_verified_at
 		 FROM users WHERE id = $1`,
 		id,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Active, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Active, &u.CreatedAt, &u.UpdatedAt, &u.EmailVerifiedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperrors.New(apperrors.ErrCodeNotFound, "user not found")
 	}
@@ -109,10 +110,10 @@ func (r *UserRepository) FindByID(ctx context.Context, id string) (*domain.User,
 func (r *UserRepository) FindByEmail(ctx context.Context, email string) (*domain.User, error) {
 	var u domain.User
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, email, name, password_hash, active, created_at, updated_at
+		`SELECT id, email, name, password_hash, active, created_at, updated_at, email_verified_at
 		 FROM users WHERE email = $1`,
 		email,
-	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Active, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Active, &u.CreatedAt, &u.UpdatedAt, &u.EmailVerifiedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperrors.New(apperrors.ErrCodeNotFound, "user not found")
 	}
@@ -153,6 +154,24 @@ func (r *UserRepository) Update(ctx context.Context, user *domain.User) error {
 			return apperrors.New(apperrors.ErrCodeConflict, "email already registered")
 		}
 		return fmt.Errorf("updating user: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperrors.New(apperrors.ErrCodeNotFound, "user not found")
+	}
+	return nil
+}
+
+// MarkEmailVerified atomically sets email_verified_at on the user.
+// Returns ErrCodeNotFound if no row with the given ID exists.
+func (r *UserRepository) MarkEmailVerified(ctx context.Context, userID string, verifiedAt time.Time) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE users
+		 SET email_verified_at = $2, updated_at = now()
+		 WHERE id = $1`,
+		userID, verifiedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("marking email verified: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return apperrors.New(apperrors.ErrCodeNotFound, "user not found")

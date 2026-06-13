@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"sync"
+	"time"
 
 	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/domain"
@@ -86,5 +87,20 @@ func (r *UserRepository) Update(_ context.Context, user *domain.User) error {
 	cp := copyUser(user)
 	r.byID[user.ID] = cp
 	r.byEmail[user.Email] = cp
+	return nil
+}
+
+// MarkEmailVerified atomically sets EmailVerifiedAt on the user.
+// Returns ErrCodeNotFound if the user does not exist.
+func (r *UserRepository) MarkEmailVerified(_ context.Context, userID string, verifiedAt time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	u, ok := r.byID[userID]
+	if !ok {
+		return apperrors.New(apperrors.ErrCodeNotFound, "user not found")
+	}
+	stamp := verifiedAt
+	u.EmailVerifiedAt = &stamp
+	u.UpdatedAt = verifiedAt
 	return nil
 }
