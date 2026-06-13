@@ -16,13 +16,20 @@ import (
 type Handler struct {
 	authenticator ports.Authenticator
 	registrar     ports.UserRegistrar
+	verifier      ports.EmailVerifier
 	logger        logging.Logger
 }
 
-func NewHandler(authenticator ports.Authenticator, registrar ports.UserRegistrar, logger logging.Logger) *Handler {
+func NewHandler(
+	authenticator ports.Authenticator,
+	registrar ports.UserRegistrar,
+	verifier ports.EmailVerifier,
+	logger logging.Logger,
+) *Handler {
 	return &Handler{
 		authenticator: authenticator,
 		registrar:     registrar,
+		verifier:      verifier,
 		logger:        logger,
 	}
 }
@@ -91,6 +98,75 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Location", "/users/"+resp.UserID)
 	httputil.WriteJSON(w, http.StatusCreated, resp)
+}
+
+// RequestVerification handles POST /auth/request-verification.
+//
+// The response is intentionally 204 No Content regardless of whether the
+// email is registered — surfacing "no such user" here would let an
+// attacker enumerate valid emails.
+//
+// @Summary      Request a verification email
+// @Description  Sends a verification email to the address on the request. Always returns 204 to prevent user enumeration.
+// @Tags         auth
+// @Accept       json
+// @Param        request  body  domain.RequestVerificationRequest  true  "Email"
+// @Success      204
+// @Failure      400      {object}  httputil.ErrorResponse
+// @Router       /auth/request-verification [post]
+func (h *Handler) RequestVerification(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
+	var req domain.RequestVerificationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
+		return
+	}
+
+	if err := h.verifier.RequestVerification(r.Context(), req); err != nil {
+		var ae *apperrors.AppError
+		if errors.As(err, &ae) && ae.Code() == apperrors.ErrCodeBadRequest {
+			httputil.WriteError(w, err)
+			return
+		}
+		// Anything else (infra errors) is logged but does not leak — return 204
+		// to keep responses indistinguishable.
+		h.logger.Error("request verification failed", "error", err.Error())
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// VerifyEmail handles POST /auth/verify-email.
+//
+// @Summary      Verify an email address
+// @Description  Redeems a one-time verification token and marks the user verified.
+// @Tags         auth
+// @Accept       json
+// @Produce      json
+// @Param        request  body      domain.VerifyEmailRequest   true  "Verification token"
+// @Success      200      {object}  domain.VerifyEmailResponse
+// @Failure      400      {object}  httputil.ErrorResponse
+// @Failure      401      {object}  httputil.ErrorResponse
+// @Router       /auth/verify-email [post]
+func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
+	var req domain.VerifyEmailRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
+		return
+	}
+
+	resp, err := h.verifier.VerifyEmail(r.Context(), req)
+	if err != nil {
+		var ae *apperrors.AppError
+		if !errors.As(err, &ae) || ae.Code() == apperrors.ErrCodeInternal {
+			h.logger.Error("email verification failed", "error", err.Error())
+		}
+		httputil.WriteError(w, err)
+		return
+	}
+
+	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
 // Health handles GET /health.

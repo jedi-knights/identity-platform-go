@@ -7,13 +7,19 @@ import (
 
 // User represents an identity user.
 type User struct {
-	ID           string
-	Email        string
-	PasswordHash string
-	Name         string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	Active       bool
+	ID              string
+	Email           string
+	PasswordHash    string
+	Name            string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	Active          bool
+	EmailVerifiedAt *time.Time // nil until the user redeems a verification token
+}
+
+// IsEmailVerified reports whether the user has redeemed a verification token.
+func (u *User) IsEmailVerified() bool {
+	return u != nil && u.EmailVerifiedAt != nil
 }
 
 // UserRepository defines persistence operations for users.
@@ -22,6 +28,9 @@ type UserRepository interface {
 	FindByEmail(ctx context.Context, email string) (*User, error)
 	Save(ctx context.Context, user *User) error
 	Update(ctx context.Context, user *User) error
+
+	// MarkEmailVerified atomically sets email_verified_at on the user.
+	MarkEmailVerified(ctx context.Context, userID string, verifiedAt time.Time) error
 }
 
 // PasswordHasher defines the password hashing strategy (Strategy pattern).
