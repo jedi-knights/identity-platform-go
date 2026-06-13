@@ -95,41 +95,73 @@ func (s *EmailVerificationService) RequestVerification(
 		return apperrors.New(apperrors.ErrCodeBadRequest, "email is required")
 	}
 
-	user, err := s.users.FindByEmail(ctx, req.Email)
+	user, skip, err := s.findVerifiableUser(ctx, req.Email)
 	if err != nil {
-		if apperrors.IsNotFound(err) {
-			// Silent success — caller cannot tell whether the email exists.
-			return nil
-		}
-		return fmt.Errorf("looking up user: %w", err)
+		return err
 	}
-
-	if user.IsEmailVerified() {
-		// Already verified — silently succeed, same shape as unknown email.
+	if skip {
 		return nil
 	}
 
-	plaintext, hash, err := newToken(s.cfg.TokenByteLength)
+	plaintext, err := s.issueToken(ctx, user.ID)
 	if err != nil {
-		return fmt.Errorf("generating token: %w", err)
+		return err
 	}
 
+	return s.dispatchVerificationEmail(ctx, user, plaintext)
+}
+
+// findVerifiableUser looks up the user for an email and reports whether the
+// caller should silently no-op (unknown email or already verified). Both of
+// those branches must respond identically to the success path to avoid leaking
+// account existence — they are the same as far as the caller is concerned.
+func (s *EmailVerificationService) findVerifiableUser(
+	ctx context.Context,
+	email string,
+) (user *domain.User, skip bool, err error) {
+	user, err = s.users.FindByEmail(ctx, email)
+	if err != nil {
+		if apperrors.IsNotFound(err) {
+			return nil, true, nil
+		}
+		return nil, false, fmt.Errorf("looking up user: %w", err)
+	}
+	if user.IsEmailVerified() {
+		return nil, true, nil
+	}
+	return user, false, nil
+}
+
+// issueToken generates a fresh single-use token and persists its hash.
+func (s *EmailVerificationService) issueToken(ctx context.Context, userID string) (plaintext string, err error) {
+	plaintext, hash, err := newToken(s.cfg.TokenByteLength)
+	if err != nil {
+		return "", fmt.Errorf("generating token: %w", err)
+	}
 	now := s.now()
 	record := &domain.VerificationToken{
 		TokenHash: hash,
-		UserID:    user.ID,
+		UserID:    userID,
 		ExpiresAt: now.Add(s.cfg.TokenTTL),
 		CreatedAt: now,
 	}
 	if err := s.tokens.Save(ctx, record); err != nil {
-		return fmt.Errorf("saving verification token: %w", err)
+		return "", fmt.Errorf("saving verification token: %w", err)
 	}
+	return plaintext, nil
+}
 
+// dispatchVerificationEmail renders the verification URL and hands it to the
+// EmailSender adapter.
+func (s *EmailVerificationService) dispatchVerificationEmail(
+	ctx context.Context,
+	user *domain.User,
+	plaintext string,
+) error {
 	url, err := renderVerificationURL(s.cfg.VerificationURLTemplate, plaintext)
 	if err != nil {
 		return fmt.Errorf("rendering verification URL: %w", err)
 	}
-
 	if err := s.sender.SendVerificationEmail(ctx, domain.VerificationEmail{
 		To:              user.Email,
 		Name:            user.Name,
@@ -137,7 +169,6 @@ func (s *EmailVerificationService) RequestVerification(
 	}); err != nil {
 		return fmt.Errorf("sending verification email: %w", err)
 	}
-
 	return nil
 }
 
@@ -156,7 +187,24 @@ func (s *EmailVerificationService) VerifyEmail(
 	}
 
 	hash := hashToken(token)
+	now := s.now()
 
+	record, err := s.findRedeemableToken(ctx, hash, now)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.completeRedemption(ctx, record, hash, now)
+}
+
+// findRedeemableToken loads a token by hash and validates it is still
+// redeemable. Unknown / expired / already-used tokens all collapse to
+// ErrCodeUnauthorized so callers cannot probe token validity.
+func (s *EmailVerificationService) findRedeemableToken(
+	ctx context.Context,
+	hash string,
+	now time.Time,
+) (*domain.VerificationToken, error) {
 	record, err := s.tokens.FindByHash(ctx, hash)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
@@ -164,25 +212,30 @@ func (s *EmailVerificationService) VerifyEmail(
 		}
 		return nil, fmt.Errorf("looking up token: %w", err)
 	}
-
-	now := s.now()
 	if !record.ExpiresAt.After(now) || record.UsedAt != nil {
 		return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid or expired token")
 	}
+	return record, nil
+}
 
+// completeRedemption marks the user verified, burns the token, and returns
+// the response payload assembled from the freshly-loaded user record.
+func (s *EmailVerificationService) completeRedemption(
+	ctx context.Context,
+	record *domain.VerificationToken,
+	hash string,
+	now time.Time,
+) (*domain.VerifyEmailResponse, error) {
 	if err := s.users.MarkEmailVerified(ctx, record.UserID, now); err != nil {
 		return nil, fmt.Errorf("marking email verified: %w", err)
 	}
-
 	if err := s.tokens.MarkUsed(ctx, hash, now); err != nil {
 		return nil, fmt.Errorf("marking token used: %w", err)
 	}
-
 	user, err := s.users.FindByID(ctx, record.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("loading user after verification: %w", err)
 	}
-
 	return &domain.VerifyEmailResponse{
 		UserID:     user.ID,
 		Email:      user.Email,
