@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
+	platform "github.com/jedi-knights/go-platform/container"
 
+	inboundhttp "github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/container"
 )
@@ -41,42 +43,53 @@ func TestNew_MinimalConfig_ReturnsContainer(t *testing.T) {
 		Log:    config.LogConfig{Level: "error", Format: "text", Environment: "test"},
 	}
 
-	ctr, err := container.New(context.Background(), cfg, testLogger(t))
+	ctx := context.Background()
+	ctr, err := container.New(ctx, cfg, testLogger(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	defer ctr.Close()
+	defer func() { _ = ctr.Close(ctx) }()
 
-	if ctr.Handler == nil {
-		t.Error("expected non-nil Handler")
+	handler := platform.MustResolve[*inboundhttp.Handler](ctx, ctr)
+	if handler == nil {
+		t.Fatal("expected non-nil Handler from container")
 	}
 
 	// Smoke-test: verify the wired handler responds to /health without panicking.
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
-	ctr.Handler.Health(w, req)
+	handler.Health(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("health smoke-test got status %d, want 200", w.Code)
 	}
 }
 
-// TestContainer_Close_Idempotent verifies that calling Close twice does not panic.
+// TestContainer_Close_Idempotent verifies that calling Close twice does not
+// panic. The platform container nils its closer slice on the first call so
+// the second call is a no-op on closers; the done channel is closed exactly
+// once via sync.Once.
 func TestContainer_Close_Idempotent(t *testing.T) {
 	cfg := &config.Config{
 		Server: config.ServerConfig{Host: "localhost", Port: 8082},
 		Log:    config.LogConfig{Level: "error", Format: "text", Environment: "test"},
 	}
-	ctr, err := container.New(context.Background(), cfg, testLogger(t))
+	ctx := context.Background()
+	ctr, err := container.New(ctx, cfg, testLogger(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	ctr.Close()
-	ctr.Close() // must not panic
+	if err := ctr.Close(ctx); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := ctr.Close(ctx); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
 }
 
-// TestNew_InvalidDatabaseURL_ReturnsError verifies that an invalid DATABASE_URL
-// causes New to return a wrapped error before any attempt to serve traffic.
-// A context deadline is set to prevent the test hanging under slow DNS resolution.
+// TestNew_InvalidDatabaseURL_ReturnsError verifies that an invalid
+// DATABASE_URL causes New to return a wrapped error before any attempt to
+// serve traffic. A context deadline is set to prevent the test hanging
+// under slow DNS resolution.
 func TestNew_InvalidDatabaseURL_ReturnsError(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{URL: "postgres://invalid-host:5432/nodb?connect_timeout=1"},
