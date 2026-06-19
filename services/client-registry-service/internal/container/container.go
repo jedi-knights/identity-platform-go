@@ -44,47 +44,50 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, func(_ context.Context, _ *platform.Container) (logging.Logger, error) {
 		return logger, nil
 	})
-
-	platform.Register(c, func(ctx context.Context, c *platform.Container) (domain.ClientRepository, error) {
-		cfg := platform.MustResolve[*config.Config](ctx, c)
-		log := platform.MustResolve[logging.Logger](ctx, c)
-		if cfg.Database.URL == "" {
-			log.Info("database.url not set — using in-memory client repository")
-			return memory.NewClientRepository(), nil
-		}
-
-		log.Info("database.url set — running migrations and connecting to postgres")
-		if err := postgres.RunMigrations(cfg.Database.URL); err != nil {
-			return nil, fmt.Errorf("running postgres migrations: %w", err)
-		}
-		repo, err := postgres.Connect(ctx, cfg.Database.URL)
-		if err != nil {
-			return nil, fmt.Errorf("connecting to postgres: %w", err)
-		}
-		log.Info("connected to postgres — using postgres client repository")
-		c.OnClose("postgres", func(_ context.Context) error {
-			repo.Close()
-			return nil
-		})
-		return repo, nil
-	})
-
-	platform.Register(c, func(ctx context.Context, c *platform.Container) (*application.ClientService, error) {
-		repo, err := platform.Resolve[domain.ClientRepository](ctx, c)
-		if err != nil {
-			return nil, err
-		}
-		return application.NewClientService(repo), nil
-	})
-
-	platform.Register(c, func(ctx context.Context, c *platform.Container) (*inboundhttp.Handler, error) {
-		svc := platform.MustResolve[*application.ClientService](ctx, c)
-		log := platform.MustResolve[logging.Logger](ctx, c)
-		return inboundhttp.NewHandler(svc, svc, svc, svc, log), nil
-	})
+	platform.Register(c, clientRepositoryProvider)
+	platform.Register(c, clientServiceProvider)
+	platform.Register(c, handlerProvider)
 
 	if err := c.Bootstrap(ctx); err != nil {
 		return nil, fmt.Errorf("bootstrapping container: %w", err)
 	}
 	return c, nil
+}
+
+func clientRepositoryProvider(ctx context.Context, c *platform.Container) (domain.ClientRepository, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if cfg.Database.URL == "" {
+		log.Info("database.url not set — using in-memory client repository")
+		return memory.NewClientRepository(), nil
+	}
+
+	log.Info("database.url set — running migrations and connecting to postgres")
+	if err := postgres.RunMigrations(cfg.Database.URL); err != nil {
+		return nil, fmt.Errorf("running postgres migrations: %w", err)
+	}
+	repo, err := postgres.Connect(ctx, cfg.Database.URL)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to postgres: %w", err)
+	}
+	log.Info("connected to postgres — using postgres client repository")
+	c.OnClose("postgres", func(_ context.Context) error {
+		repo.Close()
+		return nil
+	})
+	return repo, nil
+}
+
+func clientServiceProvider(ctx context.Context, c *platform.Container) (*application.ClientService, error) {
+	repo, err := platform.Resolve[domain.ClientRepository](ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	return application.NewClientService(repo), nil
+}
+
+func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.Handler, error) {
+	svc := platform.MustResolve[*application.ClientService](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	return inboundhttp.NewHandler(svc, svc, svc, svc, log), nil
 }
