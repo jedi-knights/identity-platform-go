@@ -7,7 +7,8 @@ import (
 
 	"github.com/jedi-knights/go-platform/apperrors"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/clientregistry"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/identityservice"

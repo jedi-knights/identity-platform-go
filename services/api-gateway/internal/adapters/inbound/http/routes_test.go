@@ -9,7 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	gatewayhttp "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/domain"
@@ -24,7 +25,7 @@ import (
 //   - nil tracing middleware (OTel disabled)
 func newRouter(t *testing.T, router ports.RequestRouter, transport ports.UpstreamTransport) http.Handler {
 	t.Helper()
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	h := gatewayhttp.NewHandler(router, transport, &fakeMetrics{}, logger, nil)
 	mcp := gatewayhttp.NewMCPHandler(&fakeMCPInvoker{}, transport, logger)
 	return gatewayhttp.NewRouter(h, mcp, logger, config.CORSConfig{}, nil, nil, nil, nil, "ip", nil, nil, nil, nil)

@@ -4,14 +4,15 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/container"
 )
 
 func testLogger(t *testing.T) logging.Logger {
 	t.Helper()
-	return logging.NewLogger(logging.Config{Level: "info", Format: "text", Environment: "test"})
+	return logging.New(logging.Config{Level: "info", Format: "text", Environment: "test"})
 }
 
 func minimalConfig() *config.Config {

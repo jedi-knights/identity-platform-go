@@ -7,14 +7,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/container"
 )
 
 func testLogger(t *testing.T) logging.Logger {
 	t.Helper()
-	return logging.NewLogger(logging.Config{Level: "error", Format: "text", Environment: "test"})
+	return logging.New(logging.Config{Level: "error", Format: "text", Environment: "test"})
 }
 
 func TestNew_NilConfig_ReturnsError(t *testing.T) {

@@ -15,7 +15,8 @@ import (
 
 	"github.com/jedi-knights/go-platform/apperrors"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	authhttp "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
@@ -67,7 +68,7 @@ var _ ports.ClientAuthenticator = (*fakeClientAuth)(nil)
 
 func newTestHandler(t *testing.T, issuer *fakeIssuer, introspector *fakeIntrospector, revoker *fakeRevoker) *authhttp.Handler {
 	t.Helper()
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	return authhttp.NewHandler(issuer, introspector, revoker, &fakeClientAuth{}, logger, "")
 }
 
@@ -573,7 +574,7 @@ func TestAuthorize_ReturnsNotImplemented(t *testing.T) {
 
 func newTestHandlerWithSecret(t *testing.T, issuer *fakeIssuer, introspector *fakeIntrospector, revoker *fakeRevoker, secret string) *authhttp.Handler {
 	t.Helper()
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	return authhttp.NewHandler(issuer, introspector, revoker, &fakeClientAuth{}, logger, secret)
 }
 

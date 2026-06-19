@@ -10,7 +10,8 @@ import (
 
 	"github.com/jedi-knights/go-platform/apperrors"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/domain"
 )
@@ -36,7 +37,7 @@ func (f *fakePermReader) GetSubjectPermissions(_ context.Context, _ string) (*do
 }
 
 func newTestHandler(eval *fakeEvaluator, reader *fakePermReader) *inboundhttp.Handler {
-	logger := logging.NewLogger(logging.Config{Level: "error", Format: "text", Environment: "test"})
+	logger := logging.New(logging.Config{Level: "error", Format: "text", Environment: "test"})
 	return inboundhttp.NewHandler(eval, reader, logger)
 }
 
