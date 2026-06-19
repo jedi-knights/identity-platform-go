@@ -92,7 +92,17 @@ domain  →  application  →  ports  →  adapters
 
 ### Dependency Injection
 
-Each service wires everything in `internal/container/container.go`. This is the only place where concrete implementations are instantiated and injected. Use constructor injection — no service locator, no global state.
+Each service wires everything in `internal/container/container.go` through `github.com/jedi-knights/go-platform/container`. The platform container exposes:
+
+- `platform.Register[T]` / `platform.RegisterLazy[T]` — register a provider for type `T`. Eager registrations all run during `Bootstrap`; lazy ones run on first `Resolve`. Providers receive `context.Context` for cancellation-aware construction (DB dials, JWKS fetches, etc.).
+- `platform.Resolve[T](ctx, c)` / `platform.MustResolve[T](ctx, c)` — fetch a wired value. **Resolution is confined to the composition root (`cmd/serve.go` / `cmd/main.go` and `container_test.go`).** Application code, adapters, and middleware still receive their dependencies as constructor parameters — `Resolve` is not a service locator for business code.
+- `c.OnClose(name, fn)` — registered closers run in LIFO during `c.Close(ctx)` and their errors are joined via `errors.Join`. Use this for postgres pools, Redis clients, OTel tracer flushes, etc.
+- `c.Bootstrap(ctx)` runs eager providers in **registration order** so an upstream failure surfaces before any downstream provider that depends on it runs (verified by `go-platform` `TestBootstrap_UpstreamErrorBeatsDownstreamMustResolve`).
+- `c.Scope()` returns a child container that inherits parent registrations but holds its own. Available but not currently used by any service.
+
+The container's nil-interface contract is supported: a provider that returns `(nil, nil)` for an interface-typed dependency (e.g. an optional `ports.UserAuthenticator` when its upstream URL is unset) resolves to the nil interface without panicking.
+
+`platform.Container` replaces the prior hand-rolled `Container` struct in every service. The convention is unchanged in spirit — wiring is centralized; business code receives dependencies via constructors; no globals — but the mechanics are now uniform across services and provide ordered shutdown, lifecycle channels (`Ready` / `Done`), and a test seam (`OverrideValue`).
 
 ### Inter-Service Communication
 
