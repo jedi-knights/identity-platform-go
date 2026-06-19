@@ -294,8 +294,8 @@ func TestLoad_LeakyBucketZeroDrainRateReturnsError(t *testing.T) {
 
 func TestLoad_ConcurrencyZeroMaxInFlightReturnsError(t *testing.T) {
 	err := tlsEnvTest(t, map[string]string{
-		"GATEWAY_RATE_LIMIT_ENABLED":      "true",
-		"GATEWAY_RATE_LIMIT_STRATEGY":     "concurrency",
+		"GATEWAY_RATE_LIMIT_ENABLED":       "true",
+		"GATEWAY_RATE_LIMIT_STRATEGY":      "concurrency",
 		"GATEWAY_RATE_LIMIT_MAX_IN_FLIGHT": "0",
 	})
 	if err == nil {

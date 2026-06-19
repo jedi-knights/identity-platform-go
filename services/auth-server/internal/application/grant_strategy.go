@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
+	"github.com/jedi-knights/go-platform/apperrors"
+
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/ports"
 )

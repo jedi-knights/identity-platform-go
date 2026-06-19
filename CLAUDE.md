@@ -160,21 +160,17 @@ done
 
 ## Shared Libraries
 
-Located in `libs/`. Each is an independent Go module. The dependency graph flows one way:
+Shared utility code lives in two external modules. Phase 3 of the cross-repo consolidation migrates each former `libs/<name>` package out one at a time; entries below mark which have moved already and which still live locally during the transition.
 
-```
-libs/errors  ←  libs/httputil, libs/logging, libs/testutil, libs/jwtutil  ←  all services
-```
+| Library | Current home | Purpose |
+|---------|--------------|---------|
+| `apperrors` | `github.com/jedi-knights/go-platform/apperrors` | Typed `AppError` with `ErrorCode`; HTTP status mapping lives in `httputil` |
+| `libs/httputil` | local (pending migration) | `WriteJSON`, `WriteError` — always buffer before writing headers |
+| `libs/logging` | local (pending migration) | `slog`-based structured logging with trace ID and context support |
+| `libs/testutil` | local (pending migration) | Shared test helpers |
+| `libs/jwtutil` | local (pending migration) | Canonical `Claims` type, `Sign`, `Parse`, and `NewClaims` — the single source of truth for JWT structure across auth-server and token-introspection-service |
 
-A change to `libs/errors` cascades to every service at release time.
-
-| Library | Purpose |
-|---------|---------|
-| `libs/errors` | Typed `AppError` with `ErrorCode` and HTTP status mapping |
-| `libs/httputil` | `WriteJSON`, `WriteError` — always buffer before writing headers |
-| `libs/logging` | `slog`-based structured logging with trace ID and context support |
-| `libs/testutil` | Shared test helpers |
-| `libs/jwtutil` | Canonical `Claims` type, `Sign`, `Parse`, and `NewClaims` — the single source of truth for JWT structure across auth-server and token-introspection-service |
+Imports of the former `libs/errors` package were rewritten from `github.com/ocrosby/identity-platform-go/libs/errors` (alias `apperrors`) to `github.com/jedi-knights/go-platform/apperrors` (no alias, package is already named `apperrors`). Service `go.mod` files now require `github.com/jedi-knights/go-platform` directly; the `replace` directive and the `./libs/errors` workspace entry were removed.
 
 ---
 
@@ -187,4 +183,4 @@ Each service and library versions independently. Releases are triggered automati
 - `feat!:` or `BREAKING CHANGE:` footer → major bump
 - `chore:`, `docs:`, `style:`, `ci:`, `test:` → no release
 
-When `libs/errors` is released, all downstream libraries and services are also released automatically (dependency propagation).
+Releases in the external `go-platform` module are independent and propagate via a `go get -u github.com/jedi-knights/go-platform` bump in each affected service's `go.mod`. While `libs/httputil`, `libs/logging`, `libs/testutil`, and `libs/jwtutil` remain local, a change to any of them still propagates through the workspace immediately and triggers a release for every service that imports them.

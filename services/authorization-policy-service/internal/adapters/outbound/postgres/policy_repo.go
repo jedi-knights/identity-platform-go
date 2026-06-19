@@ -17,7 +17,8 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
+	"github.com/jedi-knights/go-platform/apperrors"
+
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/domain"
 )
 
