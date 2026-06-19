@@ -3,7 +3,8 @@ package jwt
 import (
 	"context"
 
-	"github.com/ocrosby/identity-platform-go/libs/jwtutil"
+	"github.com/jedi-knights/go-platform/jwtutil"
+
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/domain"
 )
 

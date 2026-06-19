@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ocrosby/identity-platform-go/libs/jwtutil"
+	"github.com/jedi-knights/go-platform/jwtutil"
+
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/domain"
 )
 
