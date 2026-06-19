@@ -1,13 +1,18 @@
+// Package container wires the auth-server's dependencies through the
+// platform DI container. Resolution from the returned container is
+// restricted to the composition root in cmd/main.go and tests; business
+// code receives its dependencies via constructor parameters.
 package container
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
 
-	"github.com/jedi-knights/go-platform/apperrors"
-
 	"github.com/jedi-knights/go-logging/pkg/logging"
+	"github.com/jedi-knights/go-platform/apperrors"
+	platform "github.com/jedi-knights/go-platform/container"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/clientregistry"
@@ -21,129 +26,218 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/ports"
 )
 
-// Container holds all wired service dependencies.
-type Container struct {
-	Logger  logging.Logger
-	Handler *inboundhttp.Handler
-	Config  *config.Config
-}
-
-// New creates and wires all dependencies.
+// New constructs and bootstraps a platform container wired with every
+// dependency this service needs.
 //
-// Adapter selection:
-//   - TokenRepository: Redis adapter when AUTH_REDIS_URL is set;
-//     in-memory adapter otherwise (local dev / single-replica deployments).
-//   - RefreshTokenRepository: Redis adapter when AUTH_REDIS_URL is set;
-//     in-memory adapter otherwise (local dev / single-replica deployments).
-//   - ClientAuthenticator: HTTP adapter (client-registry-service) when AUTH_CLIENT_REGISTRY_URL is set;
-//     in-memory adapter otherwise (local dev / testing without the full stack).
-//   - UserAuthenticator: HTTP adapter (identity-service) when AUTH_IDENTITY_SERVICE_URL is set;
-//     nil otherwise (authorization_code grant remains a stub).
-//   - SubjectPermissionsFetcher: HTTP adapter (authorization-policy-service) when AUTH_POLICY_URL is set;
-//     nil otherwise (tokens are issued without roles/permissions claims).
-func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
+// Adapter selection (preserved verbatim from the prior implementation):
+//   - TokenRepository / RefreshTokenRepository: Redis when AUTH_REDIS_URL
+//     is set; in-memory otherwise. The Redis client is registered as an
+//     OnClose hook so a graceful shutdown drains it.
+//   - ClientAuthenticator: HTTP adapter (client-registry-service) when
+//     AUTH_CLIENT_REGISTRY_URL is set; in-memory otherwise. When in-memory
+//     is selected, AuthorizationCodeStrategy receives the same underlying
+//     repo so there is no duplicate seed.
+//   - UserAuthenticator: HTTP adapter (identity-service) when
+//     AUTH_IDENTITY_SERVICE_URL is set; nil otherwise.
+//   - SubjectPermissionsFetcher: HTTP adapter (authorization-policy-service)
+//     when AUTH_POLICY_URL is set; nil otherwise.
+func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platform.Container, error) {
 	if cfg == nil {
 		return nil, apperrors.New(apperrors.ErrCodeInternal, "config is required")
 	}
-
-	httpClient := &http.Client{Timeout: 5 * time.Second}
-
-	tokenRepo, refreshTokenRepo, err := buildTokenRepos(cfg, logger, httpClient)
-	if err != nil {
-		return nil, err
+	if logger == nil {
+		return nil, apperrors.New(apperrors.ErrCodeInternal, "logger is required")
 	}
 
-	// buildClientAuth returns both the authenticator and the underlying repo so that
-	// AuthorizationCodeStrategy (which needs direct repo access for redirect URI validation)
-	// shares the same in-memory store — no duplicate seed, no split state.
-	clientAuth, clientRepoForAC := buildClientAuth(cfg, logger, httpClient)
-	userAuth := buildUserAuth(cfg, logger, httpClient)
-	permsFetcher := buildPermsFetcher(cfg, logger)
+	c := platform.New()
 
-	signingKey := []byte(cfg.JWT.SigningKey)
-	tokenGen := application.NewJWTTokenGenerator(signingKey, cfg.JWT.Issuer, cfg.JWT.Audience)
-	tokenVal := application.NewJWTTokenValidator(signingKey, tokenRepo, cfg.JWT.Issuer)
+	platform.Register(c, func(_ context.Context, _ *platform.Container) (*config.Config, error) {
+		return cfg, nil
+	})
+	platform.Register(c, func(_ context.Context, _ *platform.Container) (logging.Logger, error) {
+		return logger, nil
+	})
+	platform.Register(c, httpClientProvider)
+	platform.Register(c, tokenRepositoriesProvider)
+	platform.Register(c, clientWiringProvider)
+	platform.Register(c, userAuthenticatorProvider)
+	platform.Register(c, permissionsFetcherProvider)
+	platform.Register(c, tokenGeneratorProvider)
+	platform.Register(c, tokenValidatorProvider)
+	platform.Register(c, clientCredentialsStrategyProvider)
+	platform.Register(c, authorizationCodeStrategyProvider)
+	platform.Register(c, refreshTokenStrategyProvider)
+	platform.Register(c, grantRegistryProvider)
+	platform.Register(c, tokenServiceProvider)
+	platform.Register(c, handlerProvider)
 
-	ttl := time.Duration(cfg.Token.TTLSeconds) * time.Second
-	refreshTTL := time.Duration(cfg.Token.RefreshTokenTTLSeconds) * time.Second
+	if err := c.Bootstrap(ctx); err != nil {
+		return nil, fmt.Errorf("bootstrapping container: %w", err)
+	}
+	return c, nil
+}
 
-	ccStrategy := application.NewClientCredentialsStrategy(clientAuth, tokenRepo, refreshTokenRepo, tokenGen, permsFetcher, ttl, refreshTTL)
-	acStrategy := application.NewAuthorizationCodeStrategy(clientRepoForAC, tokenRepo, tokenGen, ttl, userAuth)
-	rtStrategy := application.NewRefreshTokenStrategy(clientAuth, tokenRepo, refreshTokenRepo, tokenGen, permsFetcher, ttl, refreshTTL)
-	grantRegistry := application.NewGrantStrategyRegistry(ccStrategy, acStrategy, rtStrategy)
-	tokenSvc := application.NewTokenService(tokenRepo, refreshTokenRepo, tokenVal)
+func httpClientProvider(context.Context, *platform.Container) (*http.Client, error) {
+	return &http.Client{Timeout: 5 * time.Second}, nil
+}
 
-	issuer := inboundhttp.NewTokenIssuerAdapter(grantRegistry)
-	introspector := inboundhttp.NewTokenIntrospectorAdapter(tokenSvc)
-	revoker := inboundhttp.NewTokenRevokerAdapter(tokenSvc)
-	handler := inboundhttp.NewHandler(issuer, introspector, revoker, clientAuth, logger, cfg.Introspection.Secret)
+// tokenRepositories bundles the two token-related repos so they share a
+// single Redis client when AUTH_REDIS_URL is set, and a single OnClose hook
+// drains that client at shutdown.
+type tokenRepositories struct {
+	token   domain.TokenRepository
+	refresh domain.RefreshTokenRepository
+}
 
-	return &Container{
-		Logger:  logger,
-		Handler: handler,
-		Config:  cfg,
+func tokenRepositoriesProvider(ctx context.Context, c *platform.Container) (*tokenRepositories, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if cfg.Redis.URL == "" {
+		log.Info("using in-memory token store (AUTH_REDIS_URL not set); revoked tokens will not be rejected at scale")
+		return &tokenRepositories{
+			token:   memory.NewTokenRepository(),
+			refresh: memory.NewRefreshTokenRepository(),
+		}, nil
+	}
+	log.Info("using Redis token store", "url", cfg.Redis.URL)
+	redisClient, err := redisadapter.NewClient(cfg.Redis.URL)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to Redis: %w", err)
+	}
+	c.OnClose("redis", func(_ context.Context) error {
+		return redisClient.Close()
+	})
+	return &tokenRepositories{
+		token:   redisadapter.NewTokenRepository(redisClient),
+		refresh: redisadapter.NewRefreshTokenRepository(redisClient),
 	}, nil
 }
 
-// buildTokenRepos selects the token and refresh-token repositories.
-// Uses Redis when AUTH_REDIS_URL is set; falls back to in-memory for local dev.
-// Warning: the in-memory store is not correct under multi-replica deployments —
-// each replica holds an independent copy of its data (see ADR-0005).
-func buildTokenRepos(cfg *config.Config, logger logging.Logger, httpClient *http.Client) (domain.TokenRepository, domain.RefreshTokenRepository, error) {
-	_ = httpClient // reserved for future durable adapters that share the HTTP client
-	if cfg.Redis.URL != "" {
-		logger.Info("using Redis token store", "url", cfg.Redis.URL)
-		redisClient, err := redisadapter.NewClient(cfg.Redis.URL)
-		if err != nil {
-			return nil, nil, fmt.Errorf("connecting to Redis: %w", err)
-		}
-		return redisadapter.NewTokenRepository(redisClient), redisadapter.NewRefreshTokenRepository(redisClient), nil
-	}
-	logger.Info("using in-memory token store (AUTH_REDIS_URL not set); revoked tokens will not be rejected at scale")
-	return memory.NewTokenRepository(), memory.NewRefreshTokenRepository(), nil
+// clientWiring bundles the ClientAuthenticator with the underlying
+// domain.ClientRepository so AuthorizationCodeStrategy (which needs direct
+// repo access for redirect URI validation) shares the same in-memory store
+// as the authenticator — no duplicate seed, no split state. The repo is nil
+// when the remote HTTP adapter is selected; AuthorizationCodeStrategy
+// receives nil and skips redirect-URI validation (the grant is a stub
+// until PKCE is implemented).
+type clientWiring struct {
+	authenticator ports.ClientAuthenticator
+	repoForAC     domain.ClientRepository
 }
 
-// buildClientAuth selects the client authenticator and returns the underlying
-// domain.ClientRepository alongside it. The repo is nil when the remote HTTP
-// adapter is selected — AuthorizationCodeStrategy receives nil and skips
-// redirect-URI validation (the grant is a stub until PKCE is implemented).
-//
-// Returning the repo here avoids creating a second independent in-memory store:
-// both the authenticator and the authorization-code strategy share the same instance.
-func buildClientAuth(cfg *config.Config, logger logging.Logger, httpClient *http.Client) (ports.ClientAuthenticator, domain.ClientRepository) {
+func clientWiringProvider(ctx context.Context, c *platform.Container) (*clientWiring, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
 	if cfg.ClientRegistry.URL != "" {
-		logger.Info("using remote client-registry-service", "url", cfg.ClientRegistry.URL)
-		return clientregistry.NewClientAuthenticator(cfg.ClientRegistry.URL, httpClient), nil
+		log.Info("using remote client-registry-service", "url", cfg.ClientRegistry.URL)
+		return &clientWiring{
+			authenticator: clientregistry.NewClientAuthenticator(cfg.ClientRegistry.URL, httpClient),
+		}, nil
 	}
-	logger.Info("using in-memory client store (AUTH_CLIENT_REGISTRY_URL not set)")
+	log.Info("using in-memory client store (AUTH_CLIENT_REGISTRY_URL not set)")
 	var seedClients []*domain.Client
 	if cfg.DevSeedClients {
 		seedClients = devClients(cfg.DevClientSecret)
 	}
 	repo := memory.NewClientRepository(seedClients)
-	return memory.NewClientAuthenticator(repo), repo
+	return &clientWiring{
+		authenticator: memory.NewClientAuthenticator(repo),
+		repoForAC:     repo,
+	}, nil
 }
 
-// buildUserAuth selects the user authenticator.
-// Returns nil when AUTH_IDENTITY_SERVICE_URL is not set — the authorization_code
-// grant remains a stub until the full PKCE flow is implemented.
-func buildUserAuth(cfg *config.Config, logger logging.Logger, httpClient *http.Client) ports.UserAuthenticator {
-	if cfg.IdentityService.URL != "" {
-		logger.Info("using remote identity-service", "url", cfg.IdentityService.URL)
-		return identityservice.NewUserAuthenticator(cfg.IdentityService.URL, httpClient)
+func userAuthenticatorProvider(ctx context.Context, c *platform.Container) (ports.UserAuthenticator, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	if cfg.IdentityService.URL == "" {
+		return nil, nil
 	}
-	return nil
+	log.Info("using remote identity-service", "url", cfg.IdentityService.URL)
+	return identityservice.NewUserAuthenticator(cfg.IdentityService.URL, httpClient), nil
 }
 
-// buildPermsFetcher selects the subject-permissions fetcher for RBAC claims.
-// Returns nil when AUTH_POLICY_URL is not set — tokens are issued without
-// roles/permissions claims; resource services fall back to scope-only authorization.
-func buildPermsFetcher(cfg *config.Config, logger logging.Logger) ports.SubjectPermissionsFetcher {
-	if cfg.Policy.URL != "" {
-		logger.Info("using remote authorization-policy-service", "url", cfg.Policy.URL)
-		return policyadapter.New(cfg.Policy.URL)
+func permissionsFetcherProvider(ctx context.Context, c *platform.Container) (ports.SubjectPermissionsFetcher, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if cfg.Policy.URL == "" {
+		return nil, nil
 	}
-	return nil
+	log.Info("using remote authorization-policy-service", "url", cfg.Policy.URL)
+	return policyadapter.New(cfg.Policy.URL), nil
+}
+
+func tokenGeneratorProvider(ctx context.Context, c *platform.Container) (*application.JWTTokenGenerator, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	return application.NewJWTTokenGenerator([]byte(cfg.JWT.SigningKey), cfg.JWT.Issuer, cfg.JWT.Audience), nil
+}
+
+func tokenValidatorProvider(ctx context.Context, c *platform.Container) (*application.JWTTokenValidator, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	repos := platform.MustResolve[*tokenRepositories](ctx, c)
+	return application.NewJWTTokenValidator([]byte(cfg.JWT.SigningKey), repos.token, cfg.JWT.Issuer), nil
+}
+
+func clientCredentialsStrategyProvider(ctx context.Context, c *platform.Container) (*application.ClientCredentialsStrategy, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	cw := platform.MustResolve[*clientWiring](ctx, c)
+	repos := platform.MustResolve[*tokenRepositories](ctx, c)
+	gen := platform.MustResolve[*application.JWTTokenGenerator](ctx, c)
+	fetcher := platform.MustResolve[ports.SubjectPermissionsFetcher](ctx, c)
+	ttl, refreshTTL := tokenTTLs(cfg)
+	return application.NewClientCredentialsStrategy(cw.authenticator, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL), nil
+}
+
+func authorizationCodeStrategyProvider(ctx context.Context, c *platform.Container) (*application.AuthorizationCodeStrategy, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	cw := platform.MustResolve[*clientWiring](ctx, c)
+	repos := platform.MustResolve[*tokenRepositories](ctx, c)
+	gen := platform.MustResolve[*application.JWTTokenGenerator](ctx, c)
+	userAuth := platform.MustResolve[ports.UserAuthenticator](ctx, c)
+	ttl, _ := tokenTTLs(cfg)
+	return application.NewAuthorizationCodeStrategy(cw.repoForAC, repos.token, gen, ttl, userAuth), nil
+}
+
+func refreshTokenStrategyProvider(ctx context.Context, c *platform.Container) (*application.RefreshTokenStrategy, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	cw := platform.MustResolve[*clientWiring](ctx, c)
+	repos := platform.MustResolve[*tokenRepositories](ctx, c)
+	gen := platform.MustResolve[*application.JWTTokenGenerator](ctx, c)
+	fetcher := platform.MustResolve[ports.SubjectPermissionsFetcher](ctx, c)
+	ttl, refreshTTL := tokenTTLs(cfg)
+	return application.NewRefreshTokenStrategy(cw.authenticator, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL), nil
+}
+
+func grantRegistryProvider(ctx context.Context, c *platform.Container) (*application.GrantStrategyRegistry, error) {
+	cc := platform.MustResolve[*application.ClientCredentialsStrategy](ctx, c)
+	ac := platform.MustResolve[*application.AuthorizationCodeStrategy](ctx, c)
+	rt := platform.MustResolve[*application.RefreshTokenStrategy](ctx, c)
+	return application.NewGrantStrategyRegistry(cc, ac, rt), nil
+}
+
+func tokenServiceProvider(ctx context.Context, c *platform.Container) (*application.TokenService, error) {
+	repos := platform.MustResolve[*tokenRepositories](ctx, c)
+	val := platform.MustResolve[*application.JWTTokenValidator](ctx, c)
+	return application.NewTokenService(repos.token, repos.refresh, val), nil
+}
+
+func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.Handler, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	cw := platform.MustResolve[*clientWiring](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	grants := platform.MustResolve[*application.GrantStrategyRegistry](ctx, c)
+	tokens := platform.MustResolve[*application.TokenService](ctx, c)
+
+	issuer := inboundhttp.NewTokenIssuerAdapter(grants)
+	introspector := inboundhttp.NewTokenIntrospectorAdapter(tokens)
+	revoker := inboundhttp.NewTokenRevokerAdapter(tokens)
+	return inboundhttp.NewHandler(issuer, introspector, revoker, cw.authenticator, log, cfg.Introspection.Secret), nil
+}
+
+func tokenTTLs(cfg *config.Config) (time.Duration, time.Duration) {
+	return time.Duration(cfg.Token.TTLSeconds) * time.Second,
+		time.Duration(cfg.Token.RefreshTokenTTLSeconds) * time.Second
 }
 
 // devClients returns a seed client for local development only.

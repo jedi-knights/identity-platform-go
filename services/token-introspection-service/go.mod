@@ -26,7 +26,7 @@ require (
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jedi-knights/go-logging v0.0.0-20260619091547-fb8ddb4676f8
-	github.com/jedi-knights/go-platform v0.0.0-20260619095948-9dc19627f8e4
+	github.com/jedi-knights/go-platform v0.0.0-20260619185630-7e4594b6bac9
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
