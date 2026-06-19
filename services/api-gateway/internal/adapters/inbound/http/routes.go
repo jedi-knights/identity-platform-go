@@ -7,7 +7,8 @@ import (
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 
-	"github.com/ocrosby/identity-platform-go/libs/httputil"
+	"github.com/jedi-knights/go-platform/httputil"
+
 	_ "github.com/ocrosby/identity-platform-go/services/api-gateway/docs"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/ports"
