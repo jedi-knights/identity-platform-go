@@ -14,7 +14,9 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
+	platform "github.com/jedi-knights/go-platform/container"
 
+	inboundhttp "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/container"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/observability"
@@ -94,17 +96,21 @@ func bindFlags(cmd *cobra.Command, v *viper.Viper) {
 	}
 }
 
-// containerHandle pairs a Container with the context cancel function that stops
-// its background goroutines (rate-limiter eviction loop, etc.).
+// containerHandle pairs a platform container with the context cancel
+// function that stops its background goroutines (rate-limiter eviction
+// loop, etc.) and the inbound HTTP handler used for two-phase graceful
+// shutdown.
 type containerHandle struct {
-	ctr    *container.Container
-	cancel context.CancelFunc
+	ctr     *platform.Container
+	cancel  context.CancelFunc
+	handler *inboundhttp.Handler
 }
 
-// release stops the container's background goroutines and flushes OTel spans.
+// release stops the container's background goroutines and runs every
+// registered OnClose hook (including the OTel tracer flush).
 func (h *containerHandle) release(ctx context.Context) {
 	h.cancel()
-	_ = h.ctr.Shutdown(ctx)
+	_ = h.ctr.Close(ctx)
 }
 
 func runServe(cmd *cobra.Command, _ []string) error {
@@ -141,11 +147,13 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		ctrCancel()
 		return fmt.Errorf("creating container: %w", err)
 	}
-	current := &containerHandle{ctr: ctr, cancel: ctrCancel}
+	router := platform.MustResolve[http.Handler](ctrCtx, ctr)
+	handler := platform.MustResolve[*inboundhttp.Handler](ctrCtx, ctr)
+	current := &containerHandle{ctr: ctr, cancel: ctrCancel, handler: handler}
 
 	// AtomicHandler lets us swap the inner handler on SIGHUP without stopping
 	// the HTTP server. In-flight requests on the old handler finish normally.
-	atomicH := reload.New(ctr.Handler)
+	atomicH := reload.New(router)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
@@ -180,7 +188,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	//   Drain   — Sleep for DrainTimeoutSecs to let the LB finish draining.
 	//   Phase 2 — Stop the HTTP server (drain in-flight connections).
 	//   Flush   — Flush OTel spans and stop background goroutines.
-	current.ctr.SetReady(false)
+	current.handler.SetReady(false)
 	if d := cfg.Server.DrainTimeoutSecs; d > 0 {
 		time.Sleep(time.Duration(d) * time.Second)
 	}
@@ -256,7 +264,9 @@ func hotReload(
 		return old
 	}
 
-	atomicH.Swap(newCtr.Handler)
+	newRouter := platform.MustResolve[http.Handler](newCtx, newCtr)
+	newHandler := platform.MustResolve[*inboundhttp.Handler](newCtx, newCtr)
+	atomicH.Swap(newRouter)
 	logger.Info("hot reload successful")
 
 	// Release the old container after a brief grace period to let any request
@@ -268,5 +278,5 @@ func hotReload(
 		old.release(releaseCtx)
 	}()
 
-	return &containerHandle{ctr: newCtr, cancel: newCancel}
+	return &containerHandle{ctr: newCtr, cancel: newCancel, handler: newHandler}
 }

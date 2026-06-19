@@ -1,8 +1,10 @@
-// Package container is the Dependency Injection root for the api-gateway.
+// Package container is the dependency injection root for the api-gateway.
 //
-// Design: Facade pattern — New() is the single entry point that constructs and
-// wires every concrete adapter without exposing internal complexity to callers.
-// Application code and tests interact only with the Container struct.
+// Design: every concrete adapter is constructed and wired inside the eager
+// providers registered on a [platform.Container]. Resolution from the
+// returned container is restricted to the composition root in cmd/serve.go
+// and tests; business code receives its dependencies via constructor
+// parameters.
 package container
 
 import (
@@ -15,6 +17,8 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
+	"github.com/jedi-knights/go-platform/apperrors"
+	platform "github.com/jedi-knights/go-platform/container"
 
 	hs256auth "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/auth/hs256"
 	jwksauth "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/auth/jwks"
@@ -40,180 +44,229 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/ports"
 )
 
-// Container holds all wired service dependencies for the api-gateway.
+// New constructs and bootstraps a platform container wired with every
+// dependency the api-gateway needs.
 //
-// Shutdown must be called on process exit (after the HTTP server drains) to
-// flush any in-flight telemetry spans. Pass the graceful-shutdown context so
-// the flush is bounded by the same deadline as the HTTP server drain.
+// ctx controls the lifecycle of background goroutines started by adapters
+// (e.g. the rate-limiter eviction loop). Cancel it on shutdown to release
+// those resources; the platform container's [platform.Container.Close]
+// additionally flushes the OTel trace provider via an OnClose hook
+// registered by the router provider.
 //
-// SetReady(false) begins the two-phase graceful shutdown sequence: the /health
-// endpoint returns 503 immediately, signalling the load balancer to stop routing
-// new traffic. After the LB drain window elapses, call server.Shutdown followed
-// by Shutdown to complete the sequence.
-type Container struct {
-	Logger   logging.Logger
-	Handler  http.Handler
-	Config   *config.Config
-	Shutdown func(context.Context) error
-	SetReady func(bool)
-}
-
-// New constructs a fully wired Container.
-//
-// ctx controls the lifecycle of background goroutines started here (the
-// rate-limiter eviction loop). Cancel it on shutdown to release resources.
-//
-// Adapter selection uses the Strategy pattern throughout: every field in the
-// handler and router is a port interface. The concrete type is chosen here in
-// the Facade and is invisible to application logic.
+// Adapter selection (preserved verbatim from the prior implementation):
 //
 //   - RouteResolver:     static.Resolver — loads routes from config at startup
-//   - UpstreamTransport: proxy.Transport — httputil.ReverseProxy with pooled client
-//     wrapped by roundrobin.Transport (URL selection, always active)
-//     optionally wrapped by circuitbreaker.Transport (Decorator pattern)
-//   - MetricsRecorder:   prometheusout.MetricsRecorder — exposes /metrics
-//   - HealthChecker:     healthhttp.Checker — probes each upstream's /health
+//   - UpstreamTransport: proxy.Transport wrapped by URL picker, optionally by
+//     retry and circuit breaker (Decorator pattern)
+//   - MetricsRecorder:   prometheusout.MetricsRecorder
+//   - HealthChecker:     healthhttp.Checker
 //   - RateLimiter:       strategy selected by cfg.RateLimit.Strategy; nil when disabled
-//   - MCPDecider:        Anthropic Claude adapter when GATEWAY_MCP_ANTHROPIC_API_KEY is set; static fallback otherwise
-//   - MCPRateLimiter:    in-memory adapter (replace with Redis adapter for multi-instance deployments)
-func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*Container, error) {
-	// --- Route resolver (static; restart required to pick up config changes) ---
-	ptrRoutes := cfg.ToDomainRoutes()
-	resolver := static.NewResolver(ptrRoutes)
+//   - MCPDecider:        Anthropic Claude adapter when GATEWAY_MCP_ANTHROPIC_API_KEY is set;
+//     static fallback otherwise
+//   - MCPRateLimiter:    in-memory adapter (replace with Redis adapter for
+//     multi-instance deployments)
+//
+// Two values exposed via Resolve at the composition root:
+//
+//   - *inboundhttp.Handler — so cmd/serve.go can call handler.SetReady(false)
+//     during graceful shutdown
+//   - http.Handler — the assembled router that the HTTP server consumes
+func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platform.Container, error) {
+	if cfg == nil {
+		return nil, apperrors.New(apperrors.ErrCodeInternal, "config is required")
+	}
+	if logger == nil {
+		return nil, apperrors.New(apperrors.ErrCodeInternal, "logger is required")
+	}
 
-	// GatewayService owns route-resolution logic; adapters delegate to it.
-	gateway := application.NewGatewayService(resolver, logger)
+	c := platform.New()
 
-	// --- Shared HTTP client ---
-	// A single client is reused by both the proxy transport and the health checker
-	// so connection pools are shared rather than duplicated.
+	platform.Register(c, func(_ context.Context, _ *platform.Container) (*config.Config, error) {
+		return cfg, nil
+	})
+	platform.Register(c, func(_ context.Context, _ *platform.Container) (logging.Logger, error) {
+		return logger, nil
+	})
+	platform.Register(c, func(_ context.Context, _ *platform.Container) (lifecycleCtx, error) {
+		return lifecycleCtx{ctx: ctx}, nil
+	})
+
+	// Shared building blocks resolved by downstream providers.
+	platform.Register(c, httpClientProvider)
+	platform.Register(c, routesProvider)
+	platform.Register(c, transportProvider)
+	platform.Register(c, metricsRecorderProvider)
+	platform.Register(c, gatewayServiceProvider)
+	platform.Register(c, healthAggregatorProvider)
+	platform.Register(c, handlerProvider)
+	platform.Register(c, mcpHandlerProvider)
+
+	// The router pulls every concern together and registers the OTel tracer
+	// shutdown as an OnClose hook on the container.
+	platform.Register(c, routerProvider)
+
+	if err := c.Bootstrap(ctx); err != nil {
+		return nil, fmt.Errorf("bootstrapping container: %w", err)
+	}
+	return c, nil
+}
+
+// lifecycleCtx wraps the caller-supplied context so providers that need to
+// start background goroutines can resolve it explicitly. The wrapper type
+// avoids registering raw context.Context, which would collide with any
+// future scope-local context registration the platform container might add.
+type lifecycleCtx struct{ ctx context.Context }
+
+// routes bundles ptr-form and value-form route slices. Both are derived
+// from cfg at startup; the pointer form is used for transport-chain
+// construction and the value form is used by the health aggregator.
+type routes struct {
+	ptr []*domain.Route
+	val []domain.Route
+}
+
+func httpClientProvider(context.Context, *platform.Container) (*http.Client, error) {
+	// A single client is reused by both the proxy transport and the health
+	// checker so connection pools are shared rather than duplicated.
 	// MaxIdleConnsPerHost is 20 (the default of 2 causes pool exhaustion under load).
-	httpClient := &http.Client{
+	return &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 20,
 			IdleConnTimeout:     90 * time.Second,
 		},
+	}, nil
+}
+
+func routesProvider(ctx context.Context, c *platform.Container) (*routes, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	ptr := cfg.ToDomainRoutes()
+	val := make([]domain.Route, len(ptr))
+	for i, r := range ptr {
+		val[i] = *r
 	}
+	return &routes{ptr: ptr, val: val}, nil
+}
 
-	// --- Upstream transport chain (innermost to outermost) ---
-	//
-	// The Decorator layers are applied inside-out. Request processing flows
-	// outermost → innermost; the chain is:
-	//
-	//   [circuit breaker] → [round-robin | weighted] → [proxy]
-	//
-	// The URL-selection layer (round-robin or weighted) sets route.Upstream.URL
-	// from the pool before passing the copy to the proxy transport.
-	// The circuit breaker (when enabled) sits outside both so it can short-
-	// circuit the entire attempt — including URL selection — when the route
-	// is in the Open state.
-	transport := buildTransportChain(cfg, ptrRoutes, httpClient)
+func transportProvider(ctx context.Context, c *platform.Container) (ports.UpstreamTransport, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	rs := platform.MustResolve[*routes](ctx, c)
+	client := platform.MustResolve[*http.Client](ctx, c)
+	return buildTransportChain(cfg, rs.ptr, client), nil
+}
 
-	// --- Metrics (Strategy pattern: Prometheus recorder) ---
+func metricsRecorderProvider(context.Context, *platform.Container) (*prometheusout.MetricsRecorder, error) {
 	// The Prometheus adapter registers its own isolated registry so multiple
 	// instances can coexist in tests without registration conflicts.
-	// To fall back to the no-op recorder, replace with noop.NewMetricsRecorder()
-	// and pass nil as metricsHandler below.
-	promRecorder := prometheusout.NewMetricsRecorder()
+	return prometheusout.NewMetricsRecorder(), nil
+}
 
-	// --- Health aggregation ---
-	// healthhttp.Checker is the outbound port that probes each upstream.
-	// HealthAggregator fans the checks out concurrently and collapses results
-	// into a single HealthReport (see application/health.go).
-	checker := healthhttp.NewChecker(httpClient)
+func gatewayServiceProvider(ctx context.Context, c *platform.Container) (*application.GatewayService, error) {
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	rs := platform.MustResolve[*routes](ctx, c)
+	resolver := static.NewResolver(rs.ptr)
+	return application.NewGatewayService(resolver, log), nil
+}
 
-	// The aggregator takes []domain.Route (values); ToDomainRoutes returns pointers.
-	// Dereference once here at startup — routes do not change while running.
-	routes := make([]domain.Route, len(ptrRoutes))
-	for i, r := range ptrRoutes {
-		routes[i] = *r
-	}
-	healthAgg := application.NewHealthAggregator(checker, routes)
+func healthAggregatorProvider(ctx context.Context, c *platform.Container) (*application.HealthAggregator, error) {
+	rs := platform.MustResolve[*routes](ctx, c)
+	client := platform.MustResolve[*http.Client](ctx, c)
+	checker := healthhttp.NewChecker(client)
+	return application.NewHealthAggregator(checker, rs.val), nil
+}
 
-	// --- Rate limiter (Strategy pattern: algorithm selected by config) ---
-	// Passing nil to NewRouter skips the RateLimitMiddleware decorator entirely,
-	// so disabled rate limiting has zero overhead on the request path.
-	// buildRateLimiter selects the concrete algorithm based on cfg.RateLimit.Strategy.
-	var limiter ports.RateLimiter
-	var concLimiter ports.ConcurrencyLimiter
-	if cfg.RateLimit.Enabled {
-		limiter, concLimiter = buildRateLimiter(ctx, cfg)
-	}
+func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.Handler, error) {
+	gateway := platform.MustResolve[*application.GatewayService](ctx, c)
+	transport := platform.MustResolve[ports.UpstreamTransport](ctx, c)
+	recorder := platform.MustResolve[*prometheusout.MetricsRecorder](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	healthAgg := platform.MustResolve[*application.HealthAggregator](ctx, c)
+	return inboundhttp.NewHandler(gateway, transport, recorder, log, healthAgg), nil
+}
 
-	// --- JWT auth middleware (Decorator + Strategy pattern: nil = disabled) ---
-	// The middleware is constructed here in the Facade so the inbound adapter
-	// receives a plain func(http.Handler) http.Handler — no JWT types leak out.
-	// buildAuthVerifier selects the concrete TokenVerifier strategy based on
-	// cfg.Auth.Type ("hs256" or "jwks") without the router knowing which.
-	// When auth is disabled, authMiddleware is nil and NewRouter skips it.
-	var authMiddleware func(http.Handler) http.Handler
-	if cfg.Auth.Enabled {
-		verifier, authErr := buildAuthVerifier(ctx, cfg)
-		if authErr != nil {
-			return nil, fmt.Errorf("setting up auth: %w", authErr)
-		}
-		authMiddleware = inboundhttp.JWTMiddleware(verifier, cfg.Auth.PublicPaths, logger)
-	}
+func mcpHandlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.MCPHandler, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	lc := platform.MustResolve[lifecycleCtx](ctx, c)
+	transport := platform.MustResolve[ports.UpstreamTransport](ctx, c)
 
-	// --- Distributed tracing (OTel, Decorator pattern: nil = disabled) ---
-	// The middleware closure is constructed here so the inbound adapter receives a
-	// plain func(http.Handler) http.Handler — no OTel types leak into routes.go.
-	tracingMiddleware, tracerShutdown, err := buildTracingMiddleware(cfg.Tracing)
-	if err != nil {
-		return nil, fmt.Errorf("setting up tracing: %w", err)
-	}
-
-	// --- Wire the inbound HTTP layer ---
-	// Handler is thin: it extracts HTTP primitives and delegates to port interfaces.
-	// Router applies the middleware chain (Decorator pattern) and wires system routes.
-	handler := inboundhttp.NewHandler(gateway, transport, promRecorder, logger, healthAgg)
-
-	// --- MCP tool routing ---
 	mcpTools := cfg.MCPTools()
-	mcpRateLimiter := memory.NewMCPRateLimiter(ctx, cfg.MCP)
-
+	mcpRateLimiter := memory.NewMCPRateLimiter(lc.ctx, cfg.MCP)
 	var mcpDecider ports.MCPDecider
 	if cfg.MCP.AnthropicAPIKey != "" {
-		mcpDecider = anthropic.NewMCPDecider(cfg.MCP.AnthropicAPIKey, cfg.MCP.Model, logger)
+		mcpDecider = anthropic.NewMCPDecider(cfg.MCP.AnthropicAPIKey, cfg.MCP.Model, log)
 	} else {
 		mcpDecider = static.NewMCPStaticDecider(mcpTools)
 	}
-
 	mcpGateway := application.NewMCPGatewayService(
 		mcpDecider,
 		mcpRateLimiter,
 		mcpTools,
 		cfg.MCP.ClientTiers,
 		[]byte(cfg.MCP.JWTSigningKey),
-		logger,
+		log,
 	)
-	mcpHandler := inboundhttp.NewMCPHandler(mcpGateway, transport, logger)
+	return inboundhttp.NewMCPHandler(mcpGateway, transport, log), nil
+}
 
-	router := inboundhttp.NewRouter(
-		handler, mcpHandler, logger, cfg.CORS,
+func routerProvider(ctx context.Context, c *platform.Container) (http.Handler, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	lc := platform.MustResolve[lifecycleCtx](ctx, c)
+	handler := platform.MustResolve[*inboundhttp.Handler](ctx, c)
+	mcpHandler := platform.MustResolve[*inboundhttp.MCPHandler](ctx, c)
+	recorder := platform.MustResolve[*prometheusout.MetricsRecorder](ctx, c)
+
+	limiter, concLimiter := selectRateLimiter(lc.ctx, cfg)
+
+	authMiddleware, err := buildAuthMiddleware(lc.ctx, cfg, log)
+	if err != nil {
+		return nil, fmt.Errorf("setting up auth: %w", err)
+	}
+
+	tracingMiddleware, tracerShutdown, err := buildTracingMiddleware(cfg.Tracing)
+	if err != nil {
+		return nil, fmt.Errorf("setting up tracing: %w", err)
+	}
+	if tracerShutdown != nil {
+		c.OnClose("tracer", tracerShutdown)
+	}
+
+	return inboundhttp.NewRouter(
+		handler, mcpHandler, log, cfg.CORS,
 		authMiddleware,
-		buildIPFilterMiddleware(cfg, logger),
+		buildIPFilterMiddleware(cfg, log),
 		limiter, concLimiter, cfg.RateLimit.KeySource,
-		promRecorder.Handler(),
+		recorder.Handler(),
 		tracingMiddleware,
-		buildCompressionMiddleware(cfg, logger),
+		buildCompressionMiddleware(cfg, log),
 		buildCacheMiddleware(cfg),
-	)
+	), nil
+}
 
-	return &Container{
-		Logger:   logger,
-		Handler:  router,
-		Config:   cfg,
-		Shutdown: tracerShutdown,
-		SetReady: handler.SetReady,
-	}, nil
+func selectRateLimiter(ctx context.Context, cfg *config.Config) (ports.RateLimiter, ports.ConcurrencyLimiter) {
+	if !cfg.RateLimit.Enabled {
+		return nil, nil
+	}
+	return buildRateLimiter(ctx, cfg)
+}
+
+func buildAuthMiddleware(ctx context.Context, cfg *config.Config, logger logging.Logger) (func(http.Handler) http.Handler, error) {
+	if !cfg.Auth.Enabled {
+		return nil, nil
+	}
+	verifier, err := buildAuthVerifier(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return inboundhttp.JWTMiddleware(verifier, cfg.Auth.PublicPaths, logger), nil
 }
 
 // buildAuthVerifier constructs the TokenVerifier implementation selected by
-// cfg.Auth.Type. Strategy pattern: the container selects the concrete algorithm
-// (HS256 or JWKS/RS256) so the inbound middleware never knows which is active.
+// cfg.Auth.Type. Strategy pattern: the container selects the concrete
+// algorithm (HS256 or JWKS/RS256) so the inbound middleware never knows
+// which is active.
 //
 // "jwks"  — RS256; keyfunc fetches and refreshes keys from cfg.Auth.JWKSURL.
 //
@@ -230,18 +283,18 @@ func buildAuthVerifier(ctx context.Context, cfg *config.Config) (ports.TokenVeri
 	return hs256auth.NewVerifier([]byte(cfg.Auth.SigningKey)), nil
 }
 
-// buildRateLimiter selects and constructs the rate limiting adapter based on
-// cfg.RateLimit.Strategy. Returns (nil, nil) if the strategy is unrecognised
-// or the enabled flag is false (the caller guards the enabled check).
+// buildRateLimiter selects and constructs the rate limiting adapter based
+// on cfg.RateLimit.Strategy. Strategy "concurrency" populates only the
+// ConcurrencyLimiter return value; all other strategies populate only the
+// RateLimiter return value.
 //
-// Strategy "concurrency" populates only the ConcurrencyLimiter return value;
-// all other strategies populate only the RateLimiter return value.
+// ctx governs the token-bucket eviction goroutine lifetime
+// (memory.NewRateLimiter). Other adapters are currently stateless and
+// ignore it; pass it anyway so the signature remains consistent if any
+// adapter adds background goroutines later.
 //
-// ctx governs the token-bucket eviction goroutine lifetime (memory.NewRateLimiter).
-// Other adapters are currently stateless and ignore it; pass it anyway so the
-// signature remains consistent if any adapter adds background goroutines later.
-//
-// Extracted from New to keep its cyclomatic complexity within the project limit.
+// Extracted from the assembly path to keep cyclomatic complexity within
+// the project limit.
 func buildRateLimiter(ctx context.Context, cfg *config.Config) (ports.RateLimiter, ports.ConcurrencyLimiter) {
 	rl := cfg.RateLimit
 	window := time.Duration(rl.WindowSecs) * time.Second
@@ -276,8 +329,8 @@ func buildRateLimiter(ctx context.Context, cfg *config.Config) (ports.RateLimite
 			MaxInFlight: rl.MaxInFlight,
 		})
 
-	default: // "token_bucket" and any unrecognised value
-		// The eviction goroutine exits when ctx is cancelled.
+	default: // "token_bucket" and any unrecognized value
+		// The eviction goroutine exits when ctx is canceled.
 		return memory.NewRateLimiter(ctx, domain.RateLimitRule{
 			RequestsPerSecond: rl.RequestsPerSecond,
 			BurstSize:         rl.BurstSize,
@@ -285,8 +338,8 @@ func buildRateLimiter(ctx context.Context, cfg *config.Config) (ports.RateLimite
 	}
 }
 
-// buildIPFilterMiddleware returns an IP filter middleware when cfg.IPFilter.Enabled,
-// otherwise nil. Extracted from New to keep its cyclomatic complexity within limit.
+// buildIPFilterMiddleware returns an IP filter middleware when
+// cfg.IPFilter.Enabled, otherwise nil.
 func buildIPFilterMiddleware(cfg *config.Config, logger logging.Logger) func(http.Handler) http.Handler {
 	if !cfg.IPFilter.Enabled {
 		return nil
@@ -294,8 +347,8 @@ func buildIPFilterMiddleware(cfg *config.Config, logger logging.Logger) func(htt
 	return inboundhttp.IPFilterMiddleware(cfg.IPFilter, logger)
 }
 
-// buildCompressionMiddleware returns a compression middleware when cfg.Compression.Enabled,
-// otherwise nil. Extracted from New to keep its cyclomatic complexity within limit.
+// buildCompressionMiddleware returns a compression middleware when
+// cfg.Compression.Enabled, otherwise nil.
 func buildCompressionMiddleware(cfg *config.Config, logger logging.Logger) func(http.Handler) http.Handler {
 	if !cfg.Compression.Enabled {
 		return nil
@@ -308,17 +361,17 @@ func buildCompressionMiddleware(cfg *config.Config, logger logging.Logger) func(
 //	proxy.Transport ← URL-picker (weighted or round-robin) ← retry (optional) ← circuit breaker (optional)
 //
 // Request processing flows outermost → innermost: circuit breaker → retry → URL-picker → proxy.
-// Retry wraps the URL-picker so each retry attempt may land on a different upstream endpoint
-// when load balancing is active — a natural hedge against a single unhealthy instance.
-//
-// Extracted from New to keep its cyclomatic complexity within the project limit.
-func buildTransportChain(cfg *config.Config, routes []*domain.Route, client *http.Client) ports.UpstreamTransport {
+// Retry wraps the URL-picker so each retry attempt may land on a different
+// upstream endpoint when load balancing is active — a natural hedge
+// against a single unhealthy instance.
+func buildTransportChain(cfg *config.Config, ptrRoutes []*domain.Route, client *http.Client) ports.UpstreamTransport {
 	var t ports.UpstreamTransport = proxy.NewTransport(client)
 
 	// Use weighted URL selection when any route defines explicit weights.
-	// weighted.Picker degrades to uniform random for equal/absent weights, so
-	// it handles mixed-weight deployments without needing separate code paths.
-	if hasWeightedRoutes(routes) {
+	// weighted.Picker degrades to uniform random for equal/absent weights,
+	// so it handles mixed-weight deployments without needing separate code
+	// paths.
+	if hasWeightedRoutes(ptrRoutes) {
 		t = weighted.NewTransport(t, weighted.NewPicker())
 	} else {
 		t = roundrobin.NewTransport(t, roundrobin.NewPicker())
@@ -335,7 +388,7 @@ func buildTransportChain(cfg *config.Config, routes []*domain.Route, client *htt
 }
 
 // buildCacheMiddleware returns a cache middleware when cfg.Cache.Enabled,
-// otherwise nil. Extracted from New to keep its cyclomatic complexity within limit.
+// otherwise nil.
 func buildCacheMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 	if !cfg.Cache.Enabled {
 		return nil
@@ -344,8 +397,9 @@ func buildCacheMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 	return inboundhttp.CacheMiddleware(cache, cfg.Cache)
 }
 
-// hasWeightedRoutes reports whether any route in the pool carries explicit per-URL
-// weights. Used by buildTransportChain to select the URL-picker strategy.
+// hasWeightedRoutes reports whether any route in the pool carries explicit
+// per-URL weights. Used by buildTransportChain to select the URL-picker
+// strategy.
 func hasWeightedRoutes(routes []*domain.Route) bool {
 	for _, r := range routes {
 		if len(r.Upstream.Weights) > 0 {
@@ -355,12 +409,10 @@ func hasWeightedRoutes(routes []*domain.Route) bool {
 	return false
 }
 
-// buildTracingMiddleware sets up the OTel trace provider and returns an HTTP
-// middleware closure that wraps each handler with span creation and W3C
-// TraceContext extraction. When cfg.Enabled is false, both the middleware and
-// the shutdown function are no-ops, and the provider is discarded.
-//
-// Extracted from New to keep its cyclomatic complexity within the project limit.
+// buildTracingMiddleware sets up the OTel trace provider and returns an
+// HTTP middleware closure that wraps each handler with span creation and
+// W3C TraceContext extraction. When cfg.Enabled is false, the middleware
+// is nil and the shutdown function is a no-op; the provider is discarded.
 func buildTracingMiddleware(cfg config.TracingConfig) (func(http.Handler) http.Handler, func(context.Context) error, error) {
 	tp, shutdown, err := observability.SetupTracing(cfg)
 	if err != nil {
