@@ -5,10 +5,13 @@ package container_test
 import (
 	"context"
 	"io"
+	"net/http"
 	"testing"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
+	platform "github.com/jedi-knights/go-platform/container"
 
+	inboundhttp "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/container"
 )
@@ -28,8 +31,9 @@ func TestNew_ReturnsContainerWithHandler(t *testing.T) {
 	logger := logging.New(logging.Config{Output: io.Discard})
 
 	// context.Background() is the correct root context for tests; in production
-	// main.go passes a context cancelled on SIGTERM to stop background goroutines.
-	ctr, err := container.New(context.Background(), cfg, logger)
+	// main.go passes a context canceled on SIGTERM to stop background goroutines.
+	ctx := context.Background()
+	ctr, err := container.New(ctx, cfg, logger)
 
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
@@ -37,14 +41,17 @@ func TestNew_ReturnsContainerWithHandler(t *testing.T) {
 	if ctr == nil {
 		t.Fatal("New() returned nil container")
 	}
-	if ctr.Handler == nil {
-		t.Error("container.Handler is nil")
+	if router := platform.MustResolve[http.Handler](ctx, ctr); router == nil {
+		t.Error("router (http.Handler) resolved as nil")
 	}
-	if ctr.Logger == nil {
-		t.Error("container.Logger is nil")
+	if handler := platform.MustResolve[*inboundhttp.Handler](ctx, ctr); handler == nil {
+		t.Error("*inboundhttp.Handler resolved as nil")
 	}
-	if ctr.Config == nil {
-		t.Error("container.Config is nil")
+	if log := platform.MustResolve[logging.Logger](ctx, ctr); log == nil {
+		t.Error("logger resolved as nil")
+	}
+	if gotCfg := platform.MustResolve[*config.Config](ctx, ctr); gotCfg != cfg {
+		t.Error("expected the same Config pointer that was passed to New")
 	}
 }
 
