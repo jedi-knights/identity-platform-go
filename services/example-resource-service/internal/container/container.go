@@ -1,3 +1,7 @@
+// Package container wires the example-resource-service's dependencies
+// through the platform DI container. Resolution from the returned container
+// is restricted to the composition root in cmd/main.go and tests; business
+// code receives its dependencies via constructor parameters.
 package container
 
 import (
@@ -7,6 +11,8 @@ import (
 	"time"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
+	"github.com/jedi-knights/go-platform/apperrors"
+	platform "github.com/jedi-knights/go-platform/container"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/introspection"
@@ -19,100 +25,102 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/ports"
 )
 
-// Container holds the wired dependencies for the example-resource-service.
-type Container struct {
-	Logger        logging.Logger
-	Handler       *inboundhttp.Handler
-	Config        *config.Config
-	SigningKey    []byte
-	Audience      string
-	Issuer        string
-	Introspector  ports.TokenIntrospector
-	PolicyChecker ports.PolicyChecker
-	closer        func()
-}
-
-// Close releases resources held by the container (e.g. the database connection pool).
-// It is idempotent and safe to call more than once.
-func (c *Container) Close() {
-	if c.closer != nil {
-		c.closer()
-	}
-}
-
-// New creates and wires all dependencies.
+// New constructs and bootstraps a platform container wired with every
+// dependency this service needs.
 //
 // Adapter selection:
-//   - ResourceRepository: PostgreSQL adapter when RESOURCE_DATABASE_URL is set;
-//     in-memory adapter otherwise (suitable for local dev and unit testing).
+//   - ResourceRepository: PostgreSQL adapter when RESOURCE_DATABASE_URL is
+//     set, in-memory adapter otherwise. The postgres pool is registered as
+//     an OnClose hook.
 //   - TokenIntrospector: HTTP adapter (token-introspection-service) when
-//     RESOURCE_INTROSPECTION_URL is set; nil otherwise, which causes NewRouter
-//     to fall back to local JWT validation. In the fallback path, revoked tokens
-//     remain valid until expiry.
-func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
+//     RESOURCE_INTROSPECTION_URL is set; otherwise nil, which causes the
+//     router to fall back to local JWT validation. In the fallback path,
+//     revoked tokens remain valid until expiry.
+//   - PolicyChecker: HTTP adapter when RESOURCE_POLICY_URL is set;
+//     otherwise nil, which disables the policy layer and lets scope alone
+//     gate access.
+func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platform.Container, error) {
 	if cfg == nil {
-		return nil, fmt.Errorf("config is required")
+		return nil, apperrors.New(apperrors.ErrCodeInternal, "config is required")
+	}
+	if logger == nil {
+		return nil, apperrors.New(apperrors.ErrCodeInternal, "logger is required")
 	}
 
-	repo, closer, err := selectResourceRepository(cfg, logger)
-	if err != nil {
-		return nil, err
+	c := platform.New()
+
+	platform.Register(c, func(_ context.Context, _ *platform.Container) (*config.Config, error) {
+		return cfg, nil
+	})
+	platform.Register(c, func(_ context.Context, _ *platform.Container) (logging.Logger, error) {
+		return logger, nil
+	})
+	platform.Register(c, resourceRepositoryProvider)
+	platform.Register(c, resourceServiceProvider)
+	platform.Register(c, introspectorProvider)
+	platform.Register(c, policyCheckerProvider)
+	platform.Register(c, handlerProvider)
+
+	if err := c.Bootstrap(ctx); err != nil {
+		return nil, fmt.Errorf("bootstrapping container: %w", err)
 	}
-
-	svc := application.NewResourceService(repo)
-
-	var introspector ports.TokenIntrospector
-	if cfg.Introspection.URL != "" {
-		logger.Info("using remote token-introspection-service", "url", cfg.Introspection.URL)
-		introspector = introspection.NewClient(cfg.Introspection.URL, &http.Client{Timeout: 5 * time.Second}, cfg.Introspection.Secret)
-	} else {
-		logger.Info("using local JWT validation (RESOURCE_INTROSPECTION_URL not set); revoked tokens will not be rejected until expiry")
-	}
-
-	var policyChecker ports.PolicyChecker
-	if cfg.Policy.URL != "" {
-		logger.Info("using remote authorization-policy-service", "url", cfg.Policy.URL)
-		policyChecker = policyadapter.New(cfg.Policy.URL)
-	} else {
-		logger.Info("RESOURCE_POLICY_URL not set; policy evaluation skipped, scope alone gates access")
-	}
-
-	handler := inboundhttp.NewHandler(svc, svc, svc, logger, policyChecker)
-
-	return &Container{
-		Logger:        logger,
-		Handler:       handler,
-		Config:        cfg,
-		SigningKey:    []byte(cfg.JWT.SigningKey),
-		Audience:      cfg.JWT.Audience,
-		Issuer:        cfg.JWT.Issuer,
-		Introspector:  introspector,
-		PolicyChecker: policyChecker,
-		closer:        closer,
-	}, nil
+	return c, nil
 }
 
-// selectResourceRepository returns a PostgreSQL-backed repository when
-// RESOURCE_DATABASE_URL is set, otherwise falls back to the in-memory adapter.
-// Migrations are run automatically before the connection pool is opened so
-// the schema is always up to date at startup.
-// The returned closer must be called when the repository is no longer needed.
-func selectResourceRepository(cfg *config.Config, logger logging.Logger) (domain.ResourceRepository, func(), error) {
+func resourceRepositoryProvider(ctx context.Context, c *platform.Container) (domain.ResourceRepository, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
 	if cfg.Database.URL == "" {
-		logger.Info("RESOURCE_DATABASE_URL not set; using in-memory resource repository")
-		return memory.NewResourceRepository(), func() {}, nil
+		log.Info("RESOURCE_DATABASE_URL not set; using in-memory resource repository")
+		return memory.NewResourceRepository(), nil
 	}
 
-	logger.Info("running database migrations", "url", cfg.Database.URL)
+	log.Info("running database migrations", "url", cfg.Database.URL)
 	if err := postgres.RunMigrations(cfg.Database.URL); err != nil {
-		return nil, func() {}, fmt.Errorf("running resource migrations: %w", err)
+		return nil, fmt.Errorf("running resource migrations: %w", err)
 	}
-
-	pool, err := postgres.Connect(context.Background(), cfg.Database.URL)
+	pool, err := postgres.Connect(ctx, cfg.Database.URL)
 	if err != nil {
-		return nil, func() {}, fmt.Errorf("connecting to database: %w", err)
+		return nil, fmt.Errorf("connecting to database: %w", err)
 	}
+	c.OnClose("postgres", func(_ context.Context) error {
+		pool.Close()
+		return nil
+	})
+	log.Info("using PostgreSQL resource repository")
+	return postgres.NewResourceRepository(pool), nil
+}
 
-	logger.Info("using PostgreSQL resource repository")
-	return postgres.NewResourceRepository(pool), pool.Close, nil
+func resourceServiceProvider(ctx context.Context, c *platform.Container) (*application.ResourceService, error) {
+	repo := platform.MustResolve[domain.ResourceRepository](ctx, c)
+	return application.NewResourceService(repo), nil
+}
+
+func introspectorProvider(ctx context.Context, c *platform.Container) (ports.TokenIntrospector, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if cfg.Introspection.URL == "" {
+		log.Info("using local JWT validation (RESOURCE_INTROSPECTION_URL not set); revoked tokens will not be rejected until expiry")
+		return nil, nil
+	}
+	log.Info("using remote token-introspection-service", "url", cfg.Introspection.URL)
+	return introspection.NewClient(cfg.Introspection.URL, &http.Client{Timeout: 5 * time.Second}, cfg.Introspection.Secret), nil
+}
+
+func policyCheckerProvider(ctx context.Context, c *platform.Container) (ports.PolicyChecker, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if cfg.Policy.URL == "" {
+		log.Info("RESOURCE_POLICY_URL not set; policy evaluation skipped, scope alone gates access")
+		return nil, nil
+	}
+	log.Info("using remote authorization-policy-service", "url", cfg.Policy.URL)
+	return policyadapter.New(cfg.Policy.URL), nil
+}
+
+func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.Handler, error) {
+	svc := platform.MustResolve[*application.ResourceService](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	policyChecker := platform.MustResolve[ports.PolicyChecker](ctx, c)
+	return inboundhttp.NewHandler(svc, svc, svc, log, policyChecker), nil
 }
