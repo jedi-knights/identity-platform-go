@@ -11,7 +11,8 @@ import (
 
 	"github.com/jedi-knights/go-platform/apperrors"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/ports"
@@ -75,7 +76,7 @@ func (e *plainError) Error() string { return e.msg }
 
 func newHandler(t *testing.T, creator *fakeCreator, reader *fakeReader, validator *fakeValidator, deleter *fakeDeleter) *inboundhttp.Handler {
 	t.Helper()
-	logger := logging.NewLogger(logging.Config{Level: "error", Format: "text", Environment: "test"})
+	logger := logging.New(logging.Config{Level: "error", Format: "text", Environment: "test"})
 	return inboundhttp.NewHandler(creator, reader, validator, deleter, logger)
 }
 

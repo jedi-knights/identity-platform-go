@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
 )
 
 // Logger is an alias for the logging.Logger interface used throughout httputil.

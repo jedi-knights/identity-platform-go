@@ -12,7 +12,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	redisadapter "github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/adapters/outbound/redis"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/ports"
@@ -104,7 +105,7 @@ func TestEncodeCacheValue_PreservesReason(t *testing.T) {
 func TestCachingPolicyEvaluator_Evaluate_CacheMiss_WritesBack(t *testing.T) {
 	client := newPolicyTestClient(t)
 	inner := &fakeEvaluator{resp: &domain.EvaluationResponse{Allowed: true, Reason: "ok"}}
-	evaluator := redisadapter.NewCachingPolicyEvaluator(inner, client, time.Minute, logging.NewLogger(logging.Config{Output: io.Discard}))
+	evaluator := redisadapter.NewCachingPolicyEvaluator(inner, client, time.Minute, logging.New(logging.Config{Output: io.Discard}))
 
 	req := domain.EvaluationRequest{SubjectID: "user-1", Resource: "doc", Action: "read"}
 
@@ -135,7 +136,7 @@ func TestCachingPolicyEvaluator_Evaluate_CacheMiss_WritesBack(t *testing.T) {
 func TestCachingPolicyEvaluator_Evaluate_InnerError_Propagates(t *testing.T) {
 	client := newPolicyTestClient(t)
 	inner := &fakeEvaluator{err: errors.New("policy store unavailable")}
-	evaluator := redisadapter.NewCachingPolicyEvaluator(inner, client, time.Minute, logging.NewLogger(logging.Config{Output: io.Discard}))
+	evaluator := redisadapter.NewCachingPolicyEvaluator(inner, client, time.Minute, logging.New(logging.Config{Output: io.Discard}))
 
 	req := domain.EvaluationRequest{SubjectID: "user-1", Resource: "doc", Action: "read"}
 
@@ -152,7 +153,7 @@ func TestCachingPolicyEvaluator_Evaluate_RedisUnavailable_FallsThrough(t *testin
 	mr.Close() // shut down after the client is created — ops will fail without a slow dial
 
 	inner := &fakeEvaluator{resp: &domain.EvaluationResponse{Allowed: false, Reason: "denied"}}
-	evaluator := redisadapter.NewCachingPolicyEvaluator(inner, client, time.Minute, logging.NewLogger(logging.Config{Output: io.Discard}))
+	evaluator := redisadapter.NewCachingPolicyEvaluator(inner, client, time.Minute, logging.New(logging.Config{Output: io.Discard}))
 
 	req := domain.EvaluationRequest{SubjectID: "user-1", Resource: "doc", Action: "read"}
 
@@ -182,7 +183,7 @@ func TestCachingPolicyEvaluator_Evaluate_CorruptCacheData_FallsThrough(t *testin
 	}
 
 	inner := &fakeEvaluator{resp: &domain.EvaluationResponse{Allowed: true, Reason: "ok"}}
-	evaluator := redisadapter.NewCachingPolicyEvaluator(inner, client, time.Minute, logging.NewLogger(logging.Config{Output: io.Discard}))
+	evaluator := redisadapter.NewCachingPolicyEvaluator(inner, client, time.Minute, logging.New(logging.Config{Output: io.Discard}))
 
 	got, err := evaluator.Evaluate(context.Background(), req)
 	if err != nil {

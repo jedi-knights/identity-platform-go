@@ -3,7 +3,8 @@ package container_test
 import (
 	"testing"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/container"
 )
@@ -25,7 +26,7 @@ func minimalConfig() *config.Config {
 
 func testLogger(t *testing.T) logging.Logger {
 	t.Helper()
-	return logging.NewLogger(logging.Config{Level: "info", Format: "text", Environment: "test"})
+	return logging.New(logging.Config{Level: "info", Format: "text", Environment: "test"})
 }
 
 func TestNew_NilConfig_ReturnsError(t *testing.T) {

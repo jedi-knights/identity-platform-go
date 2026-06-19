@@ -12,7 +12,8 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/ports"
 )

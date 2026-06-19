@@ -7,7 +7,8 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/outbound/email"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/outbound/memory"

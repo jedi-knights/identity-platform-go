@@ -6,13 +6,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
-	"github.com/ocrosby/identity-platform-go/libs/logging"
 )
 
 func newTestLogger(t *testing.T) httputil.Logger {
 	t.Helper()
-	return logging.NewLogger(logging.Config{Level: "debug", Format: "text", Output: io.Discard})
+	return logging.New(logging.Config{Level: "debug", Format: "text", Output: io.Discard})
 }
 
 func TestTraceIDMiddleware_GeneratesID(t *testing.T) {
