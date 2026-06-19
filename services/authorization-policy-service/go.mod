@@ -30,7 +30,7 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jedi-knights/go-logging v0.0.0-20260619091547-fb8ddb4676f8
-	github.com/jedi-knights/go-platform v0.0.0-20260619182221-fc23bdd671e8
+	github.com/jedi-knights/go-platform v0.0.0-20260619185630-7e4594b6bac9
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
