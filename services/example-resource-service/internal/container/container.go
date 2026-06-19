@@ -92,7 +92,10 @@ func resourceRepositoryProvider(ctx context.Context, c *platform.Container) (dom
 }
 
 func resourceServiceProvider(ctx context.Context, c *platform.Container) (*application.ResourceService, error) {
-	repo := platform.MustResolve[domain.ResourceRepository](ctx, c)
+	repo, err := platform.Resolve[domain.ResourceRepository](ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	return application.NewResourceService(repo), nil
 }
 

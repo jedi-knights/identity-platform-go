@@ -175,14 +175,20 @@ func tokenGeneratorProvider(ctx context.Context, c *platform.Container) (*applic
 
 func tokenValidatorProvider(ctx context.Context, c *platform.Container) (*application.JWTTokenValidator, error) {
 	cfg := platform.MustResolve[*config.Config](ctx, c)
-	repos := platform.MustResolve[*tokenRepositories](ctx, c)
+	repos, err := platform.Resolve[*tokenRepositories](ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	return application.NewJWTTokenValidator([]byte(cfg.JWT.SigningKey), repos.token, cfg.JWT.Issuer), nil
 }
 
 func clientCredentialsStrategyProvider(ctx context.Context, c *platform.Container) (*application.ClientCredentialsStrategy, error) {
 	cfg := platform.MustResolve[*config.Config](ctx, c)
 	cw := platform.MustResolve[*clientWiring](ctx, c)
-	repos := platform.MustResolve[*tokenRepositories](ctx, c)
+	repos, err := platform.Resolve[*tokenRepositories](ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	gen := platform.MustResolve[*application.JWTTokenGenerator](ctx, c)
 	fetcher := platform.MustResolve[ports.SubjectPermissionsFetcher](ctx, c)
 	ttl, refreshTTL := tokenTTLs(cfg)
@@ -192,7 +198,10 @@ func clientCredentialsStrategyProvider(ctx context.Context, c *platform.Containe
 func authorizationCodeStrategyProvider(ctx context.Context, c *platform.Container) (*application.AuthorizationCodeStrategy, error) {
 	cfg := platform.MustResolve[*config.Config](ctx, c)
 	cw := platform.MustResolve[*clientWiring](ctx, c)
-	repos := platform.MustResolve[*tokenRepositories](ctx, c)
+	repos, err := platform.Resolve[*tokenRepositories](ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	gen := platform.MustResolve[*application.JWTTokenGenerator](ctx, c)
 	userAuth := platform.MustResolve[ports.UserAuthenticator](ctx, c)
 	ttl, _ := tokenTTLs(cfg)
@@ -202,7 +211,10 @@ func authorizationCodeStrategyProvider(ctx context.Context, c *platform.Containe
 func refreshTokenStrategyProvider(ctx context.Context, c *platform.Container) (*application.RefreshTokenStrategy, error) {
 	cfg := platform.MustResolve[*config.Config](ctx, c)
 	cw := platform.MustResolve[*clientWiring](ctx, c)
-	repos := platform.MustResolve[*tokenRepositories](ctx, c)
+	repos, err := platform.Resolve[*tokenRepositories](ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	gen := platform.MustResolve[*application.JWTTokenGenerator](ctx, c)
 	fetcher := platform.MustResolve[ports.SubjectPermissionsFetcher](ctx, c)
 	ttl, refreshTTL := tokenTTLs(cfg)
@@ -217,7 +229,10 @@ func grantRegistryProvider(ctx context.Context, c *platform.Container) (*applica
 }
 
 func tokenServiceProvider(ctx context.Context, c *platform.Container) (*application.TokenService, error) {
-	repos := platform.MustResolve[*tokenRepositories](ctx, c)
+	repos, err := platform.Resolve[*tokenRepositories](ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	val := platform.MustResolve[*application.JWTTokenValidator](ctx, c)
 	return application.NewTokenService(repos.token, repos.refresh, val), nil
 }

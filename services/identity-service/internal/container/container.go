@@ -124,15 +124,24 @@ func hasherProvider(context.Context, *platform.Container) (domain.PasswordHasher
 }
 
 func authServiceProvider(ctx context.Context, c *platform.Container) (*application.AuthService, error) {
-	repos := platform.MustResolve[*repositories](ctx, c)
+	repos, err := platform.Resolve[*repositories](ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	hasher := platform.MustResolve[domain.PasswordHasher](ctx, c)
 	return application.NewAuthService(repos.user, hasher), nil
 }
 
 func emailVerificationServiceProvider(ctx context.Context, c *platform.Container) (*application.EmailVerificationService, error) {
 	cfg := platform.MustResolve[*config.Config](ctx, c)
-	repos := platform.MustResolve[*repositories](ctx, c)
-	sender := platform.MustResolve[domain.EmailSender](ctx, c)
+	repos, err := platform.Resolve[*repositories](ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	sender, err := platform.Resolve[domain.EmailSender](ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	return application.NewEmailVerificationService(
 		repos.user,
 		repos.token,
