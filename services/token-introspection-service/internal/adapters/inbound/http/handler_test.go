@@ -12,7 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ocrosby/identity-platform-go/libs/testutil"
+	"github.com/jedi-knights/go-platform/testutil"
+
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/ports"

@@ -15,7 +15,6 @@ jobs:
       fail-fast: false
       matrix:
         module:
-          - libs/testutil
           - services/auth-server
           - services/authorization-policy-service
           - services/client-registry-service
