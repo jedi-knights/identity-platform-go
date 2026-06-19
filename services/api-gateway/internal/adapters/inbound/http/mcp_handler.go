@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
 	"github.com/ocrosby/identity-platform-go/libs/logging"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/domain"

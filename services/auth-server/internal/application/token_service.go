@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+
 	"github.com/ocrosby/identity-platform-go/libs/jwtutil"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 )

@@ -59,8 +59,8 @@ var _ ports.UpstreamTransport = (*bodyTransport)(nil)
 type failWriter struct{ header http.Header }
 
 func (f *failWriter) Header() http.Header       { return f.header }
-func (f *failWriter) WriteHeader(int)            {}
-func (f *failWriter) Write([]byte) (int, error)  { return 0, errors.New("write: broken pipe") }
+func (f *failWriter) WriteHeader(int)           {}
+func (f *failWriter) Write([]byte) (int, error) { return 0, errors.New("write: broken pipe") }
 
 func globalCfg(enabled bool, maxAttempts int, statuses []int) domain.RetryConfig {
 	return domain.RetryConfig{

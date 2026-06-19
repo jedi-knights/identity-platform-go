@@ -126,9 +126,9 @@ func TestRoute_Matches(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:  "required header present with correct value",
-			route: domain.Route{Match: domain.MatchCriteria{Headers: map[string]string{"X-Version": "v2"}}},
-			headers: map[string]string{"X-Version": "v2"},
+			name:     "required header present with correct value",
+			route:    domain.Route{Match: domain.MatchCriteria{Headers: map[string]string{"X-Version": "v2"}}},
+			headers:  map[string]string{"X-Version": "v2"},
 			expected: true,
 		},
 		{
@@ -180,9 +180,9 @@ func TestRoute_Matches(t *testing.T) {
 					Headers:    map[string]string{"Content-Type": "application/json"},
 				},
 			},
-			method:  "POST",
-			path:    "/api/users",
-			headers: map[string]string{"Content-Type": "application/json"},
+			method:   "POST",
+			path:     "/api/users",
+			headers:  map[string]string{"Content-Type": "application/json"},
 			expected: true,
 		},
 		{
@@ -218,9 +218,9 @@ func TestRoute_Matches(t *testing.T) {
 					Headers:    map[string]string{"X-Version": "v2"},
 				},
 			},
-			method:  "GET",
-			path:    "/api/users",
-			headers: map[string]string{"X-Version": "v1"},
+			method:   "GET",
+			path:     "/api/users",
+			headers:  map[string]string{"X-Version": "v1"},
 			expected: false,
 		},
 	}
