@@ -133,7 +133,7 @@ func (r *ResourceRepository) FindAll(ctx context.Context) ([]*domain.Resource, e
 }
 
 // Save persists a resource, inserting it or replacing the existing record for the same ID
-// (upsert). This mirrors the memory adapter's overwrite-on-conflict behaviour.
+// (upsert). This mirrors the memory adapter's overwrite-on-conflict behavior.
 func (r *ResourceRepository) Save(ctx context.Context, resource *domain.Resource) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO resources (id, name, description, owner_id, created_at)

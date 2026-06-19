@@ -231,7 +231,7 @@ func TestRetryTransport_ContextCancellationStopsRetries(t *testing.T) {
 	}
 
 	// At least one call must have been made; fewer than 3 because the context
-	// was cancelled before the second backoff sleep expired.
+	// was canceled before the second backoff sleep expired.
 	if inner.calls == 0 {
 		t.Error("expected at least one attempt before cancel")
 	}

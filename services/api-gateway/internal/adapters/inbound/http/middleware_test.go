@@ -683,7 +683,7 @@ func TestCompressionMiddleware_DoesNotDoubleCompress(t *testing.T) {
 		t.Errorf("body = %q, expected upstream value to pass through unchanged", rr.Body.String())
 	}
 	// Assert — upstream's Content-Encoding must survive; deleting it leaves the client
-	// with encoded bytes labelled as identity, which renders as garbage.
+	// with encoded bytes labeled as identity, which renders as garbage.
 	if got := rr.Header().Get("Content-Encoding"); got != "gzip" {
 		t.Errorf("Content-Encoding = %q, want %q (upstream-set header must be preserved)", got, "gzip")
 	}

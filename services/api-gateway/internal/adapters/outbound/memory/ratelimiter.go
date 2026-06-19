@@ -44,7 +44,7 @@ type limitEntry struct {
 
 // NewRateLimiter creates a rate limiter with the given rule and starts
 // a background goroutine that evicts stale entries. The goroutine exits
-// when ctx is cancelled.
+// when ctx is canceled.
 func NewRateLimiter(ctx context.Context, rule domain.RateLimitRule) *RateLimiter {
 	rl := &RateLimiter{rule: rule}
 	for i := range numRateLimiterShards {
@@ -89,7 +89,7 @@ func (rl *RateLimiter) Allow(key string) bool {
 }
 
 // evictLoop periodically removes entries that have not been seen recently.
-// It exits when ctx is cancelled.
+// It exits when ctx is canceled.
 func (rl *RateLimiter) evictLoop(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()

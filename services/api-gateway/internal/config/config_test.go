@@ -218,7 +218,7 @@ func TestLoad_UnknownRateLimitStrategyReturnsError(t *testing.T) {
 		"GATEWAY_RATE_LIMIT_STRATEGY": "typo_bucket",
 	})
 	if err == nil {
-		t.Fatal("expected error for unrecognised strategy, got nil")
+		t.Fatal("expected error for unrecognized strategy, got nil")
 	}
 }
 

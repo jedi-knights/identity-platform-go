@@ -31,7 +31,7 @@ Nothing else changes — `GrantStrategyRegistry.Handle` dispatches via `Supports
 ## Token Endpoint Invariants
 
 - **`Cache-Control: no-store`** must be set on all token responses (RFC 6749 §5.1).
-- **Scope resolution**: intersect requested scopes with client's registered scopes — never grant more than the client is registered for. Unrecognised scopes return `ErrCodeForbidden`.
+- **Scope resolution**: intersect requested scopes with client's registered scopes — never grant more than the client is registered for. Unrecognized scopes return `ErrCodeForbidden`.
 - **Secret comparison uses `subtle.ConstantTimeCompare`** (via `bcrypt.CompareHashAndPassword` in the `clientregistry` adapter). Do not replace with `==`.
 - **Refresh token rotation**: on every `refresh_token` grant use, the old token is deleted and a new one is issued. This is enforced in `RefreshTokenStrategy.Handle`.
 
