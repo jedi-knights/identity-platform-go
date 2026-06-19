@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/ports"
 )

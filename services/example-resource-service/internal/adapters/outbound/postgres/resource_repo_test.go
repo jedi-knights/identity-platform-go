@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/postgres"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/domain"
 )

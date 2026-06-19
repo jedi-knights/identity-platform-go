@@ -15,7 +15,6 @@ jobs:
       fail-fast: false
       matrix:
         module:
-          - libs/errors
           - libs/httputil
           - libs/logging
           - libs/testutil

@@ -28,8 +28,8 @@ func newPolicyTestClient(t *testing.T) *goredis.Client {
 
 // fakeEvaluator is a test double for ports.PolicyEvaluator.
 type fakeEvaluator struct {
-	resp *domain.EvaluationResponse
-	err  error
+	resp  *domain.EvaluationResponse
+	err   error
 	calls int
 }
 

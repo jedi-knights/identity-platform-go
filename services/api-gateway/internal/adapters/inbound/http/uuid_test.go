@@ -24,7 +24,7 @@ func TestIsValidUUID_RejectsWrongLength(t *testing.T) {
 	// Arrange
 	invalid := []string{
 		"",
-		"550e8400-e29b-41d4-a716-44665544000",  // 35 chars
+		"550e8400-e29b-41d4-a716-44665544000",   // 35 chars
 		"550e8400-e29b-41d4-a716-4466554400000", // 37 chars
 	}
 

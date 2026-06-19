@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+
 	"github.com/ocrosby/identity-platform-go/libs/logging"
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/adapters/outbound/memory"

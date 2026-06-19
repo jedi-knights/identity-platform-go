@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/domain"
 )
