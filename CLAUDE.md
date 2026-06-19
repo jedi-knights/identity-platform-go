@@ -104,6 +104,23 @@ The container's nil-interface contract is supported: a provider that returns `(n
 
 `platform.Container` replaces the prior hand-rolled `Container` struct in every service. The convention is unchanged in spirit — wiring is centralized; business code receives dependencies via constructors; no globals — but the mechanics are now uniform across services and provide ordered shutdown, lifecycle channels (`Ready` / `Done`), and a test seam (`OverrideValue`).
 
+#### Per-request scoped values
+
+For request-scoped state — typically a logger enriched with the trace ID and request ID — use **`go-logging`'s context helpers**, not `container.Scope()`:
+
+```go
+// In a middleware:
+scopedLogger := logger.With("trace_id", traceID, "request_id", requestID)
+ctx := logging.WithContext(r.Context(), scopedLogger)
+next.ServeHTTP(w, r.WithContext(ctx))
+
+// In a handler:
+log := logging.FromContext(r.Context())
+log.Info("handled request")
+```
+
+`container.Scope()` is reserved for the case where there is a second per-request dependency that depends on the per-request logger (or another per-request scoped value) — e.g., a request-bound database transaction, a per-request cache, or a unit-of-work pattern. No service currently has that pattern; if one is introduced later, that is the natural place to start using `Scope()`. Until then, calling `Scope()` per request would allocate a child container for no observable benefit and would push `Resolve` calls into the request path, violating the "Resolve only at the composition root" rule.
+
 ### Inter-Service Communication
 
 Services communicate via HTTP using outbound port adapters in `internal/adapters/outbound/<service-name>/`. Each call site is behind an interface, so adapters can be swapped without touching business logic.
