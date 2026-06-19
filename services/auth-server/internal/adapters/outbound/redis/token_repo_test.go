@@ -11,7 +11,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	goredis "github.com/redis/go-redis/v9"
 
-	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
+	"github.com/jedi-knights/go-platform/apperrors"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/redis"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 )

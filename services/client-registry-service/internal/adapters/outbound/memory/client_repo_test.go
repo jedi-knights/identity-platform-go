@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
+	"github.com/jedi-knights/go-platform/apperrors"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/adapters/outbound/memory"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/domain"
 )

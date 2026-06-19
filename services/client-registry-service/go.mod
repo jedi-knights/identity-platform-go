@@ -5,7 +5,6 @@ go 1.26
 require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.9.1
-	github.com/ocrosby/identity-platform-go/libs/errors v0.0.0
 	github.com/ocrosby/identity-platform-go/libs/httputil v0.0.0
 	github.com/ocrosby/identity-platform-go/libs/logging v0.0.0
 	github.com/spf13/cobra v1.8.1
@@ -29,6 +28,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/jedi-knights/go-platform v0.0.0-20260619095948-9dc19627f8e4
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
@@ -49,7 +49,7 @@ require (
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
 	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	golang.org/x/tools v0.38.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
@@ -57,7 +57,6 @@ require (
 )
 
 replace (
-	github.com/ocrosby/identity-platform-go/libs/errors => ../../libs/errors
 	github.com/ocrosby/identity-platform-go/libs/httputil => ../../libs/httputil
 	github.com/ocrosby/identity-platform-go/libs/logging => ../../libs/logging
 )
