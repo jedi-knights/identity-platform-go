@@ -1,7 +1,6 @@
 go 1.26
 
 use (
-	./services/api-gateway
 	./services/auth-server
 	./services/authorization-policy-service
 	./services/client-registry-service
