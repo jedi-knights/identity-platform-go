@@ -1,5 +1,5 @@
 // Package retry is the outbound adapter that adds exponential-backoff retry
-// behaviour to any ports.UpstreamTransport.
+// behavior to any ports.UpstreamTransport.
 //
 // Design: Decorator pattern — Transport wraps an inner UpstreamTransport and
 // intercepts Forward calls to retry on transient upstream errors. Each attempt
@@ -49,7 +49,7 @@ type Transport struct {
 	global domain.RetryConfig
 }
 
-// NewTransport wraps inner with retry-backoff behaviour governed by globalCfg.
+// NewTransport wraps inner with retry-backoff behavior governed by globalCfg.
 func NewTransport(inner ports.UpstreamTransport, globalCfg domain.RetryConfig) *Transport {
 	return &Transport{inner: inner, global: globalCfg}
 }
@@ -152,7 +152,7 @@ func newExponentialBackoff(cfg domain.RetryConfig) *backoff.ExponentialBackOff {
 	return bo
 }
 
-// sleepContext sleeps for d, returning false if the context is cancelled first.
+// sleepContext sleeps for d, returning false if the context is canceled first.
 // Returns false immediately for d ≤ 0 (backoff.Stop sentinel or zero interval).
 func sleepContext(ctx context.Context, d time.Duration) bool {
 	if d <= 0 {

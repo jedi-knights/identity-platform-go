@@ -115,7 +115,7 @@ Services communicate via HTTP using outbound port adapters in `internal/adapters
 | `example-resource-service` | `token-introspection-service` | `ports.TokenIntrospector` | `adapters/outbound/introspection` | `RESOURCE_INTROSPECTION_URL` |
 | `example-resource-service` | `authorization-policy-service` | `ports.PolicyChecker` | `adapters/outbound/policy` | `RESOURCE_POLICY_URL` |
 
-**Fallback behaviour**: when an env var is empty, the service falls back to an in-memory adapter (or local JWT validation/scope-only access control). This lets individual services run in isolation during development without the full stack.
+**Fallback behavior**: when an env var is empty, the service falls back to an in-memory adapter (or local JWT validation/scope-only access control). This lets individual services run in isolation during development without the full stack.
 
 **Two-layer authorization in `example-resource-service`**: scope validates token capability (can this token perform reads/writes?); policy validates subject permission (is this specific user/client allowed?). Scope check is local and free; policy check is an outbound HTTP call. When `RESOURCE_POLICY_URL` is unset, scope alone gates access — the policy layer is opt-in.
 

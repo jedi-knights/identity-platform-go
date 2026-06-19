@@ -581,7 +581,7 @@ func validateRoutes(routes []RouteConfig) error {
 	return nil
 }
 
-// validRateLimitStrategies is the set of recognised rate_limit.strategy values.
+// validRateLimitStrategies is the set of recognized rate_limit.strategy values.
 var validRateLimitStrategies = map[string]bool{
 	"token_bucket": true, "fixed_window": true,
 	"sliding_window_log": true, "sliding_window_counter": true,
@@ -589,14 +589,14 @@ var validRateLimitStrategies = map[string]bool{
 }
 
 // validateRateLimit checks that, when rate limiting is enabled, the strategy
-// is recognised and the per-strategy parameters are sensible.
+// is recognized and the per-strategy parameters are sensible.
 // Extracted from validate to keep its cyclomatic complexity within the project limit.
 func validateRateLimit(rl RateLimitConfig) error {
 	if !rl.Enabled {
 		return nil
 	}
 	if !validRateLimitStrategies[rl.Strategy] {
-		return fmt.Errorf("rate_limit.strategy %q is not recognised; valid values: token_bucket, fixed_window, sliding_window_log, sliding_window_counter, leaky_bucket, concurrency", rl.Strategy)
+		return fmt.Errorf("rate_limit.strategy %q is not recognized; valid values: token_bucket, fixed_window, sliding_window_log, sliding_window_counter, leaky_bucket, concurrency", rl.Strategy)
 	}
 	return validateRateLimitParams(rl)
 }

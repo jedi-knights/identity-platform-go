@@ -333,7 +333,7 @@ The true queuing variant would require a different port interface:
 
 ```go
 type QueuingRateLimiter interface {
-    // Acquire blocks until a slot is available or ctx is cancelled.
+    // Acquire blocks until a slot is available or ctx is canceled.
     Acquire(ctx context.Context, key string) error
 }
 ```

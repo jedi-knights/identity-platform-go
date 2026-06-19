@@ -34,7 +34,7 @@ import (
 
 // EmailVerificationConfig holds tunables for the verification flow. Defaults
 // are applied when fields are zero so callers can construct an empty struct
-// and still get sensible behaviour.
+// and still get sensible behavior.
 type EmailVerificationConfig struct {
 	// TokenTTL is how long a freshly issued verification token remains
 	// redeemable. Defaults to 24 hours when zero.

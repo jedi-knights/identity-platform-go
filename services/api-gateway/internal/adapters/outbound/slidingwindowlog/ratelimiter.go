@@ -82,7 +82,7 @@ func (rl *RateLimiter) Allow(key string) bool {
 }
 
 // evictLoop runs a periodic cleanup of keys whose entire log has slid out of
-// the active window. It exits when ctx is cancelled.
+// the active window. It exits when ctx is canceled.
 func (rl *RateLimiter) evictLoop(ctx context.Context) {
 	ticker := time.NewTicker(rlshard.EvictTick)
 	defer ticker.Stop()

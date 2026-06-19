@@ -40,7 +40,7 @@ type entry struct {
 }
 
 // New creates a fixed-window rate limiter with the given rule and starts a
-// background eviction goroutine that exits when ctx is cancelled.
+// background eviction goroutine that exits when ctx is canceled.
 func New(ctx context.Context, rule domain.FixedWindowRule) *RateLimiter {
 	rl := &RateLimiter{rule: rule}
 	for i := range rlshard.NumShards {

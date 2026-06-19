@@ -129,7 +129,7 @@ func TestFindByEmail(t *testing.T) {
 }
 
 // TestSaveDuplicateEmailConflict verifies that saving two users with the same
-// email returns an ErrCodeConflict — matching the memory adapter's behaviour.
+// email returns an ErrCodeConflict — matching the memory adapter's behavior.
 func TestSaveDuplicateEmailConflict(t *testing.T) {
 	repo, pool := setupRepo(t)
 	ctx := context.Background()
@@ -188,7 +188,7 @@ func TestUpdate(t *testing.T) {
 }
 
 // TestUpdate_DuplicateEmail_ReturnsConflict verifies that changing a user's email to
-// one already taken returns ErrCodeConflict, matching the memory adapter's behaviour.
+// one already taken returns ErrCodeConflict, matching the memory adapter's behavior.
 func TestUpdate_DuplicateEmail_ReturnsConflict(t *testing.T) {
 	repo, pool := setupRepo(t)
 	ctx := context.Background()

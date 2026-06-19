@@ -43,7 +43,7 @@ type entry struct {
 }
 
 // New creates a sliding-window counter rate limiter with the given rule and starts
-// a background eviction goroutine that exits when ctx is cancelled.
+// a background eviction goroutine that exits when ctx is canceled.
 func New(ctx context.Context, rule domain.SlidingWindowCounterRule) *RateLimiter {
 	if rule.WindowDuration <= 0 {
 		panic("slidingwindowcounter: WindowDuration must be > 0")
