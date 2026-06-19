@@ -2,7 +2,6 @@ go 1.26
 
 use (
 	./libs/httputil
-	./libs/jwtutil
 	./libs/testutil
 	./services/api-gateway
 	./services/auth-server
