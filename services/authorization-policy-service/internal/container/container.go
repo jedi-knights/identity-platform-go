@@ -104,7 +104,10 @@ func repositoriesProvider(ctx context.Context, c *platform.Container) (*reposito
 }
 
 func policyServiceProvider(ctx context.Context, c *platform.Container) (*application.PolicyService, error) {
-	repos := platform.MustResolve[*repositories](ctx, c)
+	repos, err := platform.Resolve[*repositories](ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	return application.NewPolicyService(repos.policy, repos.role), nil
 }
 
@@ -130,7 +133,10 @@ func evaluatorProvider(ctx context.Context, c *platform.Container) (ports.Policy
 }
 
 func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.Handler, error) {
-	evaluator := platform.MustResolve[ports.PolicyEvaluator](ctx, c)
+	evaluator, err := platform.Resolve[ports.PolicyEvaluator](ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	svc := platform.MustResolve[*application.PolicyService](ctx, c)
 	log := platform.MustResolve[logging.Logger](ctx, c)
 	return inboundhttp.NewHandler(evaluator, svc, log), nil
