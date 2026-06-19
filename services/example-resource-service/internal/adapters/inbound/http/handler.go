@@ -11,7 +11,8 @@ import (
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 
-	"github.com/ocrosby/identity-platform-go/libs/httputil"
+	"github.com/jedi-knights/go-platform/httputil"
+
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/ports"
 )
