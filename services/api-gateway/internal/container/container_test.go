@@ -7,7 +7,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/container"
 )
@@ -24,7 +25,7 @@ func TestNew_ReturnsContainerWithHandler(t *testing.T) {
 			},
 		},
 	}
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 
 	// context.Background() is the correct root context for tests; in production
 	// main.go passes a context cancelled on SIGTERM to stop background goroutines.
@@ -51,7 +52,7 @@ func TestNew_WorksWithNoRoutes(t *testing.T) {
 	cfg := &config.Config{
 		Server: config.ServerConfig{Host: "0.0.0.0", Port: 8080},
 	}
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 
 	ctr, err := container.New(context.Background(), cfg, logger)
 

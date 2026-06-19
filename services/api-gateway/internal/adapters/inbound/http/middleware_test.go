@@ -13,8 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	"github.com/ocrosby/identity-platform-go/libs/jwtutil"
-	"github.com/ocrosby/identity-platform-go/libs/logging"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/auth/hs256"
 	gatewayhttp "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/config"
@@ -50,7 +51,7 @@ func signToken(t *testing.T, subject, scope string, roles []string, ttl time.Dur
 // token with valid signature passes through and reaches the downstream handler.
 func TestJWTMiddleware_ValidToken_Passes(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	reached := false
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		reached = true
@@ -78,7 +79,7 @@ func TestJWTMiddleware_ValidToken_Passes(t *testing.T) {
 // an Authorization header are rejected before reaching the downstream handler.
 func TestJWTMiddleware_MissingToken_Returns401(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -99,7 +100,7 @@ func TestJWTMiddleware_MissingToken_Returns401(t *testing.T) {
 // rejected even if the signature is valid.
 func TestJWTMiddleware_ExpiredToken_Returns401(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -122,7 +123,7 @@ func TestJWTMiddleware_ExpiredToken_Returns401(t *testing.T) {
 // different key are rejected (guards against algorithm confusion attacks).
 func TestJWTMiddleware_WrongKey_Returns401(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -156,7 +157,7 @@ func TestJWTMiddleware_WrongKey_Returns401(t *testing.T) {
 // the Authorization header is rejected.
 func TestJWTMiddleware_MalformedToken_Returns401(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -181,7 +182,7 @@ func TestJWTMiddleware_MalformedToken_Returns401(t *testing.T) {
 // upstream services can trust them without validating JWT themselves.
 func TestJWTMiddleware_InjectsAuthHeaders(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	var got http.Header
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = r.Header.Clone()
@@ -215,7 +216,7 @@ func TestJWTMiddleware_InjectsAuthHeaders(t *testing.T) {
 // because the middleware's injected values are the only trusted source.
 func TestJWTMiddleware_StripsClientAuthHeaders(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	var got http.Header
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = r.Header.Clone()
@@ -247,7 +248,7 @@ func TestJWTMiddleware_StripsClientAuthHeaders(t *testing.T) {
 // upstreams cannot be deceived on endpoints that bypass JWT validation.
 func TestJWTMiddleware_StripsAuthHeadersOnPublicPath(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	var got http.Header
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = r.Header.Clone()
@@ -276,7 +277,7 @@ func TestJWTMiddleware_StripsAuthHeadersOnPublicPath(t *testing.T) {
 // configured public paths reach the downstream without a token.
 func TestJWTMiddleware_PublicPath_NoToken_Passes(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	reached := false
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		reached = true
@@ -302,7 +303,7 @@ func TestJWTMiddleware_PublicPath_NoToken_Passes(t *testing.T) {
 // does not match any public prefix still requires a token.
 func TestJWTMiddleware_NonPublicPath_NoToken_Returns401(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -327,7 +328,7 @@ var uuidV4 = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-
 // an X-Request-ID header receives a freshly generated UUID v4.
 func TestRequestIDMiddleware_GeneratesIDWhenAbsent(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -352,7 +353,7 @@ func TestRequestIDMiddleware_GeneratesIDWhenAbsent(t *testing.T) {
 // a valid UUID v4 as X-Request-ID has that exact value echoed back, not replaced.
 func TestRequestIDMiddleware_AcceptsValidClientUUID(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	clientID := "550e8400-e29b-41d4-a716-446655440000"
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -375,7 +376,7 @@ func TestRequestIDMiddleware_AcceptsValidClientUUID(t *testing.T) {
 // non-UUID X-Request-ID is replaced with a generated UUID to prevent log injection.
 func TestRequestIDMiddleware_ReplacesInvalidClientID(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	downstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -406,7 +407,7 @@ func TestRequestIDMiddleware_ReplacesInvalidClientID(t *testing.T) {
 // that upstream services receive it for correlation.
 func TestRequestIDMiddleware_PropagatesIDToRequestHeader(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	clientID := "550e8400-e29b-41d4-a716-446655440000"
 	var gotRequestHeader string
 	downstream := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
@@ -431,7 +432,7 @@ func TestRateLimitMiddleware_KeySource_XForwardedFor(t *testing.T) {
 	// Arrange
 	var capturedKey string
 	limiter := &capturingLimiter{captureFunc: func(key string) { capturedKey = key }}
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	mw := gatewayhttp.RateLimitMiddleware(limiter, "x-forwarded-for", logger)
 	req := httptest.NewRequest(http.MethodGet, "/api", nil)
 	req.RemoteAddr = "10.0.0.1:1234"
@@ -450,7 +451,7 @@ func TestRateLimitMiddleware_KeySource_JWTSubject(t *testing.T) {
 	// Arrange
 	var capturedKey string
 	limiter := &capturingLimiter{captureFunc: func(key string) { capturedKey = key }}
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	mw := gatewayhttp.RateLimitMiddleware(limiter, "jwt-subject", logger)
 	req := httptest.NewRequest(http.MethodGet, "/api", nil)
 	req.RemoteAddr = "10.0.0.1:1234"
@@ -469,7 +470,7 @@ func TestRateLimitMiddleware_KeySource_FallsBackToIPWhenHeaderMissing(t *testing
 	// Arrange
 	var capturedKey string
 	limiter := &capturingLimiter{captureFunc: func(key string) { capturedKey = key }}
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	mw := gatewayhttp.RateLimitMiddleware(limiter, "x-real-ip", logger)
 	req := httptest.NewRequest(http.MethodGet, "/api", nil)
 	req.RemoteAddr = "192.168.1.50:9000"
@@ -506,7 +507,7 @@ func TestIPFilterMiddleware_DenyMode_BlocksMatchingCIDR(t *testing.T) {
 		CIDRs:     []string{"10.0.0.0/8"},
 		KeySource: "ip",
 	}
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	mw := gatewayhttp.IPFilterMiddleware(cfg, logger)
 	req := httptest.NewRequest(http.MethodGet, "/api", nil)
 	req.RemoteAddr = "10.5.6.7:1234"
@@ -529,7 +530,7 @@ func TestIPFilterMiddleware_DenyMode_AllowsNonMatchingIP(t *testing.T) {
 		CIDRs:     []string{"10.0.0.0/8"},
 		KeySource: "ip",
 	}
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	mw := gatewayhttp.IPFilterMiddleware(cfg, logger)
 	req := httptest.NewRequest(http.MethodGet, "/api", nil)
 	req.RemoteAddr = "203.0.113.5:4321"
@@ -553,7 +554,7 @@ func TestIPFilterMiddleware_AllowMode_BlocksNonMatchingIP(t *testing.T) {
 		CIDRs:     []string{"192.168.0.0/16"},
 		KeySource: "ip",
 	}
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	mw := gatewayhttp.IPFilterMiddleware(cfg, logger)
 	req := httptest.NewRequest(http.MethodGet, "/api", nil)
 	req.RemoteAddr = "10.0.0.1:9999"
@@ -576,7 +577,7 @@ func TestIPFilterMiddleware_AllowMode_PermitsMatchingIP(t *testing.T) {
 		CIDRs:     []string{"192.168.0.0/16"},
 		KeySource: "ip",
 	}
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	mw := gatewayhttp.IPFilterMiddleware(cfg, logger)
 	req := httptest.NewRequest(http.MethodGet, "/api", nil)
 	req.RemoteAddr = "192.168.1.100:5678"
@@ -602,7 +603,7 @@ func TestCompressionMiddleware_CompressesLargeJSONResponse(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
 	})
-	mw := gatewayhttp.CompressionMiddleware(cfg, logging.NewLogger(logging.Config{Output: io.Discard}))(upstream)
+	mw := gatewayhttp.CompressionMiddleware(cfg, logging.New(logging.Config{Output: io.Discard}))(upstream)
 	req := httptest.NewRequest(http.MethodGet, "/api", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rr := httptest.NewRecorder()
@@ -623,7 +624,7 @@ func TestCompressionMiddleware_SkipsClientWithoutGzip(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"k":"v"}`))
 	})
-	mw := gatewayhttp.CompressionMiddleware(cfg, logging.NewLogger(logging.Config{Output: io.Discard}))(upstream)
+	mw := gatewayhttp.CompressionMiddleware(cfg, logging.New(logging.Config{Output: io.Discard}))(upstream)
 	req := httptest.NewRequest(http.MethodGet, "/api", nil)
 	// Accept-Encoding deliberately not set
 	rr := httptest.NewRecorder()
@@ -645,7 +646,7 @@ func TestCompressionMiddleware_SkipsSmallResponse(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
 	})
-	mw := gatewayhttp.CompressionMiddleware(cfg, logging.NewLogger(logging.Config{Output: io.Discard}))(upstream)
+	mw := gatewayhttp.CompressionMiddleware(cfg, logging.New(logging.Config{Output: io.Discard}))(upstream)
 	req := httptest.NewRequest(http.MethodGet, "/api", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rr := httptest.NewRecorder()
@@ -668,7 +669,7 @@ func TestCompressionMiddleware_DoesNotDoubleCompress(t *testing.T) {
 		w.Header().Set("Content-Encoding", "gzip")
 		_, _ = w.Write([]byte(`already-compressed`))
 	})
-	mw := gatewayhttp.CompressionMiddleware(cfg, logging.NewLogger(logging.Config{Output: io.Discard}))(upstream)
+	mw := gatewayhttp.CompressionMiddleware(cfg, logging.New(logging.Config{Output: io.Discard}))(upstream)
 	req := httptest.NewRequest(http.MethodGet, "/api", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rr := httptest.NewRecorder()
@@ -699,7 +700,7 @@ func TestCompressionMiddleware_CompressedBodyDecodes(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(body))
 	})
-	mw := gatewayhttp.CompressionMiddleware(cfg, logging.NewLogger(logging.Config{Output: io.Discard}))(upstream)
+	mw := gatewayhttp.CompressionMiddleware(cfg, logging.New(logging.Config{Output: io.Discard}))(upstream)
 	req := httptest.NewRequest(http.MethodGet, "/sign-up", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rr := httptest.NewRecorder()
@@ -736,7 +737,7 @@ func TestCompressionMiddleware_SetsVaryAcceptEncoding(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
 	})
-	mw := gatewayhttp.CompressionMiddleware(cfg, logging.NewLogger(logging.Config{Output: io.Discard}))(upstream)
+	mw := gatewayhttp.CompressionMiddleware(cfg, logging.New(logging.Config{Output: io.Discard}))(upstream)
 	req := httptest.NewRequest(http.MethodGet, "/api", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
 	rr := httptest.NewRecorder()
@@ -769,7 +770,7 @@ func containsToken(values []string, token string) bool {
 
 func TestRateLimitMiddleware_ExceedLimit_Returns429(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	mw := gatewayhttp.RateLimitMiddleware(&rejectingRateLimiter{}, "ip", logger)
 
 	// Act
@@ -785,7 +786,7 @@ func TestRateLimitMiddleware_ExceedLimit_Returns429(t *testing.T) {
 
 func TestRateLimitMiddleware_ExceedLimit_SetsRetryAfterHeader(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	mw := gatewayhttp.RateLimitMiddleware(&rejectingRateLimiter{}, "ip", logger)
 
 	// Act
@@ -808,7 +809,7 @@ func (rejectingRateLimiter) Allow(string) bool { return false }
 
 func TestConcurrencyMiddleware_ExceedLimit_Returns503(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	mw := gatewayhttp.ConcurrencyMiddleware(&rejectingConcurrencyLimiter{}, "ip", logger)
 
 	// Act
@@ -824,7 +825,7 @@ func TestConcurrencyMiddleware_ExceedLimit_Returns503(t *testing.T) {
 
 func TestConcurrencyMiddleware_ExceedLimit_SetsRetryAfterHeader(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	mw := gatewayhttp.ConcurrencyMiddleware(&rejectingConcurrencyLimiter{}, "ip", logger)
 
 	// Act
@@ -840,7 +841,7 @@ func TestConcurrencyMiddleware_ExceedLimit_SetsRetryAfterHeader(t *testing.T) {
 
 func TestConcurrencyMiddleware_SlotReleasedAfterHandler(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	tr := &trackingConcurrencyLimiter{}
 	mw := gatewayhttp.ConcurrencyMiddleware(tr, "ip", logger)
 
@@ -860,7 +861,7 @@ func TestConcurrencyMiddleware_SlotReleasedAfterHandler(t *testing.T) {
 
 func TestConcurrencyMiddleware_SlotNotReleasedOnDeny(t *testing.T) {
 	// Arrange
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	lim := &rejectingConcurrencyLimiter{}
 	mw := gatewayhttp.ConcurrencyMiddleware(lim, "ip", logger)
 

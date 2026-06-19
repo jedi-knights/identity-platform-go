@@ -13,7 +13,8 @@ import (
 
 	"github.com/jedi-knights/go-platform/apperrors"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	gatewayhttp "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/domain"
@@ -86,13 +87,13 @@ func (f *fakeHealthAggregator) AggregateHealth(_ context.Context) ports.HealthRe
 // Use newHandlerWithHealth when the test exercises the aggregated health path.
 func newHandler(t *testing.T, router ports.RequestRouter, transport ports.UpstreamTransport, metrics ports.MetricsRecorder) *gatewayhttp.Handler {
 	t.Helper()
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	return gatewayhttp.NewHandler(router, transport, metrics, logger, nil)
 }
 
 func newHandlerWithHealth(t *testing.T, health ports.HealthAggregator) *gatewayhttp.Handler {
 	t.Helper()
-	logger := logging.NewLogger(logging.Config{Output: io.Discard})
+	logger := logging.New(logging.Config{Output: io.Discard})
 	return gatewayhttp.NewHandler(&fakeRouter{}, &fakeTransport{}, &fakeMetrics{}, logger, health)
 }
 
