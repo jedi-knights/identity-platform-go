@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
+	platform "github.com/jedi-knights/go-platform/container"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/config"
@@ -56,12 +57,16 @@ func run(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("setting up observability: %w", err)
 	}
 
-	ctr, err := container.New(cfg, logger)
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer startupCancel()
+
+	ctr, err := container.New(startupCtx, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
 
-	router := inboundhttp.NewRouter(ctr.Handler, logger)
+	handler := platform.MustResolve[*inboundhttp.Handler](startupCtx, ctr)
+	router := inboundhttp.NewRouter(handler, logger)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
