@@ -7,7 +7,6 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.38.0
 	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/ocrosby/identity-platform-go/libs/httputil v0.0.0-00010101000000-000000000000
 	github.com/ocrosby/identity-platform-go/libs/testutil v0.0.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/sony/gobreaker v1.0.0
@@ -91,7 +90,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace (
-	github.com/ocrosby/identity-platform-go/libs/httputil => ../../libs/httputil
-	github.com/ocrosby/identity-platform-go/libs/testutil => ../../libs/testutil
-)
+replace github.com/ocrosby/identity-platform-go/libs/testutil => ../../libs/testutil

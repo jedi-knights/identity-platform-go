@@ -5,7 +5,6 @@ go 1.26
 require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.9.1
-	github.com/ocrosby/identity-platform-go/libs/httputil v0.0.0
 	github.com/ocrosby/identity-platform-go/libs/testutil v0.0.0-20260503120047-1ba1ef4abe7c
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.19.0
@@ -56,7 +55,5 @@ require (
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/ocrosby/identity-platform-go/libs/httputil => ../../libs/httputil
 
 replace github.com/ocrosby/identity-platform-go/libs/testutil => ../../libs/testutil
