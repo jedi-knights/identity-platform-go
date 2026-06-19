@@ -31,7 +31,7 @@ TTL is set to `token.ExpiresAt - now` at `Save` time, so Redis automatically cle
 
 ### Adapter operations
 
-| Operation | Redis command | Behaviour |
+| Operation | Redis command | Behavior |
 |-----------|--------------|-----------|
 | `Save(token)` | `SETEX token:<raw> <ttl-seconds> <json>` | Stores the token; TTL matches JWT expiry |
 | `FindByRaw(raw)` | `GET token:<raw>` | `redis.Nil` → not found (revoked or never issued) |
@@ -59,9 +59,9 @@ The Redis adapter for this port issues `EXISTS token:<raw>`. A token is consider
 | Service | Env var | Fallback |
 |---------|---------|---------|
 | `auth-server` | `AUTH_REDIS_URL` | in-memory `TokenRepository` |
-| `token-introspection-service` | `INTROSPECT_REDIS_URL` | JWT-signature-only validation (current behaviour) |
+| `token-introspection-service` | `INTROSPECT_REDIS_URL` | JWT-signature-only validation (current behavior) |
 
-When the env var is absent, each service falls back to its existing behaviour. This preserves the ability to run individual services in isolation during local development without a Redis instance. The fallback is wired in `container.go` following the same pattern used for other outbound adapters (see `AUTH_CLIENT_REGISTRY_URL`, `AUTH_IDENTITY_SERVICE_URL`).
+When the env var is absent, each service falls back to its existing behavior. This preserves the ability to run individual services in isolation during local development without a Redis instance. The fallback is wired in `container.go` following the same pattern used for other outbound adapters (see `AUTH_CLIENT_REGISTRY_URL`, `AUTH_IDENTITY_SERVICE_URL`).
 
 ### Compile-time interface check
 

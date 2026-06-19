@@ -309,7 +309,7 @@ func TestHandler_Health_Returns503WhenNotReady(t *testing.T) {
 }
 
 // TestHandler_Health_RecoveryAfterReady verifies that calling SetReady(true)
-// after a SetReady(false) restores normal health-check behaviour.
+// after a SetReady(false) restores normal health-check behavior.
 func TestHandler_Health_RecoveryAfterReady(t *testing.T) {
 	h := newHandler(t, &fakeRouter{}, &fakeTransport{}, &fakeMetrics{})
 

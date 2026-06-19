@@ -3,7 +3,7 @@
 //
 // Design: Decorator pattern — Transport implements the same ports.UpstreamTransport
 // interface as the inner transport it wraps. Callers cannot distinguish a plain
-// proxy.Transport from a circuit-breaking one; behaviour is added transparently.
+// proxy.Transport from a circuit-breaking one; behavior is added transparently.
 //
 // The circuit breaker state machine (Closed → Open → Half-Open) is managed by
 // gobreaker independently for each route. When the circuit is Open, requests are

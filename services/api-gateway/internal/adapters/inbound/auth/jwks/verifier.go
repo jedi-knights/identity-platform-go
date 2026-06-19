@@ -27,7 +27,7 @@ var _ ports.TokenVerifier = (*Verifier)(nil)
 // Verifier validates RS256 JWT Bearer tokens using a JWKS endpoint.
 //
 // Key refresh runs in the background for the lifetime of the context passed to
-// New. When the context is cancelled (e.g. on gateway shutdown), the refresh
+// New. When the context is canceled (e.g. on gateway shutdown), the refresh
 // goroutine exits cleanly.
 //
 // Issuer and Audience validation are applied when the corresponding fields are

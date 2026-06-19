@@ -43,7 +43,7 @@ func okHandler(t *testing.T, called *bool) http.Handler {
 
 // signHS256 creates a minimal HS256-signed JWT from cfg.
 // ExpiresAt is optional — omitting it produces a non-expiring token, which is
-// fine for tests that are not checking expiry behaviour.
+// fine for tests that are not checking expiry behavior.
 func signHS256(t *testing.T, key []byte, cfg jwtutil.ClaimsConfig) string {
 	t.Helper()
 	raw, err := jwtutil.Sign(jwtutil.NewClaims(cfg), key)

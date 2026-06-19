@@ -44,7 +44,7 @@ func TestTransport_ImplementsUpstreamTransport(t *testing.T) {
 	)
 }
 
-// --- Single URL: pass-through behaviour ---
+// --- Single URL: pass-through behavior ---
 
 // TestTransport_SingleURL_DelegatesToInner checks that a route with a single URL
 // is forwarded unchanged — the round-robin decorator adds no observable effect.
