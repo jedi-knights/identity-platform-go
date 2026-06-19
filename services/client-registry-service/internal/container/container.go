@@ -70,7 +70,10 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	})
 
 	platform.Register(c, func(ctx context.Context, c *platform.Container) (*application.ClientService, error) {
-		repo := platform.MustResolve[domain.ClientRepository](ctx, c)
+		repo, err := platform.Resolve[domain.ClientRepository](ctx, c)
+		if err != nil {
+			return nil, err
+		}
 		return application.NewClientService(repo), nil
 	})
 
