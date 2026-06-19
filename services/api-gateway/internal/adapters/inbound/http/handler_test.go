@@ -11,7 +11,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
+	"github.com/jedi-knights/go-platform/apperrors"
 	"github.com/ocrosby/identity-platform-go/libs/logging"
 	gatewayhttp "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/application"

@@ -6,8 +6,7 @@ require (
 	github.com/MicahParks/keyfunc/v3 v3.8.0
 	github.com/anthropics/anthropic-sdk-go v1.38.0
 	github.com/cenkalti/backoff/v5 v5.0.3
-	github.com/golang-jwt/jwt/v5 v5.2.2
-	github.com/ocrosby/identity-platform-go/libs/errors v0.0.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/ocrosby/identity-platform-go/libs/httputil v0.0.0-00010101000000-000000000000
 	github.com/ocrosby/identity-platform-go/libs/jwtutil v0.0.0-00010101000000-000000000000
 	github.com/ocrosby/identity-platform-go/libs/logging v0.0.0
@@ -46,6 +45,7 @@ require (
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
+	github.com/jedi-knights/go-platform v0.0.0-20260619095948-9dc19627f8e4
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
@@ -93,7 +93,6 @@ require (
 )
 
 replace (
-	github.com/ocrosby/identity-platform-go/libs/errors => ../../libs/errors
 	github.com/ocrosby/identity-platform-go/libs/httputil => ../../libs/httputil
 	github.com/ocrosby/identity-platform-go/libs/jwtutil => ../../libs/jwtutil
 	github.com/ocrosby/identity-platform-go/libs/logging => ../../libs/logging
