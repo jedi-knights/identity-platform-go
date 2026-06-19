@@ -1,10 +1,16 @@
+// Package container wires the token-introspection-service's dependencies
+// through the platform DI container. Resolution from the returned container
+// is restricted to the composition root in cmd/main.go and tests; business
+// code receives its dependencies via constructor parameters.
 package container
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
+	platform "github.com/jedi-knights/go-platform/container"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/adapters/inbound/http"
 	jwtadapter "github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/adapters/outbound/jwt"
@@ -14,15 +20,8 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/domain"
 )
 
-// Container holds the wired-up dependencies for the token introspection service.
-type Container struct {
-	Logger  logging.Logger
-	Handler *inboundhttp.Handler
-	Config  *config.Config
-}
-
-// redisAddr extracts the host:port from a Redis URL for safe logging.
-// If the URL cannot be parsed, the original string is returned so no information is lost.
+// redisAddr extracts the host:port from a Redis URL so it can be logged
+// safely — the raw URL may embed a password (redis://:pass@host/db).
 func redisAddr(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -31,38 +30,71 @@ func redisAddr(rawURL string) string {
 	return u.Host
 }
 
-// New wires up all service dependencies and returns a ready-to-use Container.
-// If INTROSPECT_REDIS_URL is set, a Redis-backed revocation checker is wired in;
-// otherwise revocation is disabled and tokens are accepted until their JWT expiry.
-func New(cfg *config.Config, logger logging.Logger) (*Container, error) {
+// New constructs and bootstraps a platform container wired with every
+// dependency this service needs.
+//
+// When cfg.Redis.URL is set, a Redis-backed revocation checker is wired in;
+// otherwise the revocation check is disabled and tokens are accepted until
+// their JWT expiry. The Redis client is NOT pinged at startup so transient
+// Redis unavailability does not block the service from starting (the
+// revocation check fails closed at request time per RFC 7662 §2.2).
+func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platform.Container, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is required")
 	}
+	if logger == nil {
+		return nil, fmt.Errorf("logger is required")
+	}
 
-	var revocation domain.RevocationChecker
-	if cfg.Redis.URL != "" {
-		// Log only the host:port — the URL may embed a password (redis://:pass@host/db).
-		redisAddr := redisAddr(cfg.Redis.URL)
-		// No startup ping: the Redis client connects lazily. A failed ping here would
-		// prevent the service from starting even when Redis is temporarily unavailable,
-		// which violates the fail-closed contract (token treated as inactive, not service down).
-		logger.Info("using Redis revocation check", "addr", redisAddr)
+	c := platform.New()
+
+	platform.Register(c, func(_ context.Context, _ *platform.Container) (*config.Config, error) {
+		return cfg, nil
+	})
+	platform.Register(c, func(_ context.Context, _ *platform.Container) (logging.Logger, error) {
+		return logger, nil
+	})
+
+	platform.Register(c, func(ctx context.Context, c *platform.Container) (domain.RevocationChecker, error) {
+		cfg := platform.MustResolve[*config.Config](ctx, c)
+		log := platform.MustResolve[logging.Logger](ctx, c)
+		if cfg.Redis.URL == "" {
+			log.Info("Redis revocation check disabled (INTROSPECT_REDIS_URL not set); revoked tokens will be accepted until expiry")
+			return nil, nil
+		}
+		log.Info("using Redis revocation check", "addr", redisAddr(cfg.Redis.URL))
 		client, err := redisadapter.NewClient(cfg.Redis.URL)
 		if err != nil {
 			return nil, fmt.Errorf("connecting to Redis: %w", err)
 		}
-		revocation = redisadapter.NewRevocationStore(client)
-	} else {
-		logger.Info("Redis revocation check disabled (INTROSPECT_REDIS_URL not set); revoked tokens will be accepted until expiry")
+		return redisadapter.NewRevocationStore(client), nil
+	})
+
+	platform.Register(c, func(ctx context.Context, c *platform.Container) (domain.TokenValidator, error) {
+		cfg := platform.MustResolve[*config.Config](ctx, c)
+		return jwtadapter.NewValidator([]byte(cfg.JWT.SigningKey), cfg.JWT.Issuer), nil
+	})
+
+	platform.Register(c, func(ctx context.Context, c *platform.Container) (*application.IntrospectionService, error) {
+		validator := platform.MustResolve[domain.TokenValidator](ctx, c)
+		// Revocation may be nil when Redis is unconfigured; IntrospectionService
+		// handles nil safely by skipping the revocation step.
+		revocation, err := platform.Resolve[domain.RevocationChecker](ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		return application.NewIntrospectionService(validator, revocation), nil
+	})
+
+	platform.Register(c, func(ctx context.Context, c *platform.Container) (*inboundhttp.Handler, error) {
+		svc := platform.MustResolve[*application.IntrospectionService](ctx, c)
+		cfg := platform.MustResolve[*config.Config](ctx, c)
+		log := platform.MustResolve[logging.Logger](ctx, c)
+		return inboundhttp.NewHandler(svc, log, cfg.Introspection.Secret), nil
+	})
+
+	if err := c.Bootstrap(ctx); err != nil {
+		return nil, fmt.Errorf("bootstrapping container: %w", err)
 	}
-
-	validator := jwtadapter.NewValidator([]byte(cfg.JWT.SigningKey), cfg.JWT.Issuer)
-	svc := application.NewIntrospectionService(validator, revocation)
-	handler := inboundhttp.NewHandler(svc, logger, cfg.Introspection.Secret)
-
-	return &Container{
-		Logger:  logger,
-		Handler: handler,
-		Config:  cfg,
-	}, nil
+	return c, nil
 }
