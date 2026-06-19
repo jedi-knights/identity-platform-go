@@ -97,7 +97,7 @@ var cacheBufferPool = sync.Pool{
 // Design: Decorator pattern — adds request tracing identity as a cross-cutting
 // concern without any handler knowing about X-Request-ID.
 //
-// Behaviour:
+// Behavior:
 //  1. If the inbound X-Request-ID header is a valid UUID v4, accept it.
 //     This allows clients (or upstream proxies) to correlate their own requests
 //     with gateway log entries without gateway-generated IDs overwriting theirs.

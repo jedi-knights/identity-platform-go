@@ -52,7 +52,7 @@ type MCPRateLimiter struct {
 var _ ports.MCPRateLimiter = (*MCPRateLimiter)(nil)
 
 // NewMCPRateLimiter builds an MCPRateLimiter from the gateway MCP config and
-// starts a background eviction goroutine that exits when ctx is cancelled.
+// starts a background eviction goroutine that exits when ctx is canceled.
 func NewMCPRateLimiter(ctx context.Context, cfg config.MCPConfig) *MCPRateLimiter {
 	specs := buildTierSpecs(cfg)
 	rl := &MCPRateLimiter{

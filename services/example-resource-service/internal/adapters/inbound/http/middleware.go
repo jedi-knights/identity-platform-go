@@ -188,7 +188,7 @@ func parseJWT(raw string, signingKey []byte, audience, issuer string) (*jwtutil.
 // extractBearer extracts the Bearer token from the Authorization header.
 // Writes a 401 and returns false if the header is missing or malformed.
 //
-// Extra whitespace between "Bearer" and the token value is normalised by
+// Extra whitespace between "Bearer" and the token value is normalized by
 // TrimSpace, so "Bearer   tok" is treated the same as "Bearer tok". A header
 // that is all whitespace after the prefix (e.g. "Bearer   ") is rejected.
 func extractBearer(w http.ResponseWriter, r *http.Request) (string, bool) {

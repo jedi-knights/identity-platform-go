@@ -15,7 +15,7 @@ var _ ports.UpstreamTransport = (*Transport)(nil)
 //
 // Design: Decorator pattern — Transport wraps an inner UpstreamTransport (typically
 // proxy.Transport, possibly already wrapped by circuitbreaker.Transport). It does
-// not change the forwarding behaviour; it only replaces route.Upstream.URL with
+// not change the forwarding behavior; it only replaces route.Upstream.URL with
 // the picker's selection before delegating to the inner transport.
 //
 // The route struct is never mutated in place because it is shared read-only state

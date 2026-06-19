@@ -157,7 +157,7 @@ func TestListResources_FallbackToPolicy_Denied(t *testing.T) {
 }
 
 // TestListResources_NoPolicyNorPermissions_Allowed verifies that when neither permissions
-// nor a PolicyChecker is present, access is allowed (scope-only pre-RBAC behaviour).
+// nor a PolicyChecker is present, access is allowed (scope-only pre-RBAC behavior).
 func TestListResources_NoPolicyNorPermissions_Allowed(t *testing.T) {
 	svc := newFakeResourceService()
 	h := NewHandler(svc, svc, svc, testutil.NewTestLogger(), nil)

@@ -12,7 +12,7 @@ type URLUpdater interface {
 
 // DiscoveryRefresher manages background service discovery for a single route.
 // Start performs an initial lookup synchronously and then launches the
-// background refresh loop; the loop exits when ctx is cancelled.
+// background refresh loop; the loop exits when ctx is canceled.
 type DiscoveryRefresher interface {
 	Start(ctx context.Context)
 }

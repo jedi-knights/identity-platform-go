@@ -70,7 +70,7 @@ corresponding GATEWAY_* environment variables or reference file paths.`,
 // bindFlags maps each cobra flag to its Viper key. Only flags that were
 // explicitly set by the user (flag.Changed == true) win over env vars and the
 // config file; unset flags fall through to the lower-priority sources. This is
-// viper's standard BindPFlag behaviour.
+// viper's standard BindPFlag behavior.
 func bindFlags(cmd *cobra.Command, v *viper.Viper) {
 	bindings := map[string]string{
 		"config":             "config_file",
@@ -137,7 +137,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("setting up observability: %w", err)
 	}
 
-	// Root context cancelled when runServe returns (normal or error path).
+	// Root context canceled when runServe returns (normal or error path).
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	defer rootCancel()
 

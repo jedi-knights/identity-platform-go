@@ -48,7 +48,7 @@ type entry struct {
 }
 
 // New creates a leaky bucket rate limiter with the given rule and starts a
-// background eviction goroutine that exits when ctx is cancelled.
+// background eviction goroutine that exits when ctx is canceled.
 func New(ctx context.Context, rule domain.LeakyBucketRule) *RateLimiter {
 	if rule.DrainRatePerSecond <= 0 {
 		panic("leakybucket: DrainRatePerSecond must be > 0")

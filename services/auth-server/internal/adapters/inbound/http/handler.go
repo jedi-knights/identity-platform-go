@@ -381,7 +381,7 @@ func (h *Handler) doRevoke(w http.ResponseWriter, r *http.Request, token string)
 }
 
 // validateTokenTypeHint validates token_type_hint per RFC 7009 §2.2.
-// Returns false and writes a 400 if the hint value is unrecognised.
+// Returns false and writes a 400 if the hint value is unrecognized.
 // Known values (access_token, refresh_token, and empty) are accepted as advisory.
 func (h *Handler) validateTokenTypeHint(w http.ResponseWriter, r *http.Request) bool {
 	hint := r.FormValue("token_type_hint")

@@ -98,4 +98,4 @@ var _ domain.UserRepository = (*UserRepository)(nil)
 
 - **SQLite**: Suitable for a single-instance reference implementation but does not support concurrent writers from multiple replicas. Not appropriate for a horizontally scaled service.
 - **Single shared database with per-service schemas**: Reduces operational overhead (one database to manage) but couples services at the infrastructure layer, making independent deployments and migrations harder. The per-database model keeps service boundaries clean.
-- **ORM (e.g., GORM, ent)**: Adds abstraction over raw SQL but obscures query behaviour, makes migration control less explicit, and introduces a large dependency. The `pgx/v5` + `golang-migrate` pairing provides full control with minimal surface area.
+- **ORM (e.g., GORM, ent)**: Adds abstraction over raw SQL but obscures query behavior, makes migration control less explicit, and introduces a large dependency. The `pgx/v5` + `golang-migrate` pairing provides full control with minimal surface area.

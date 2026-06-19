@@ -51,7 +51,7 @@ func TestRevocationStore_IsActive_KeyMissing(t *testing.T) {
 	}
 }
 
-// TestRevocationStore_IsActive_RedisUnavailable confirms fail-closed behaviour:
+// TestRevocationStore_IsActive_RedisUnavailable confirms fail-closed behavior:
 // when Redis is unreachable, IsActive returns an error so the caller can treat
 // the token as inactive (security takes precedence over availability).
 func TestRevocationStore_IsActive_RedisUnavailable(t *testing.T) {
