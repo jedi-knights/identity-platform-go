@@ -1,3 +1,7 @@
+// Package container wires the authorization-policy-service's dependencies
+// through the platform DI container. Resolution from the returned container
+// is restricted to the composition root in cmd/main.go and tests; business
+// code receives its dependencies via constructor parameters.
 package container
 
 import (
@@ -5,9 +9,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jedi-knights/go-platform/apperrors"
-
 	"github.com/jedi-knights/go-logging/pkg/logging"
+	"github.com/jedi-knights/go-platform/apperrors"
+	platform "github.com/jedi-knights/go-platform/container"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/adapters/outbound/memory"
@@ -19,36 +23,23 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/ports"
 )
 
-// Container holds all wired dependencies for the authorization-policy-service.
-type Container struct {
-	Logger  logging.Logger
-	Handler *inboundhttp.Handler
-	Config  *config.Config
-	closer  func() // called by Close to release external connections
-}
-
-// Close releases any external connections (PostgreSQL pool, Redis client) opened
-// during New. Safe to call multiple times. Must be called after the HTTP server
-// has shut down to avoid in-flight query cancellation.
-func (c *Container) Close() {
-	if c.closer != nil {
-		c.closer()
-	}
-}
-
-// New wires up the service dependencies and returns a ready-to-use Container.
-// ctx is passed to the database connection so startup can be cancelled.
+// New constructs and bootstraps a platform container wired with every
+// dependency this service needs.
 //
 // When cfg.Database.URL is non-empty, schema migrations are applied and
-// PostgreSQL-backed repositories are used. Otherwise the service falls back
-// to in-memory adapters so it can run without an external database during
-// local development.
+// PostgreSQL-backed repositories are used; the connection pool is registered
+// as a close hook. Otherwise the service falls back to in-memory adapters so
+// it can run without an external database during local development.
 //
 // When cfg.Redis.URL is non-empty, a CachingPolicyEvaluator wraps the
-// PolicyService to cache evaluation results in Redis with a 60-second TTL.
-// If Redis is unavailable or its URL is empty, evaluations go directly to
-// the backing store.
-func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*Container, error) {
+// PolicyService to cache evaluation results in Redis with a 60-second TTL;
+// the Redis client is registered as a close hook.
+//
+// Close-order semantics match the prior implementation: Redis closes before
+// the database pool. The platform container runs close hooks in LIFO, so
+// the repositories are registered before the evaluator and the resulting
+// shutdown order is redis → postgres.
+func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platform.Container, error) {
 	if cfg == nil {
 		return nil, apperrors.New(apperrors.ErrCodeInternal, "config is required")
 	}
@@ -56,63 +47,91 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*Conta
 		return nil, apperrors.New(apperrors.ErrCodeInternal, "logger is required")
 	}
 
-	policyRepo, roleRepo, repoCloser, err := buildRepos(ctx, cfg, logger)
-	if err != nil {
-		return nil, err
+	c := platform.New()
+
+	platform.Register(c, func(_ context.Context, _ *platform.Container) (*config.Config, error) {
+		return cfg, nil
+	})
+	platform.Register(c, func(_ context.Context, _ *platform.Container) (logging.Logger, error) {
+		return logger, nil
+	})
+	platform.Register(c, repositoriesProvider)
+	platform.Register(c, policyServiceProvider)
+	platform.Register(c, evaluatorProvider)
+	platform.Register(c, handlerProvider)
+
+	if err := c.Bootstrap(ctx); err != nil {
+		return nil, fmt.Errorf("bootstrapping container: %w", err)
 	}
-
-	policyService := application.NewPolicyService(policyRepo, roleRepo)
-
-	evaluator, redisCloser, err := buildEvaluator(ctx, cfg, logger, policyService)
-	if err != nil {
-		repoCloser()
-		return nil, err
-	}
-
-	handler := inboundhttp.NewHandler(evaluator, policyService, logger)
-
-	return &Container{
-		Logger:  logger,
-		Handler: handler,
-		Config:  cfg,
-		closer: func() {
-			redisCloser()
-			repoCloser()
-		},
-	}, nil
+	return c, nil
 }
 
-// buildRepos selects the policy and role repository adapters.
-// Uses PostgreSQL when cfg.Database.URL is set; falls back to in-memory for local dev.
-// Returns a closer that must be called when the repositories are no longer needed.
-func buildRepos(ctx context.Context, cfg *config.Config, logger logging.Logger) (domain.PolicyRepository, domain.RoleRepository, func(), error) {
-	noop := func() {}
+// repositories bundles the policy and role repositories so they share a
+// single eager registration — both come from the same connection pool when
+// postgres is configured, and a single close hook drains that pool.
+type repositories struct {
+	policy domain.PolicyRepository
+	role   domain.RoleRepository
+}
+
+func repositoriesProvider(ctx context.Context, c *platform.Container) (*repositories, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
 	if cfg.Database.URL == "" {
-		return memory.NewPolicyRepository(), memory.NewRoleRepository(), noop, nil
+		return &repositories{
+			policy: memory.NewPolicyRepository(),
+			role:   memory.NewRoleRepository(),
+		}, nil
 	}
-	logger.Info("using PostgreSQL policy store", "url", cfg.Database.URL)
+	log.Info("using PostgreSQL policy store", "url", cfg.Database.URL)
 	if err := postgres.RunMigrations(cfg.Database.URL); err != nil {
-		return nil, nil, noop, fmt.Errorf("running database migrations: %w", err)
+		return nil, fmt.Errorf("running database migrations: %w", err)
 	}
 	pool, err := postgres.Connect(ctx, cfg.Database.URL)
 	if err != nil {
-		return nil, nil, noop, fmt.Errorf("connecting to database: %w", err)
+		return nil, fmt.Errorf("connecting to database: %w", err)
 	}
-	return postgres.NewPolicyRepository(pool), postgres.NewRoleRepository(pool), pool.Close, nil
+	// Registered first so it runs LAST on shutdown — matches the original
+	// closer chain that closed Redis before the pool.
+	c.OnClose("postgres", func(_ context.Context) error {
+		pool.Close()
+		return nil
+	})
+	return &repositories{
+		policy: postgres.NewPolicyRepository(pool),
+		role:   postgres.NewRoleRepository(pool),
+	}, nil
 }
 
-// buildEvaluator wraps policyService with a Redis cache when cfg.Redis.URL is set.
-// Returns the evaluator and a closer for the Redis client.
-func buildEvaluator(_ context.Context, cfg *config.Config, logger logging.Logger, policyService *application.PolicyService) (ports.PolicyEvaluator, func(), error) {
-	noop := func() {}
+func policyServiceProvider(ctx context.Context, c *platform.Container) (*application.PolicyService, error) {
+	repos := platform.MustResolve[*repositories](ctx, c)
+	return application.NewPolicyService(repos.policy, repos.role), nil
+}
+
+func evaluatorProvider(ctx context.Context, c *platform.Container) (ports.PolicyEvaluator, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	svc := platform.MustResolve[*application.PolicyService](ctx, c)
 	if cfg.Redis.URL == "" {
-		return policyService, noop, nil
+		return svc, nil
 	}
-	logger.Info("using Redis policy cache", "url", cfg.Redis.URL)
+	log.Info("using Redis policy cache", "url", cfg.Redis.URL)
 	redisClient, err := redisadapter.NewClient(cfg.Redis.URL)
 	if err != nil {
-		return nil, noop, fmt.Errorf("connecting to redis: %w", err)
+		return nil, fmt.Errorf("connecting to redis: %w", err)
 	}
-	evaluator := redisadapter.NewCachingPolicyEvaluator(policyService, redisClient, 60*time.Second, logger)
-	return evaluator, func() { _ = redisClient.Close() }, nil
+	// Registered after the postgres hook so it runs FIRST on shutdown —
+	// matches the original closer chain.
+	c.OnClose("redis", func(_ context.Context) error {
+		_ = redisClient.Close()
+		return nil
+	})
+	return redisadapter.NewCachingPolicyEvaluator(svc, redisClient, 60*time.Second, log), nil
+}
+
+func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.Handler, error) {
+	evaluator := platform.MustResolve[ports.PolicyEvaluator](ctx, c)
+	svc := platform.MustResolve[*application.PolicyService](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	return inboundhttp.NewHandler(evaluator, svc, log), nil
 }
