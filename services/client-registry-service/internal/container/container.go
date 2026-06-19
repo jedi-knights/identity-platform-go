@@ -1,12 +1,16 @@
+// Package container wires the client-registry-service's dependencies
+// through the platform DI container. Resolution from the returned container
+// is restricted to the composition root in cmd/main.go and tests; business
+// code receives its dependencies via constructor parameters.
 package container
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/jedi-knights/go-platform/apperrors"
-
 	"github.com/jedi-knights/go-logging/pkg/logging"
+	"github.com/jedi-knights/go-platform/apperrors"
+	platform "github.com/jedi-knights/go-platform/container"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/adapters/outbound/memory"
@@ -16,24 +20,15 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/domain"
 )
 
-// Container holds all wired service dependencies.
-type Container struct {
-	Handler *inboundhttp.Handler
-	closer  func()
-}
-
-// Close releases resources held by the container (e.g. database connection pool).
-func (c *Container) Close() {
-	if c.closer != nil {
-		c.closer()
-	}
-}
-
-// New creates and wires all dependencies.
-// When cfg.Database.URL is non-empty, pending migrations are run and the
-// PostgreSQL repository adapter is used. Otherwise, the in-memory adapter
-// is selected so the service can run without an external database.
-func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*Container, error) {
+// New constructs and bootstraps a platform container wired with every
+// dependency this service needs.
+//
+// When cfg.Database.URL is set, pending migrations are run and the PostgreSQL
+// repository adapter is used; the connection pool is registered as a close
+// hook so Container.Close shuts it down cleanly. When the URL is empty the
+// in-memory adapter is selected so the service can run without an external
+// database.
+func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platform.Container, error) {
 	if cfg == nil {
 		return nil, apperrors.New(apperrors.ErrCodeInternal, "config is required")
 	}
@@ -41,39 +36,52 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*Conta
 		return nil, apperrors.New(apperrors.ErrCodeInternal, "logger is required")
 	}
 
-	clientRepo, closer, err := selectClientRepository(ctx, cfg, logger)
-	if err != nil {
-		return nil, err
+	c := platform.New()
+
+	platform.Register(c, func(_ context.Context, _ *platform.Container) (*config.Config, error) {
+		return cfg, nil
+	})
+	platform.Register(c, func(_ context.Context, _ *platform.Container) (logging.Logger, error) {
+		return logger, nil
+	})
+
+	platform.Register(c, func(ctx context.Context, c *platform.Container) (domain.ClientRepository, error) {
+		cfg := platform.MustResolve[*config.Config](ctx, c)
+		log := platform.MustResolve[logging.Logger](ctx, c)
+		if cfg.Database.URL == "" {
+			log.Info("database.url not set — using in-memory client repository")
+			return memory.NewClientRepository(), nil
+		}
+
+		log.Info("database.url set — running migrations and connecting to postgres")
+		if err := postgres.RunMigrations(cfg.Database.URL); err != nil {
+			return nil, fmt.Errorf("running postgres migrations: %w", err)
+		}
+		repo, err := postgres.Connect(ctx, cfg.Database.URL)
+		if err != nil {
+			return nil, fmt.Errorf("connecting to postgres: %w", err)
+		}
+		log.Info("connected to postgres — using postgres client repository")
+		c.OnClose("postgres", func(_ context.Context) error {
+			repo.Close()
+			return nil
+		})
+		return repo, nil
+	})
+
+	platform.Register(c, func(ctx context.Context, c *platform.Container) (*application.ClientService, error) {
+		repo := platform.MustResolve[domain.ClientRepository](ctx, c)
+		return application.NewClientService(repo), nil
+	})
+
+	platform.Register(c, func(ctx context.Context, c *platform.Container) (*inboundhttp.Handler, error) {
+		svc := platform.MustResolve[*application.ClientService](ctx, c)
+		log := platform.MustResolve[logging.Logger](ctx, c)
+		return inboundhttp.NewHandler(svc, svc, svc, svc, log), nil
+	})
+
+	if err := c.Bootstrap(ctx); err != nil {
+		return nil, fmt.Errorf("bootstrapping container: %w", err)
 	}
-
-	clientSvc := application.NewClientService(clientRepo)
-	handler := inboundhttp.NewHandler(clientSvc, clientSvc, clientSvc, clientSvc, logger)
-
-	return &Container{
-		Handler: handler,
-		closer:  closer,
-	}, nil
-}
-
-// selectClientRepository returns a domain.ClientRepository and a closer function
-// based on the configuration. The caller must invoke the closer when done.
-func selectClientRepository(ctx context.Context, cfg *config.Config, logger logging.Logger) (domain.ClientRepository, func(), error) {
-	if cfg.Database.URL == "" {
-		logger.Info("database.url not set — using in-memory client repository")
-		return memory.NewClientRepository(), func() {}, nil
-	}
-
-	logger.Info("database.url set — running migrations and connecting to postgres")
-
-	if err := postgres.RunMigrations(cfg.Database.URL); err != nil {
-		return nil, func() {}, fmt.Errorf("running postgres migrations: %w", err)
-	}
-
-	repo, err := postgres.Connect(ctx, cfg.Database.URL)
-	if err != nil {
-		return nil, nil, fmt.Errorf("connecting to postgres: %w", err)
-	}
-
-	logger.Info("connected to postgres — using postgres client repository")
-	return repo, repo.Close, nil
+	return c, nil
 }
