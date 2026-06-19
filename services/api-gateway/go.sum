@@ -63,8 +63,8 @@ github.com/invopop/jsonschema v0.13.0 h1:KvpoAJWEjR3uD9Kbm2HWJmqsEaHt8lBUpd0qHcI
 github.com/invopop/jsonschema v0.13.0/go.mod h1:ffZ5Km5SWWRAIN6wbDXItl95euhFz2uON45H2qjYt+0=
 github.com/jedi-knights/go-logging v0.0.0-20260619091547-fb8ddb4676f8 h1:4nvXHttpZsROW8pVzxtIEMAjxlf73N5UNLBd78LTQE0=
 github.com/jedi-knights/go-logging v0.0.0-20260619091547-fb8ddb4676f8/go.mod h1:X5yWD45sDHZ9EwDZx/d3h7px/1qZqAihk69AiEU+JzI=
-github.com/jedi-knights/go-platform v0.0.0-20260619095948-9dc19627f8e4 h1:JaJpOL05sjdVPrg/b4UC1ayPNzdyBSS/or+dQxsUgsU=
-github.com/jedi-knights/go-platform v0.0.0-20260619095948-9dc19627f8e4/go.mod h1:Ge79lYbFzLcVy5+kxb2H4qH31gK1QQE1+tg9tCdGJJQ=
+github.com/jedi-knights/go-platform v0.0.0-20260619182221-fc23bdd671e8 h1:Moc4cggqVcEDh5/ve7ybNMSKulIWB+7CcIQ0DSr+VvA=
+github.com/jedi-knights/go-platform v0.0.0-20260619182221-fc23bdd671e8/go.mod h1:Ge79lYbFzLcVy5+kxb2H4qH31gK1QQE1+tg9tCdGJJQ=
 github.com/josharian/intern v1.0.0 h1:vlS4z54oSdjm0bgjRigI+G1HpF+tI+9rE5LLzOg8HmY=
 github.com/josharian/intern v1.0.0/go.mod h1:5DoeVV0s6jJacbCEi61lwdGj/aVlrQvzHFFd8Hwg//Y=
 github.com/klauspost/compress v1.18.0 h1:c/Cqfb0r+Yi+JtIEq73FWXVkRonBlf0CRNYc8Zttxdo=
