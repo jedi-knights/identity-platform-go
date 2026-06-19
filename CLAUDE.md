@@ -160,22 +160,24 @@ done
 
 ## Shared Libraries
 
-Shared utility code lives in two external modules. Phase 3 of the cross-repo consolidation migrates each former `libs/<name>` package out one at a time; entries below mark which have moved already and which still live locally during the transition.
+All shared utility code lives in two external modules — there is no longer a local `libs/` directory. Service `go.mod` files require these directly; no `replace` directives are involved.
 
-| Library | Current home | Purpose |
-|---------|--------------|---------|
+| Package | Module | Purpose |
+|---------|--------|---------|
 | `apperrors` | `github.com/jedi-knights/go-platform/apperrors` | Typed `AppError` with `ErrorCode`; HTTP status mapping lives in `httputil` |
-| `logging` | `github.com/jedi-knights/go-logging/pkg/logging` | `slog`-based structured logging with trace ID and context support. The interface is broader than the original `libs/logging.Logger`: it adds `DebugContext`/`InfoContext`/`WarnContext`/`ErrorContext` and `Enabled(ctx, slog.Level)`. The constructor is `logging.New(Config{...})` — the former `NewLogger` name no longer exists. |
-| `jwtutil` | `github.com/jedi-knights/go-platform/jwtutil` | Canonical `Claims` type, `Sign`, `Parse`, `ParseWithAudience`, `ParseWithIssuer`, and `NewClaims` — the single source of truth for JWT structure across auth-server and token-introspection-service. The three `Parse*` functions share an unexported `parseWith` helper in the external module (no behavior change). |
+| `jwtutil` | `github.com/jedi-knights/go-platform/jwtutil` | Canonical `Claims` type, `Sign`, `Parse`, `ParseWithAudience`, `ParseWithIssuer`, and `NewClaims` — the single source of truth for JWT structure across auth-server and token-introspection-service. The three `Parse*` functions share an unexported `parseWith` helper in the external module. |
 | `httputil` | `github.com/jedi-knights/go-platform/httputil` | `WriteJSON`, `WriteError`, `HTTPStatus`, `TraceIDMiddleware`, `LoggingMiddleware`, `RecoveryMiddleware`. The `Logger` type alias resolves to `go-logging.Logger` (the broader 10-method interface). |
-| `libs/testutil` | local (pending migration) | Shared test helpers; `noopLogger` now implements the full 10-method `go-logging.Logger` interface |
+| `testutil` | `github.com/jedi-knights/go-platform/testutil` | Shared test helpers: `NewTestLogger`, `RequireNoError`, `AssertEqual`. The noop logger implements the full 10-method `go-logging.Logger` interface. |
+| `container` | `github.com/jedi-knights/go-platform/container` | Stdlib-only generic DI container with context-propagated providers, sync.Once-backed singletons, child scopes, and LIFO close ordering. Available but not yet wired into services. |
+| `logging` | `github.com/jedi-knights/go-logging/pkg/logging` | `slog`-based structured logging with trace ID and context support. Interface: `Debug`/`Info`/`Warn`/`Error` plus their `*Context` variants plus `With` plus `Enabled(ctx, slog.Level)`. Constructor is `logging.New(Config{...})`. |
 
-Migrations completed so far:
+### Phase 3 migration history (now complete)
 
-- `libs/errors` → `github.com/jedi-knights/go-platform/apperrors`. Imports rewrote from `apperrors "github.com/ocrosby/identity-platform-go/libs/errors"` to plain `"github.com/jedi-knights/go-platform/apperrors"` (no alias — the external package is already named `apperrors`).
-- `libs/logging` → `github.com/jedi-knights/go-logging/pkg/logging`. Imports rewrote from `"github.com/ocrosby/identity-platform-go/libs/logging"` to `"github.com/jedi-knights/go-logging/pkg/logging"`. The `logging.NewLogger(Config{...})` calls became `logging.New(Config{...})`. The `Config` struct fields callers were using (`Level`, `Format`, `Output`, `ServiceName`, `Environment`) are preserved; `go-logging.Config` additionally exposes `StaticFields` and `Handler` for new call sites.
-- `libs/jwtutil` → `github.com/jedi-knights/go-platform/jwtutil`. Pure import-path swap — the API surface (`Claims`, `Sign`, `Parse`, `ParseWithAudience`, `ParseWithIssuer`, `NewClaims`, the `Err*` sentinels) is unchanged.
-- `libs/httputil` → `github.com/jedi-knights/go-platform/httputil`. Imports rewrote from `"github.com/ocrosby/identity-platform-go/libs/httputil"` to `"github.com/jedi-knights/go-platform/httputil"`. API is equivalent (`WriteJSON`, `WriteError`, `HTTPStatus`, `ErrorResponse`, the three middlewares); the underlying `Logger` is the broader `go-logging.Logger` and trace-ID generation delegates to `logging.NewTraceID()` with a panic-on-empty guard preserving the original CSPRNG-failure semantics.
+- `libs/errors` → `github.com/jedi-knights/go-platform/apperrors`. Imports rewrote from `apperrors "github.com/ocrosby/identity-platform-go/libs/errors"` to plain `"github.com/jedi-knights/go-platform/apperrors"`.
+- `libs/logging` → `github.com/jedi-knights/go-logging/pkg/logging`. `logging.NewLogger(Config{...})` calls became `logging.New(Config{...})`. The `Config` field set callers were using (`Level`, `Format`, `Output`, `ServiceName`, `Environment`) is preserved; `go-logging.Config` additionally exposes `StaticFields` and `Handler` for new call sites.
+- `libs/jwtutil` → `github.com/jedi-knights/go-platform/jwtutil`. Pure import-path swap; `Claims`, `Sign`, `Parse`, `ParseWithAudience`, `ParseWithIssuer`, `NewClaims`, and the `Err*` sentinels are unchanged.
+- `libs/httputil` → `github.com/jedi-knights/go-platform/httputil`. API equivalent; the underlying `Logger` is the broader `go-logging.Logger` and trace-ID generation delegates to `logging.NewTraceID()` with a panic-on-empty guard preserving the original CSPRNG-failure semantic.
+- `libs/testutil` → `github.com/jedi-knights/go-platform/testutil`. The `noopLogger` implements the full 10-method `go-logging.Logger` interface (the four `*Context` methods discard the record; `Enabled` returns `false`).
 
 ---
 
@@ -188,4 +190,4 @@ Each service and library versions independently. Releases are triggered automati
 - `feat!:` or `BREAKING CHANGE:` footer → major bump
 - `chore:`, `docs:`, `style:`, `ci:`, `test:` → no release
 
-Releases in the external `go-platform` module are independent and propagate via a `go get -u github.com/jedi-knights/go-platform` bump in each affected service's `go.mod`. While `libs/httputil`, `libs/logging`, `libs/testutil`, and `libs/jwtutil` remain local, a change to any of them still propagates through the workspace immediately and triggers a release for every service that imports them.
+Releases in the external `go-platform` and `go-logging` modules are independent of this repo. Service updates pull them in via `go get -u github.com/jedi-knights/go-platform` (or `go-logging`) followed by `go mod tidy` per affected service.
