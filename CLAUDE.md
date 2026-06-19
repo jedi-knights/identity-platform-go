@@ -6,6 +6,18 @@ A **reference implementation** of OAuth 2.0 / OIDC in Go. Its purpose is to demo
 
 ---
 
+## Extracted services
+
+The following sibling services were originally hosted in this repository and have since been moved to their own repositories under `jedi-knights/`. They are listed here so future readers know where to find them and so the references in older commits / docs make sense:
+
+| Service | Now lives at | Why it was extracted |
+|---|---|---|
+| `api-gateway` | [github.com/jedi-knights/api-gateway](https://github.com/jedi-knights/api-gateway) | Generic reverse-proxy + middleware infrastructure (rate limiting, circuit breaking, retries, caching, MCP routing). Not OAuth-specific; reusable across projects. |
+
+When using `docker-compose.yml` to bring up the platform, the gateway entry has been removed. Clone the gateway's repo separately and point its routes at the service ports exposed by this compose file (9080–9085).
+
+---
+
 ## OAuth 2.0 Domain Context
 
 This codebase implements specific RFCs. Understand the semantics before modifying anything that touches tokens, clients, or grant types.
