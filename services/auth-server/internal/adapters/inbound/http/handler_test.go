@@ -13,7 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
+	"github.com/jedi-knights/go-platform/apperrors"
+
 	"github.com/ocrosby/identity-platform-go/libs/logging"
 	authhttp "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/application"

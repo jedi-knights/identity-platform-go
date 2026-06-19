@@ -9,7 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
+	"github.com/jedi-knights/go-platform/apperrors"
+
 	"github.com/ocrosby/identity-platform-go/libs/logging"
 	"github.com/ocrosby/identity-platform-go/libs/testutil"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/domain"

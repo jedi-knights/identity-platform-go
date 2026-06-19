@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"net/http"
 
-	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
+	"github.com/jedi-knights/go-platform/apperrors"
 )
 
 type loginRequest struct {

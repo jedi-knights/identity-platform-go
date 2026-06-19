@@ -1,7 +1,6 @@
 go 1.26
 
 use (
-	./libs/errors
 	./libs/httputil
 	./libs/jwtutil
 	./libs/logging

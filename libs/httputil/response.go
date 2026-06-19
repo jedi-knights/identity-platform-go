@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	apperrors "github.com/ocrosby/identity-platform-go/libs/errors"
+	"github.com/jedi-knights/go-platform/apperrors"
 )
 
 // ErrorResponse is the JSON body returned for error responses.
