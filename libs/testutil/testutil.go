@@ -1,15 +1,17 @@
 package testutil
 
 import (
+	"context"
+	"log/slog"
 	"reflect"
 	"testing"
 
-	logginglib "github.com/ocrosby/identity-platform-go/libs/logging"
+	logginglib "github.com/jedi-knights/go-logging/pkg/logging"
 )
 
 // Logger is an alias for logginglib.Logger so test helpers can use it
 // interchangeably with the canonical logging interface without requiring
-// callers to import libs/logging directly.
+// callers to import go-logging directly.
 type Logger = logginglib.Logger
 
 // Compile-time check that noopLogger (value form) implements logginglib.Logger.
@@ -19,11 +21,21 @@ var _ logginglib.Logger = noopLogger{}
 // noopLogger is a Logger that discards all log output.
 type noopLogger struct{}
 
-func (noopLogger) Debug(_ string, _ ...any)          {}
-func (noopLogger) Info(_ string, _ ...any)           {}
-func (noopLogger) Warn(_ string, _ ...any)           {}
-func (noopLogger) Error(_ string, _ ...any)          {}
+func (noopLogger) Debug(_ string, _ ...any) {}
+func (noopLogger) Info(_ string, _ ...any)  {}
+func (noopLogger) Warn(_ string, _ ...any)  {}
+func (noopLogger) Error(_ string, _ ...any) {}
+
+func (noopLogger) DebugContext(_ context.Context, _ string, _ ...any) {}
+func (noopLogger) InfoContext(_ context.Context, _ string, _ ...any)  {}
+func (noopLogger) WarnContext(_ context.Context, _ string, _ ...any)  {}
+func (noopLogger) ErrorContext(_ context.Context, _ string, _ ...any) {}
+
 func (n noopLogger) With(_ ...any) logginglib.Logger { return n }
+
+// Enabled always reports false so callers gating expensive log-argument
+// construction on Logger.Enabled skip the work entirely in tests.
+func (noopLogger) Enabled(_ context.Context, _ slog.Level) bool { return false }
 
 // NewTestLogger returns a no-op Logger suitable for unit tests.
 func NewTestLogger() Logger {

@@ -17,9 +17,10 @@ import (
 
 	"github.com/jedi-knights/go-platform/apperrors"
 
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
 	"github.com/ocrosby/identity-platform-go/libs/jwtutil"
-	"github.com/ocrosby/identity-platform-go/libs/logging"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/ports"
 )

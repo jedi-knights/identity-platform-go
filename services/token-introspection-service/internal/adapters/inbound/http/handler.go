@@ -7,8 +7,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
-	"github.com/ocrosby/identity-platform-go/libs/logging"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/ports"
 )

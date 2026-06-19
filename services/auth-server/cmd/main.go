@@ -12,7 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/container"

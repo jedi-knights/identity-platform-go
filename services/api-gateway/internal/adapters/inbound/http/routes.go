@@ -5,8 +5,9 @@ import (
 
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	"github.com/ocrosby/identity-platform-go/libs/httputil"
-	"github.com/ocrosby/identity-platform-go/libs/logging"
 	_ "github.com/ocrosby/identity-platform-go/services/api-gateway/docs"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/ports"

@@ -6,7 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ocrosby/identity-platform-go/libs/logging"
+	"github.com/jedi-knights/go-logging/pkg/logging"
+
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/introspection"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/memory"

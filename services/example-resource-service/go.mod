@@ -7,7 +7,6 @@ require (
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/ocrosby/identity-platform-go/libs/httputil v0.0.0
 	github.com/ocrosby/identity-platform-go/libs/jwtutil v0.0.0
-	github.com/ocrosby/identity-platform-go/libs/logging v0.0.0
 	github.com/ocrosby/identity-platform-go/libs/testutil v0.0.0-20260503120047-1ba1ef4abe7c
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.19.0
@@ -31,6 +30,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/jedi-knights/go-logging v0.0.0-20260619091547-fb8ddb4676f8
 	github.com/jedi-knights/go-platform v0.0.0-20260619095948-9dc19627f8e4
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
@@ -61,5 +61,6 @@ require (
 replace (
 	github.com/ocrosby/identity-platform-go/libs/httputil => ../../libs/httputil
 	github.com/ocrosby/identity-platform-go/libs/jwtutil => ../../libs/jwtutil
-	github.com/ocrosby/identity-platform-go/libs/logging => ../../libs/logging
 )
+
+replace github.com/ocrosby/identity-platform-go/libs/testutil => ../../libs/testutil
