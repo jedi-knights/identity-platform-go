@@ -15,7 +15,8 @@ import (
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 
-	"github.com/ocrosby/identity-platform-go/libs/jwtutil"
+	"github.com/jedi-knights/go-platform/jwtutil"
+
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/auth/hs256"
 	gatewayhttp "github.com/ocrosby/identity-platform-go/services/api-gateway/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/api-gateway/internal/config"

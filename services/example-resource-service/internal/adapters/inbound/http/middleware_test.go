@@ -12,7 +12,8 @@ import (
 
 	"github.com/jedi-knights/go-platform/apperrors"
 
-	"github.com/ocrosby/identity-platform-go/libs/jwtutil"
+	"github.com/jedi-knights/go-platform/jwtutil"
+
 	"github.com/ocrosby/identity-platform-go/libs/testutil"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/ports"
 )
