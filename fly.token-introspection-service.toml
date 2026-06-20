@@ -1,0 +1,34 @@
+# Fly.io config for token-introspection-service. Deploy: fly deploy -c fly.token-introspection-service.toml
+# Private app; Redis-backed revocation. Shares JWT signing key with auth-server.
+
+app            = "jk-token-introspection-service"
+primary_region = "iad"
+kill_signal    = "SIGTERM"
+kill_timeout   = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+  [build.args]
+    SERVICE_NAME = "token-introspection-service"
+
+[env]
+  # Bind IPv6 so the app is reachable on Fly's .internal (6PN) network.
+  INTROSPECT_SERVER_HOST     = "[::]"
+  INTROSPECT_SERVER_PORT     = "8083"
+  INTROSPECT_LOG_FORMAT      = "json"
+  INTROSPECT_LOG_LEVEL       = "info"
+  INTROSPECT_LOG_ENVIRONMENT = "production"
+  INTROSPECT_JWT_ISSUER      = "identity-platform"
+
+[checks]
+  [checks.health]
+    type         = "http"
+    port         = 8083
+    path         = "/health"
+    interval     = "15s"
+    timeout      = "5s"
+    grace_period = "10s"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "256mb"
