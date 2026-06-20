@@ -1,0 +1,33 @@
+# Fly.io config for authorization-policy-service. Deploy: fly deploy -c fly.authorization-policy-service.toml
+# Private app; PostgreSQL-backed (POLICY_DATABASE_URL via attach) + Redis cache (POLICY_REDIS_URL).
+
+app            = "jk-authorization-policy-service"
+primary_region = "iad"
+kill_signal    = "SIGTERM"
+kill_timeout   = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+  [build.args]
+    SERVICE_NAME = "authorization-policy-service"
+
+[env]
+  # Bind IPv6 so the app is reachable on Fly's .internal (6PN) network.
+  POLICY_SERVER_HOST     = "[::]"
+  POLICY_SERVER_PORT     = "8084"
+  POLICY_LOG_FORMAT      = "json"
+  POLICY_LOG_LEVEL       = "info"
+  POLICY_LOG_ENVIRONMENT = "production"
+
+[checks]
+  [checks.health]
+    type         = "http"
+    port         = 8084
+    path         = "/health"
+    interval     = "15s"
+    timeout      = "5s"
+    grace_period = "10s"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "256mb"

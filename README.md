@@ -19,6 +19,7 @@ A production-style **OAuth 2.0 / OIDC** reference platform built in Go, demonstr
 - [Swagger / API Documentation](#swagger--api-documentation)
 - [Project Structure](#project-structure)
 - [Architecture Decision Records](#architecture-decision-records)
+- [Deployment (Fly.io)](#deployment-flyio)
 - [Release Process](#release-process)
 - [License](#license)
 
@@ -559,6 +560,94 @@ Key design decisions are documented in `docs/adr/`:
 | [ADR-0002](docs/adr/0002-use-go-workspaces.md) | Use Go Workspaces for monorepo management |
 | [ADR-0003](docs/adr/0003-use-strategy-pattern-for-grants.md) | Use Strategy Pattern for OAuth2 grant type handling |
 | [ADR-0004](docs/adr/0004-in-memory-persistence-for-reference.md) | Use in-memory persistence for the reference implementation |
+
+---
+
+## Deployment (Fly.io)
+
+All six services deploy to [Fly.io](https://fly.io) as **private** apps in region `iad`
+(no public IPs) behind the public [`jk-api-gateway`](https://github.com/jedi-knights/api-gateway),
+which is the only ingress. They reach each other and the gateway reaches them over Fly's
+private `.internal` network. Each service builds from the shared root `Dockerfile`, selected by
+the `SERVICE_NAME` build arg in its own `fly.<service>.toml`.
+
+### Topology
+
+| Service (Fly app) | Port | Postgres | Redis |
+|---|---|---|---|
+| `jk-auth-server` | 8080 | – | token store |
+| `jk-identity-service` | 8081 | ✅ | – |
+| `jk-client-registry-service` | 8082 | ✅ | – |
+| `jk-token-introspection-service` | 8083 | – | revocation |
+| `jk-authorization-policy-service` | 8084 | ✅ | cache |
+| `jk-example-resource-service` | 8085 | ✅ | – |
+
+Backing services: one **Fly Managed Postgres** cluster (a database per Postgres-backed service)
+and one **Upstash Redis** instance, both in `iad`.
+
+> **Private networking note:** each service sets `<PREFIX>_SERVER_HOST=[::]` in its `fly.*.toml`.
+> Fly's `.internal` network is IPv6; a service bound to the default `0.0.0.0` (IPv4-only) is
+> unreachable over it. The value must be `[::]` (not `::`) because the services build the
+> listen address by string concatenation (`host:port`), so `[::]` yields the valid `[::]:8080`
+> dual-stack listener while `::` would produce the unparseable `:::8080`.
+
+### Provision the backing services (one-time)
+
+```bash
+fly mpg create --name jk-identity-pg --region iad        # Managed Postgres cluster
+
+# Attach a database + connection secret to each Postgres-backed app:
+fly mpg attach <cluster-id> --app jk-identity-service             --variable-name IDENTITY_DATABASE_URL
+fly mpg attach <cluster-id> --app jk-client-registry-service      --variable-name CLIENT_DATABASE_URL
+fly mpg attach <cluster-id> --app jk-authorization-policy-service --variable-name POLICY_DATABASE_URL
+fly mpg attach <cluster-id> --app jk-example-resource-service     --variable-name RESOURCE_DATABASE_URL
+
+fly redis create --name jk-identity-redis --region iad   # Upstash Redis; note the redis:// URL
+```
+
+Schema migrations are embedded (`//go:embed`) and run automatically at each service's startup —
+no separate migration step.
+
+### Secrets
+
+Fly secrets are per app. Generate the shared values once
+(`openssl rand -hex 32`) and set them so they match across services:
+
+```bash
+fly secrets set AUTH_JWT_SIGNING_KEY="$JWT_KEY" AUTH_DEV_CLIENT_SECRET="$DEV" \
+  AUTH_REDIS_URL="$REDIS_URL" -a jk-auth-server
+fly secrets set INTROSPECT_JWT_SIGNING_KEY="$JWT_KEY" \
+  INTROSPECT_INTROSPECTION_SECRET="$INTRO_SECRET" INTROSPECT_REDIS_URL="$REDIS_URL" \
+  -a jk-token-introspection-service
+fly secrets set RESOURCE_JWT_SIGNING_KEY="$JWT_KEY" \
+  RESOURCE_INTROSPECTION_SECRET="$INTRO_SECRET" -a jk-example-resource-service
+fly secrets set POLICY_REDIS_URL="$REDIS_URL" -a jk-authorization-policy-service
+```
+
+The **JWT signing key must be identical** on `auth-server`, `token-introspection`, and
+`example-resource` (tokens issued by one are validated by the others), and the **introspection
+secret must match** between `token-introspection` and `example-resource`.
+
+### Deploy
+
+```bash
+fly apps create jk-<service>                  # once per service (reserves the name, no public IP)
+fly deploy -c fly.<service>.toml              # build + release; deploy dependencies first
+```
+
+Pushes to `main` then redeploy all services automatically via
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml), authenticated with the
+`jedi-knights` org `FLY_API_TOKEN` secret.
+
+### Verify (no public IPs — tunnel privately)
+
+```bash
+fly proxy 8081 -a jk-identity-service &
+curl -fsS localhost:8081/health               # expect 200
+```
+
+End-to-end, request a token from the seeded `test-client` through the gateway at
+`https://jk-api-gateway.fly.dev/oauth/token` and call `/resources` with it.
 
 ---
 
