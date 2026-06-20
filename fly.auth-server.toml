@@ -21,9 +21,10 @@ kill_timeout   = "30s"
   AUTH_LOG_ENVIRONMENT      = "production"
   AUTH_JWT_ISSUER           = "identity-platform"
   AUTH_TOKEN_TTL_SECONDS    = "3600"
-  # Seed a test OAuth client at startup so the platform is testable end-to-end.
-  # Set to "false" for a real production deployment.
-  AUTH_DEV_SEED_CLIENTS     = "true"
+  # No dev client seeding in production. Also a no-op while AUTH_CLIENT_REGISTRY_URL
+  # is set (auth-server delegates client validation to client-registry-service);
+  # register real clients via client-registry-service's POST /clients.
+  AUTH_DEV_SEED_CLIENTS     = "false"
   # Inter-service URLs over the private network.
   AUTH_CLIENT_REGISTRY_URL  = "http://jk-client-registry-service.internal:8082"
   AUTH_IDENTITY_SERVICE_URL = "http://jk-identity-service.internal:8081"
