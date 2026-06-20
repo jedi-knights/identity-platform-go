@@ -1,0 +1,37 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+# One deploy per ref at a time; let an in-flight deploy finish.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Independent apps — keep deploying the rest if one fails.
+      fail-fast: false
+      matrix:
+        service:
+          - auth-server
+          - identity-service
+          - client-registry-service
+          - token-introspection-service
+          - authorization-policy-service
+          - example-resource-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy
+        run: flyctl deploy -c fly.${{ matrix.service }}.toml --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
