@@ -580,10 +580,14 @@ the `SERVICE_NAME` build arg in its own `fly.<service>.toml`.
 | `jk-client-registry-service` | 8082 | ✅ | – |
 | `jk-token-introspection-service` | 8083 | – | revocation |
 | `jk-authorization-policy-service` | 8084 | ✅ | cache |
-| `jk-example-resource-service` | 8085 | ✅ | – |
 
 Backing services: one **Fly Managed Postgres** cluster (a database per Postgres-backed service)
 and one **Upstash Redis** instance, both in `iad`.
+
+> `example-resource-service` is a reference/demo consumer (not core identity infrastructure),
+> so it is intentionally **not deployed** — its source remains in the repo as an integration
+> example. Add it back to `deploy.yml` and create `fly.example-resource-service.toml` if you
+> want it running.
 
 > **Private networking note:** each service sets `<PREFIX>_SERVER_HOST=[::]` in its `fly.*.toml`.
 > Fly's `.internal` network is IPv6; a service bound to the default `0.0.0.0` (IPv4-only) is
@@ -600,7 +604,6 @@ fly mpg create --name jk-identity-pg --region iad        # Managed Postgres clus
 fly mpg attach <cluster-id> --app jk-identity-service             --variable-name IDENTITY_DATABASE_URL
 fly mpg attach <cluster-id> --app jk-client-registry-service      --variable-name CLIENT_DATABASE_URL
 fly mpg attach <cluster-id> --app jk-authorization-policy-service --variable-name POLICY_DATABASE_URL
-fly mpg attach <cluster-id> --app jk-example-resource-service     --variable-name RESOURCE_DATABASE_URL
 
 fly redis create --name jk-identity-redis --region iad   # Upstash Redis; note the redis:// URL
 ```
@@ -619,14 +622,13 @@ fly secrets set AUTH_JWT_SIGNING_KEY="$JWT_KEY" AUTH_DEV_CLIENT_SECRET="$DEV" \
 fly secrets set INTROSPECT_JWT_SIGNING_KEY="$JWT_KEY" \
   INTROSPECT_INTROSPECTION_SECRET="$INTRO_SECRET" INTROSPECT_REDIS_URL="$REDIS_URL" \
   -a jk-token-introspection-service
-fly secrets set RESOURCE_JWT_SIGNING_KEY="$JWT_KEY" \
-  RESOURCE_INTROSPECTION_SECRET="$INTRO_SECRET" -a jk-example-resource-service
 fly secrets set POLICY_REDIS_URL="$REDIS_URL" -a jk-authorization-policy-service
 ```
 
-The **JWT signing key must be identical** on `auth-server`, `token-introspection`, and
-`example-resource` (tokens issued by one are validated by the others), and the **introspection
-secret must match** between `token-introspection` and `example-resource`.
+The **JWT signing key must be identical** on `auth-server` and `token-introspection` (tokens
+issued by auth-server are validated by introspection). If you later deploy
+`example-resource-service`, it must share the same `JWT_SIGNING_KEY` and an
+`INTROSPECTION_SECRET` matching `token-introspection`.
 
 ### Deploy
 

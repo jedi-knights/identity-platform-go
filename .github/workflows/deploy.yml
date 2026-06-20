@@ -24,7 +24,6 @@ jobs:
           - client-registry-service
           - token-introspection-service
           - authorization-policy-service
-          - example-resource-service
     steps:
       - uses: actions/checkout@v4
 
