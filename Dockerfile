@@ -3,20 +3,18 @@
 # =============================================================================
 # Builder stage
 #
-# The entire workspace is copied because go.work uses local `use` directives
-# for libs/ and services/. Without all modules present, the workspace cannot
+# The whole workspace is copied because go.work uses local `use` directives for
+# every module under services/. Without all modules present, the workspace cannot
 # resolve inter-module dependencies at build time.
 #
-# Layer order is intentional: workspace definition → shared libs → services.
-# A change to a lib invalidates service build layers; a change to one service
-# does not invalidate the others or the libs layer.
+# Layer order is intentional: workspace definition → services. A change to one
+# service invalidates the service build layer but not the workspace layer.
 # =============================================================================
 FROM golang:1.26-alpine AS builder
 
 WORKDIR /workspace
 
 COPY go.work go.work.sum ./
-COPY libs/ libs/
 COPY services/ services/
 
 ARG SERVICE_NAME
