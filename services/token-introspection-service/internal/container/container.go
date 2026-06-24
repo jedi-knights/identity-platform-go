@@ -22,6 +22,23 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/domain"
 )
 
+// tokenValidatorProvider builds the right TokenValidator for the configured
+// path. JWKS-backed RS256 takes precedence over the legacy HS256 signing key;
+// extracted from the inline closure so New() stays under the cyclomatic
+// complexity cap.
+func tokenValidatorProvider(ctx context.Context, c *platform.Container) (domain.TokenValidator, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if cfg.JWT.JWKSURL != "" {
+		ttl := parseJWKSCacheTTL(cfg.JWT.JWKSCacheTTL)
+		log.Info("using JWKS-backed RS256 validation", "url", cfg.JWT.JWKSURL, "cache_ttl", ttl)
+		fetcher := jwksadapter.NewFetcher(cfg.JWT.JWKSURL, jwksadapter.WithCacheTTL(ttl))
+		return jwtadapter.NewRS256Validator(fetcher.KeyByID, cfg.JWT.Issuer), nil
+	}
+	log.Info("using HS256 signing-key validation (legacy path; set INTROSPECT_JWT_JWKS_URL for RS256)")
+	return jwtadapter.NewValidator([]byte(cfg.JWT.SigningKey), cfg.JWT.Issuer), nil
+}
+
 // parseJWKSCacheTTL falls back to 1h on any parse failure — operators should
 // set a Go-duration string like "1h" or "30m"; anything else degrades quietly
 // rather than refusing to start.
@@ -83,18 +100,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 		return redisadapter.NewRevocationStore(client), nil
 	})
 
-	platform.Register(c, func(ctx context.Context, c *platform.Container) (domain.TokenValidator, error) {
-		cfg := platform.MustResolve[*config.Config](ctx, c)
-		log := platform.MustResolve[logging.Logger](ctx, c)
-		if cfg.JWT.JWKSURL != "" {
-			ttl := parseJWKSCacheTTL(cfg.JWT.JWKSCacheTTL)
-			log.Info("using JWKS-backed RS256 validation", "url", cfg.JWT.JWKSURL, "cache_ttl", ttl)
-			fetcher := jwksadapter.NewFetcher(cfg.JWT.JWKSURL, jwksadapter.WithCacheTTL(ttl))
-			return jwtadapter.NewRS256Validator(fetcher.KeyByID, cfg.JWT.Issuer), nil
-		}
-		log.Info("using HS256 signing-key validation (legacy path; set INTROSPECT_JWT_JWKS_URL for RS256)")
-		return jwtadapter.NewValidator([]byte(cfg.JWT.SigningKey), cfg.JWT.Issuer), nil
-	})
+	platform.Register(c, tokenValidatorProvider)
 
 	platform.Register(c, func(ctx context.Context, c *platform.Container) (*application.IntrospectionService, error) {
 		validator := platform.MustResolve[domain.TokenValidator](ctx, c)

@@ -117,14 +117,14 @@ func TestFetcher_KeyByID_RefreshOnUnknownKID(t *testing.T) {
 		body := map[string]any{"keys": []map[string]string{}}
 		entries := []map[string]string{
 			{"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "kid-a",
-				"n": base64.RawURLEncoding.EncodeToString(privA.PublicKey.N.Bytes()),
-				"e": base64.RawURLEncoding.EncodeToString(bigEndian(privA.PublicKey.E))},
+				"n": base64.RawURLEncoding.EncodeToString(privA.N.Bytes()),
+				"e": base64.RawURLEncoding.EncodeToString(bigEndian(privA.E))},
 		}
 		if rotation.Load() >= 2 {
 			entries = append(entries, map[string]string{
 				"kty": "RSA", "use": "sig", "alg": "RS256", "kid": "kid-b",
-				"n": base64.RawURLEncoding.EncodeToString(privB.PublicKey.N.Bytes()),
-				"e": base64.RawURLEncoding.EncodeToString(bigEndian(privB.PublicKey.E)),
+				"n": base64.RawURLEncoding.EncodeToString(privB.N.Bytes()),
+				"e": base64.RawURLEncoding.EncodeToString(bigEndian(privB.E)),
 			})
 		}
 		body["keys"] = entries

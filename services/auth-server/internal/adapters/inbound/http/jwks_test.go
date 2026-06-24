@@ -30,6 +30,28 @@ func newSingleKeySet(t *testing.T, kid string) *domain.KeySet {
 	return ks
 }
 
+// assertJWKFields fails the test for every mismatched field. Field names are
+// looked up directly in the map so a missing field is reported the same way
+// as a wrong value.
+func assertJWKFields(t *testing.T, got map[string]string, want map[string]string) {
+	t.Helper()
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+// assertJWKNonEmpty fails the test if any of the named fields is the empty string.
+func assertJWKNonEmpty(t *testing.T, got map[string]string, fields ...string) {
+	t.Helper()
+	for _, f := range fields {
+		if got[f] == "" {
+			t.Errorf("%s is empty", f)
+		}
+	}
+}
+
 func TestJWKSHandler_ReturnsOKWithCurrentKey(t *testing.T) {
 	// Arrange
 	ks := newSingleKeySet(t, "kid-jwks-1")
@@ -52,24 +74,13 @@ func TestJWKSHandler_ReturnsOKWithCurrentKey(t *testing.T) {
 		t.Fatalf("got %d keys, want 1", len(body.Keys))
 	}
 	got := body.Keys[0]
-	if got["kid"] != "kid-jwks-1" {
-		t.Errorf("kid = %q, want %q", got["kid"], "kid-jwks-1")
-	}
-	if got["kty"] != "RSA" {
-		t.Errorf("kty = %q, want %q", got["kty"], "RSA")
-	}
-	if got["alg"] != "RS256" {
-		t.Errorf("alg = %q, want %q", got["alg"], "RS256")
-	}
-	if got["use"] != "sig" {
-		t.Errorf("use = %q, want %q", got["use"], "sig")
-	}
-	if got["n"] == "" {
-		t.Error("modulus 'n' is empty")
-	}
-	if got["e"] == "" {
-		t.Error("exponent 'e' is empty")
-	}
+	assertJWKFields(t, got, map[string]string{
+		"kid": "kid-jwks-1",
+		"kty": "RSA",
+		"alg": "RS256",
+		"use": "sig",
+	})
+	assertJWKNonEmpty(t, got, "n", "e")
 }
 
 func TestJWKSHandler_EmitsAllSlotsInOrder(t *testing.T) {

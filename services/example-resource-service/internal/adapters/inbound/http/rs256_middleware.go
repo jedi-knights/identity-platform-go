@@ -35,31 +35,10 @@ func RS256AuthMiddleware(keySource jwtutil.KeySource, audience, issuer string, l
 			if !ok {
 				return
 			}
-
-			claims, err := jwtutil.ParseRS256(r.Context(), raw, keySource)
-			if err != nil {
-				if errors.Is(err, jwtutil.ErrTokenExpired) {
-					logger.Info("expired token rejected", "error", err)
-				} else {
-					logger.Warn("invalid token rejected", "error", err)
-				}
-				w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service", error="invalid_token"`)
-				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid or expired token"))
+			claims, ok := rs256VerifyClaims(w, r, raw, keySource, audience, issuer, logger)
+			if !ok {
 				return
 			}
-			if audience != "" && !audienceContains([]string(claims.Audience), audience) {
-				logger.Warn("token audience mismatch", "want", audience, "got", []string(claims.Audience))
-				w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service", error="invalid_token"`)
-				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "token audience does not include this resource server"))
-				return
-			}
-			if issuer != "" && claims.Issuer != issuer {
-				logger.Warn("token issuer mismatch", "want", issuer, "got", claims.Issuer)
-				w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service", error="invalid_token"`)
-				httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid token issuer"))
-				return
-			}
-
 			ctx := r.Context()
 			ctx = context.WithValue(ctx, contextKeySubject, claims.Subject)
 			ctx = context.WithValue(ctx, contextKeyScopes, strings.Fields(claims.Scope))
@@ -68,4 +47,42 @@ func RS256AuthMiddleware(keySource jwtutil.KeySource, audience, issuer string, l
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// rs256VerifyClaims runs the three verification steps (signature, audience,
+// issuer) and writes the appropriate WWW-Authenticate / 401 response on any
+// failure. Returns the parsed claims and ok=true on success.
+//
+// Extracted from RS256AuthMiddleware so the middleware constructor stays
+// under the cyclomatic complexity cap; the three guards are now visible
+// together as the verification pipeline they are.
+func rs256VerifyClaims(w http.ResponseWriter, r *http.Request, raw string, keySource jwtutil.KeySource, audience, issuer string, logger logging.Logger) (*jwtutil.Claims, bool) {
+	claims, err := jwtutil.ParseRS256(r.Context(), raw, keySource)
+	if err != nil {
+		if errors.Is(err, jwtutil.ErrTokenExpired) {
+			logger.Info("expired token rejected", "error", err)
+		} else {
+			logger.Warn("invalid token rejected", "error", err)
+		}
+		writeInvalidToken(w, "invalid or expired token")
+		return nil, false
+	}
+	if audience != "" && !audienceContains([]string(claims.Audience), audience) {
+		logger.Warn("token audience mismatch", "want", audience, "got", []string(claims.Audience))
+		writeInvalidToken(w, "token audience does not include this resource server")
+		return nil, false
+	}
+	if issuer != "" && claims.Issuer != issuer {
+		logger.Warn("token issuer mismatch", "want", issuer, "got", claims.Issuer)
+		writeInvalidToken(w, "invalid token issuer")
+		return nil, false
+	}
+	return claims, true
+}
+
+// writeInvalidToken sets the RFC 6750 §3 WWW-Authenticate challenge and emits
+// a 401. Shared across the three verification failure paths.
+func writeInvalidToken(w http.ResponseWriter, msg string) {
+	w.Header().Set("WWW-Authenticate", `Bearer realm="example-resource-service", error="invalid_token"`)
+	httputil.WriteError(w, apperrors.New(apperrors.ErrCodeUnauthorized, msg))
 }
