@@ -14,8 +14,10 @@ import (
 
 // NewRouter sets up the HTTP routes and applies the middleware chain.
 // jwks may be nil — when nil, the /.well-known/jwks.json route is not
-// registered (HS256 mode does not publish a JWKS document).
-func NewRouter(h *Handler, jwks *JWKSHandler, logger logging.Logger) http.Handler {
+// registered (HS256 mode does not publish a JWKS document). userInfo may
+// be nil — when nil, /userinfo is not registered (OIDC mode disabled when
+// AUTH_JWT_OIDC_ISSUER is unset).
+func NewRouter(h *Handler, jwks *JWKSHandler, userInfo *UserInfoHandler, logger logging.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /oauth/token", h.Token)
@@ -29,6 +31,11 @@ func NewRouter(h *Handler, jwks *JWKSHandler, logger logging.Logger) http.Handle
 	if jwks != nil {
 		// RFC 7517 §4.1: JWKS lives at /.well-known/jwks.json by convention.
 		mux.HandleFunc("GET /.well-known/jwks.json", jwks.Get)
+	}
+	if userInfo != nil {
+		// OIDC §5.3.1: both GET and POST are accepted.
+		mux.HandleFunc("GET /userinfo", userInfo.Get)
+		mux.HandleFunc("POST /userinfo", userInfo.Get)
 	}
 
 	// Apply middleware chain (Chain of Responsibility pattern).

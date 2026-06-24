@@ -58,6 +58,18 @@ type JWTConfig struct {
 
 	Issuer   string   `mapstructure:"issuer"`
 	Audience []string `mapstructure:"audience"` // AUTH_JWT_AUDIENCE (comma-separated); included in all issued tokens per RFC 9068 §2.2
+
+	// OIDCIssuer is the iss claim copied verbatim into ID tokens (OIDC §2)
+	// and used as the platform identifier in RFC 8414 metadata. Per ADR-0010
+	// it MUST be a URL — startup validation enforces the prefix. Defaults to
+	// "" when AUTH_JWT_OIDC_ISSUER is unset; an empty value disables OIDC
+	// mode entirely.
+	OIDCIssuer string `mapstructure:"oidc_issuer"` // AUTH_JWT_OIDC_ISSUER
+
+	// IDTokenTTLSeconds is the lifetime of issued ID tokens. Default 300
+	// (5 minutes) per ADR-0010 — ID tokens are meant for immediate
+	// consumption by the relying party, not long-lived API access.
+	IDTokenTTLSeconds int `mapstructure:"id_token_ttl_seconds"` // AUTH_JWT_ID_TOKEN_TTL_SECONDS
 }
 
 // SigningAlg values.

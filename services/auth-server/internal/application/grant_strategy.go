@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+	"github.com/jedi-knights/go-platform/jwtutil"
 
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/ports"
@@ -410,14 +411,19 @@ type AuthorizationCodeStrategy struct {
 	refreshTokenRepo domain.RefreshTokenRepository
 	tokenGen         TokenGenerator
 	permsFetcher     ports.SubjectPermissionsFetcher // nil = no RBAC claims
+	claimsFetcher    ports.UserClaimsFetcher         // nil = no profile/email claims in ID token
+	idTokenGen       *IDTokenGenerator               // nil = no OIDC mode (HS256 fallback)
 	ttl              time.Duration
 	refreshTTL       time.Duration
+	idTokenTTL       time.Duration
 }
 
 // NewAuthorizationCodeStrategy wires the strategy with every collaborator
 // the 12-step pipeline and token issuance need. permsFetcher may be nil —
 // tokens are then issued without Roles / Permissions claims, matching the
-// existing client_credentials behaviour.
+// existing client_credentials behaviour. claimsFetcher and idTokenGen may
+// be nil — the openid scope is then silently dropped from the response and
+// no id_token is issued, matching the legacy OAuth-only behaviour.
 func NewAuthorizationCodeStrategy(
 	clientAuth ports.ClientAuthenticator,
 	codeRepo domain.AuthorizationCodeRepository,
@@ -425,7 +431,9 @@ func NewAuthorizationCodeStrategy(
 	refreshTokenRepo domain.RefreshTokenRepository,
 	tokenGen TokenGenerator,
 	permsFetcher ports.SubjectPermissionsFetcher,
-	ttl, refreshTTL time.Duration,
+	claimsFetcher ports.UserClaimsFetcher,
+	idTokenGen *IDTokenGenerator,
+	ttl, refreshTTL, idTokenTTL time.Duration,
 ) *AuthorizationCodeStrategy {
 	return &AuthorizationCodeStrategy{
 		clientAuth:       clientAuth,
@@ -434,8 +442,11 @@ func NewAuthorizationCodeStrategy(
 		refreshTokenRepo: refreshTokenRepo,
 		tokenGen:         tokenGen,
 		permsFetcher:     permsFetcher,
+		claimsFetcher:    claimsFetcher,
+		idTokenGen:       idTokenGen,
 		ttl:              ttl,
 		refreshTTL:       refreshTTL,
+		idTokenTTL:       idTokenTTL,
 	}
 }
 
@@ -560,13 +571,72 @@ func (s *AuthorizationCodeStrategy) issueTokens(ctx context.Context, client *dom
 	if err != nil {
 		return nil, err
 	}
+	idToken, err := s.maybeIssueIDToken(ctx, client.ID, code, raw, now)
+	if err != nil {
+		return nil, err
+	}
 	return &domain.GrantResponse{
 		AccessToken:  raw,
+		IDToken:      idToken,
 		TokenType:    string(domain.TokenTypeBearer),
 		ExpiresIn:    int(s.ttl.Seconds()),
 		RefreshToken: refreshRaw,
 		Scope:        strings.Join(code.Scopes, " "),
 	}, nil
+}
+
+// maybeIssueIDToken returns the OIDC ID token when the code's scope set
+// includes "openid" and the strategy was wired with an IDTokenGenerator
+// (i.e. RS256 mode + AUTH_OIDC_ISSUER set). Returns "" with no error in
+// every other case — the OAuth-only flow keeps its current response shape.
+//
+// at_hash is computed against the FINAL signed access token (rawAccessToken),
+// per OIDC §3.1.3.6 and the binding rule from ADR-0010's review fixes.
+func (s *AuthorizationCodeStrategy) maybeIssueIDToken(ctx context.Context, clientID string, code *domain.AuthorizationCode, rawAccessToken string, now time.Time) (string, error) {
+	if s.idTokenGen == nil || !domain.HasScope(code.Scopes, domain.ScopeOpenID) {
+		return "", nil
+	}
+	issuance := IDTokenIssuance{
+		Subject:   code.Subject,
+		Audience:  clientID,
+		Nonce:     code.Nonce,
+		AtHash:    jwtutil.AtHash(rawAccessToken),
+		AuthTime:  code.IssuedAt,
+		AMR:       []string{"pwd"},
+		IssuedAt:  now,
+		ExpiresAt: now.Add(s.idTokenTTL),
+	}
+	s.populateProfileClaims(ctx, code, &issuance)
+	return s.idTokenGen.Generate(ctx, issuance)
+}
+
+// populateProfileClaims fetches user claims when the scope set requests them
+// and copies the permitted fields onto the ID-token issuance request. Claim
+// filtering by scope happens here so the generator stays format-only.
+//
+// Failure to fetch claims is non-fatal — the token issues without those
+// fields, matching the same fallback used for permissions.
+func (s *AuthorizationCodeStrategy) populateProfileClaims(ctx context.Context, code *domain.AuthorizationCode, issuance *IDTokenIssuance) {
+	wantsProfile := domain.HasScope(code.Scopes, domain.ScopeProfile)
+	wantsEmail := domain.HasScope(code.Scopes, domain.ScopeEmail)
+	if s.claimsFetcher == nil || (!wantsProfile && !wantsEmail) {
+		return
+	}
+	claims, err := s.claimsFetcher.GetUserClaims(ctx, code.Subject)
+	if err != nil || claims == nil {
+		return
+	}
+	if wantsEmail {
+		issuance.Email = claims.Email
+		ev := claims.EmailVerified
+		issuance.EmailVerified = &ev
+	}
+	if wantsProfile {
+		issuance.Name = claims.Name
+		if claims.UpdatedAt > 0 {
+			issuance.UpdatedAt = time.Unix(claims.UpdatedAt, 0)
+		}
+	}
 }
 
 // issueAuthCodeRefreshToken generates and persists a fresh opaque refresh
