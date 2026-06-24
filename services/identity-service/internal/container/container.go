@@ -157,5 +157,5 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	authSvc := platform.MustResolve[*application.AuthService](ctx, c)
 	verifierSvc := platform.MustResolve[*application.EmailVerificationService](ctx, c)
 	log := platform.MustResolve[logging.Logger](ctx, c)
-	return inboundhttp.NewHandler(authSvc, authSvc, verifierSvc, log), nil
+	return inboundhttp.NewHandler(authSvc, authSvc, verifierSvc, authSvc, log), nil
 }

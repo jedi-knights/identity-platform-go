@@ -94,7 +94,7 @@ func newAuthCodeFixtures(t *testing.T) *authCodeFixtures {
 	tokenRepo := newMockTokenRepo()
 	refreshTokenRepo := newMockRefreshTokenRepo()
 	strategy := application.NewAuthorizationCodeStrategy(
-		clientAuth, codeRepo, tokenRepo, refreshTokenRepo, &mockTokenGen{}, nil, time.Hour, 7*24*time.Hour,
+		clientAuth, codeRepo, tokenRepo, refreshTokenRepo, &mockTokenGen{}, nil, nil, nil, time.Hour, 7*24*time.Hour, 5*time.Minute,
 	)
 	return &authCodeFixtures{
 		strategy:         strategy,

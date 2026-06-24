@@ -65,6 +65,8 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, authorizationCodeIssuerProvider)
 	platform.Register(c, clientWiringProvider)
 	platform.Register(c, userAuthenticatorProvider)
+	platform.Register(c, userClaimsFetcherProvider)
+	platform.Register(c, idTokenGeneratorProvider)
 	platform.Register(c, permissionsFetcherProvider)
 	platform.Register(c, signingKeySetProvider)
 	platform.Register(c, tokenGeneratorProvider)
@@ -76,6 +78,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, tokenServiceProvider)
 	platform.Register(c, handlerProvider)
 	platform.Register(c, jwksHandlerProvider)
+	platform.Register(c, userInfoHandlerProvider)
 
 	if err := c.Bootstrap(ctx); err != nil {
 		return nil, fmt.Errorf("bootstrapping container: %w", err)
@@ -189,6 +192,33 @@ func userAuthenticatorProvider(ctx context.Context, c *platform.Container) (port
 	}
 	log.Info("using remote identity-service", "url", cfg.IdentityService.URL)
 	return identityservice.NewUserAuthenticator(cfg.IdentityService.URL, httpClient), nil
+}
+
+// userClaimsFetcherProvider wires the OIDC claim-projection adapter
+// (ADR-0010). Nil when AUTH_IDENTITY_SERVICE_URL is unset — the ID-token
+// issuer then omits profile/email claims and /userinfo returns 503.
+func userClaimsFetcherProvider(ctx context.Context, c *platform.Container) (ports.UserClaimsFetcher, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	if cfg.IdentityService.URL == "" {
+		return nil, nil
+	}
+	return identityservice.NewUserClaimsFetcher(cfg.IdentityService.URL, httpClient), nil
+}
+
+// idTokenGeneratorProvider wires the OIDC ID-token generator. Nil when
+// AUTH_JWT_OIDC_ISSUER is empty or the signing alg is HS256 — the
+// authorization_code strategy then keeps the OAuth-only response shape.
+func idTokenGeneratorProvider(ctx context.Context, c *platform.Container) (*application.IDTokenGenerator, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	if cfg.JWT.OIDCIssuer == "" {
+		return nil, nil
+	}
+	if resolvedSigningAlg(cfg) != config.SigningAlgRS256 {
+		return nil, nil
+	}
+	keys := platform.MustResolve[*domain.KeySet](ctx, c)
+	return application.NewIDTokenGenerator(keys, cfg.JWT.OIDCIssuer), nil
 }
 
 func permissionsFetcherProvider(ctx context.Context, c *platform.Container) (ports.SubjectPermissionsFetcher, error) {
@@ -323,7 +353,13 @@ func authorizationCodeStrategyProvider(ctx context.Context, c *platform.Containe
 	gen := platform.MustResolve[application.TokenGenerator](ctx, c)
 	fetcher := platform.MustResolve[ports.SubjectPermissionsFetcher](ctx, c)
 	ttl, refreshTTL := tokenTTLs(cfg)
-	return application.NewAuthorizationCodeStrategy(cw.authenticator, codeRepo, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL), nil
+	// claimsFetcher + idTokenGen are nil-resolved when AUTH_IDENTITY_SERVICE_URL
+	// is unset or the signing alg is HS256 — the strategy then skips OIDC
+	// issuance regardless of the openid scope, matching the legacy OAuth shape.
+	claimsFetcher, _ := platform.Resolve[ports.UserClaimsFetcher](ctx, c)
+	idTokenGen, _ := platform.Resolve[*application.IDTokenGenerator](ctx, c)
+	idTokenTTL := time.Duration(cfg.JWT.IDTokenTTLSeconds) * time.Second
+	return application.NewAuthorizationCodeStrategy(cw.authenticator, codeRepo, repos.token, repos.refresh, gen, fetcher, claimsFetcher, idTokenGen, ttl, refreshTTL, idTokenTTL), nil
 }
 
 func refreshTokenStrategyProvider(ctx context.Context, c *platform.Container) (*application.RefreshTokenStrategy, error) {
@@ -366,6 +402,20 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	introspector := inboundhttp.NewTokenIntrospectorAdapter(tokens)
 	revoker := inboundhttp.NewTokenRevokerAdapter(tokens)
 	return inboundhttp.NewHandler(issuer, introspector, revoker, cw.authenticator, log, cfg.Introspection.Secret), nil
+}
+
+// userInfoHandlerProvider wires the OIDC /userinfo handler. Nil when OIDC
+// mode is disabled (no IDTokenGenerator → no issuer URL → no point serving
+// /userinfo). The router skips registering the route in that case.
+func userInfoHandlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.UserInfoHandler, error) {
+	idTokenGen, _ := platform.Resolve[*application.IDTokenGenerator](ctx, c)
+	if idTokenGen == nil {
+		return nil, nil
+	}
+	validator := platform.MustResolve[application.TokenValidator](ctx, c)
+	claimsFetcher, _ := platform.Resolve[ports.UserClaimsFetcher](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	return inboundhttp.NewUserInfoHandler(validator, claimsFetcher, log), nil
 }
 
 // jwksHandlerProvider builds the JWKS endpoint handler. Returns nil in HS256
