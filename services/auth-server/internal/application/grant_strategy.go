@@ -2,6 +2,9 @@ package application
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,6 +18,27 @@ import (
 
 // ErrUnsupportedGrantType is returned when the requested grant type has no registered strategy.
 var ErrUnsupportedGrantType = errors.New("unsupported grant type")
+
+// Token-endpoint error sentinels. Each maps to the matching RFC 6749 §5.2
+// error code at the HTTP layer (writeTokenError). They are package-level
+// values so the strategy can return them via fmt.Errorf("%w: ...", Err…)
+// and the handler can distinguish them via errors.Is.
+var (
+	// ErrInvalidRequest — missing or malformed parameter at the token
+	// endpoint (RFC 6749 §5.2 "invalid_request").
+	ErrInvalidRequest = errors.New("invalid_request")
+
+	// ErrInvalidGrant — the authorization code, refresh token, or PKCE
+	// verifier presented is not valid for any reason (RFC 6749 §5.2
+	// "invalid_grant"). The granularity is deliberately coarse so a caller
+	// cannot distinguish "wrong code_verifier" from "wrong redirect_uri" —
+	// that distinction would help attackers narrow down what they're missing.
+	ErrInvalidGrant = errors.New("invalid_grant")
+
+	// ErrUnauthorizedClient — the client is authenticated but is not
+	// allowed to use this grant type (RFC 6749 §5.2 "unauthorized_client").
+	ErrUnauthorizedClient = errors.New("unauthorized_client")
+)
 
 // GrantStrategy defines the interface for handling grant types (Strategy pattern).
 type GrantStrategy interface {
@@ -368,33 +392,50 @@ func (s *RefreshTokenStrategy) Handle(ctx context.Context, req domain.GrantReque
 	}, nil
 }
 
-// AuthorizationCodeStrategy handles the authorization_code grant.
-// The UserAuthenticator field wires in identity-service for user credential
-// verification; the full code-exchange flow (PKCE, redirect URI validation,
-// code issuance) is not yet implemented.
+// AuthorizationCodeStrategy implements the OAuth 2.1 authorization_code grant
+// per ADR-0009. The Handle method runs the 12-step validation pipeline (form
+// fields, client auth, grant-type allowance, atomic code consumption, code-
+// to-request consistency, expiry, PKCE method, S256 verifier) and then
+// issues an access token and refresh token via the shared TokenGenerator
+// and repositories.
+//
+// PKCE is mandatory and S256-only. Public clients (no secret) are accepted
+// when the client's stored Secret matches the presented (typically empty)
+// value — the constant-time comparison in the ClientAuthenticator handles
+// both confidential and public clients uniformly.
 type AuthorizationCodeStrategy struct {
-	clientRepo domain.ClientRepository
-	tokenRepo  domain.TokenRepository
-	tokenGen   TokenGenerator
-	ttl        time.Duration
-	userAuth   ports.UserAuthenticator // nil when identity-service URL is not configured
+	clientAuth       ports.ClientAuthenticator
+	codeRepo         domain.AuthorizationCodeRepository
+	tokenRepo        domain.TokenRepository
+	refreshTokenRepo domain.RefreshTokenRepository
+	tokenGen         TokenGenerator
+	permsFetcher     ports.SubjectPermissionsFetcher // nil = no RBAC claims
+	ttl              time.Duration
+	refreshTTL       time.Duration
 }
 
-// NewAuthorizationCodeStrategy creates an AuthorizationCodeStrategy.
-// userAuth may be nil — the grant remains a stub until the full flow is implemented.
+// NewAuthorizationCodeStrategy wires the strategy with every collaborator
+// the 12-step pipeline and token issuance need. permsFetcher may be nil —
+// tokens are then issued without Roles / Permissions claims, matching the
+// existing client_credentials behaviour.
 func NewAuthorizationCodeStrategy(
-	clientRepo domain.ClientRepository,
+	clientAuth ports.ClientAuthenticator,
+	codeRepo domain.AuthorizationCodeRepository,
 	tokenRepo domain.TokenRepository,
+	refreshTokenRepo domain.RefreshTokenRepository,
 	tokenGen TokenGenerator,
-	ttl time.Duration,
-	userAuth ports.UserAuthenticator,
+	permsFetcher ports.SubjectPermissionsFetcher,
+	ttl, refreshTTL time.Duration,
 ) *AuthorizationCodeStrategy {
 	return &AuthorizationCodeStrategy{
-		clientRepo: clientRepo,
-		tokenRepo:  tokenRepo,
-		tokenGen:   tokenGen,
-		ttl:        ttl,
-		userAuth:   userAuth,
+		clientAuth:       clientAuth,
+		codeRepo:         codeRepo,
+		tokenRepo:        tokenRepo,
+		refreshTokenRepo: refreshTokenRepo,
+		tokenGen:         tokenGen,
+		permsFetcher:     permsFetcher,
+		ttl:              ttl,
+		refreshTTL:       refreshTTL,
 	}
 }
 
@@ -403,10 +444,154 @@ func (s *AuthorizationCodeStrategy) Supports(gt domain.GrantType) bool {
 	return gt == domain.GrantTypeAuthorizationCode
 }
 
-// Handle is a stub. Full PKCE / code-exchange flow is not yet implemented.
-// Resource owner credentials (username/password) do not belong on the token
-// endpoint; the authorization_code flow authenticates users at the authorization
-// endpoint, then exchanges the resulting code here.
-func (s *AuthorizationCodeStrategy) Handle(_ context.Context, req domain.GrantRequest) (*domain.GrantResponse, error) {
-	return nil, fmt.Errorf("%w: %s is not yet fully implemented", ErrUnsupportedGrantType, req.GrantType)
+// Handle runs the ADR-0009 token-endpoint validation pipeline and, on
+// success, issues access + refresh tokens. The order is load-bearing —
+// authentication before code lookup so an unauthenticated probe cannot
+// learn whether a code exists; consume before any value comparison so the
+// "wrong client_id" path also cleans up the code.
+func (s *AuthorizationCodeStrategy) Handle(ctx context.Context, req domain.GrantRequest) (*domain.GrantResponse, error) {
+	if err := validateAuthCodeRequestFields(req); err != nil {
+		return nil, err
+	}
+	client, err := s.clientAuth.Authenticate(ctx, req.ClientID, req.ClientSecret)
+	if err != nil {
+		return nil, err
+	}
+	if !client.HasGrantType(domain.GrantTypeAuthorizationCode) {
+		return nil, fmt.Errorf("%w: grant type not allowed for client", ErrUnauthorizedClient)
+	}
+	code, err := s.codeRepo.Consume(ctx, req.Code)
+	if err != nil {
+		if errors.Is(err, domain.ErrAuthorizationCodeNotFound) {
+			return nil, fmt.Errorf("%w: code unknown, expired, or already consumed", ErrInvalidGrant)
+		}
+		return nil, fmt.Errorf("consuming authorization code: %w", err)
+	}
+	if err := verifyAuthCodeMatchesRequest(code, req); err != nil {
+		return nil, err
+	}
+	return s.issueTokens(ctx, client, code)
+}
+
+// validateAuthCodeRequestFields checks the form fields that must be present
+// before any further work — RFC 6749 §5.2 "invalid_request".
+func validateAuthCodeRequestFields(req domain.GrantRequest) error {
+	switch {
+	case req.Code == "":
+		return fmt.Errorf("%w: code is required", ErrInvalidRequest)
+	case req.RedirectURI == "":
+		return fmt.Errorf("%w: redirect_uri is required", ErrInvalidRequest)
+	case req.CodeVerifier == "":
+		// PKCE is mandatory per ADR-0009 — every client, every flow.
+		return fmt.Errorf("%w: code_verifier is required", ErrInvalidRequest)
+	}
+	return nil
+}
+
+// verifyAuthCodeMatchesRequest cross-checks the stored code against the
+// request that presented it: client_id binding, redirect_uri byte-exact
+// match, expiry, PKCE method, and the S256 verifier comparison itself. The
+// expiry check is defense-in-depth — the repository's Consume also drops
+// expired entries — but the strategy's expiry view is the canonical one.
+func verifyAuthCodeMatchesRequest(code *domain.AuthorizationCode, req domain.GrantRequest) error {
+	if code.ClientID != req.ClientID {
+		return fmt.Errorf("%w: code was issued to a different client", ErrInvalidGrant)
+	}
+	if code.RedirectURI != req.RedirectURI {
+		return fmt.Errorf("%w: redirect_uri does not match the value presented at /oauth/authorize", ErrInvalidGrant)
+	}
+	if code.IsExpiredAt(time.Now()) {
+		return fmt.Errorf("%w: code expired", ErrInvalidGrant)
+	}
+	if !code.HasValidPKCEMethod() {
+		return fmt.Errorf("%w: code_challenge_method must be S256", ErrInvalidGrant)
+	}
+	if !verifyPKCES256(req.CodeVerifier, code.CodeChallenge) {
+		return fmt.Errorf("%w: code_verifier does not match code_challenge", ErrInvalidGrant)
+	}
+	return nil
+}
+
+// verifyPKCES256 hashes the verifier with SHA-256, base64url-encodes the
+// digest, and compares against the stored challenge in constant time. RFC
+// 7636 §4.6 — the comparison MUST be constant-time so a timing oracle does
+// not reveal partial-match information.
+func verifyPKCES256(verifier, challenge string) bool {
+	sum := sha256.Sum256([]byte(verifier))
+	computed := base64.RawURLEncoding.EncodeToString(sum[:])
+	return subtle.ConstantTimeCompare([]byte(computed), []byte(challenge)) == 1
+}
+
+// issueTokens mints the access token + refresh token after every validation
+// has passed. The shape mirrors ClientCredentialsStrategy's issuance path
+// (RBAC fetch is optional; refresh token is opaque hex). Failure to fetch
+// permissions does NOT fail the flow — tokens issue without RBAC claims, the
+// same fallback ClientCredentialsStrategy uses.
+func (s *AuthorizationCodeStrategy) issueTokens(ctx context.Context, client *domain.Client, code *domain.AuthorizationCode) (*domain.GrantResponse, error) {
+	var roles, permissions []string
+	if s.permsFetcher != nil {
+		roles, permissions, _ = s.permsFetcher.GetSubjectPermissions(ctx, code.Subject)
+	}
+	now := time.Now()
+	tokenID, err := generateID()
+	if err != nil {
+		return nil, apperrors.Wrap(apperrors.ErrCodeInternal, "generating token id", err)
+	}
+	token := &domain.Token{
+		ID:          tokenID,
+		ClientID:    client.ID,
+		Subject:     code.Subject,
+		Scopes:      code.Scopes,
+		Roles:       roles,
+		Permissions: permissions,
+		ExpiresAt:   now.Add(s.ttl),
+		IssuedAt:    now,
+		TokenType:   domain.TokenTypeBearer,
+	}
+	raw, err := s.tokenGen.Generate(ctx, token)
+	if err != nil {
+		return nil, apperrors.Wrap(apperrors.ErrCodeInternal, "generating access token", err)
+	}
+	token.Raw = raw
+	if err := s.tokenRepo.Save(ctx, token); err != nil {
+		return nil, apperrors.Wrap(apperrors.ErrCodeInternal, "saving access token", err)
+	}
+	refreshRaw, err := s.issueAuthCodeRefreshToken(ctx, client.ID, code, now)
+	if err != nil {
+		return nil, err
+	}
+	return &domain.GrantResponse{
+		AccessToken:  raw,
+		TokenType:    string(domain.TokenTypeBearer),
+		ExpiresIn:    int(s.ttl.Seconds()),
+		RefreshToken: refreshRaw,
+		Scope:        strings.Join(code.Scopes, " "),
+	}, nil
+}
+
+// issueAuthCodeRefreshToken generates and persists a fresh opaque refresh
+// token bound to the subject from the authorization code. Mirrors the
+// ClientCredentialsStrategy.issueRefreshToken pattern.
+func (s *AuthorizationCodeStrategy) issueAuthCodeRefreshToken(ctx context.Context, clientID string, code *domain.AuthorizationCode, now time.Time) (string, error) {
+	raw, err := generateID()
+	if err != nil {
+		return "", apperrors.Wrap(apperrors.ErrCodeInternal, "generating refresh token raw value", err)
+	}
+	id, err := generateID()
+	if err != nil {
+		return "", apperrors.Wrap(apperrors.ErrCodeInternal, "generating refresh token id", err)
+	}
+	rt := &domain.RefreshToken{
+		ID:        id,
+		Raw:       raw,
+		ClientID:  clientID,
+		Subject:   code.Subject,
+		Scopes:    code.Scopes,
+		IssuedAt:  now,
+		ExpiresAt: now.Add(s.refreshTTL),
+	}
+	if err := s.refreshTokenRepo.Save(ctx, rt); err != nil {
+		return "", apperrors.Wrap(apperrors.ErrCodeInternal, "saving refresh token", err)
+	}
+	return raw, nil
 }

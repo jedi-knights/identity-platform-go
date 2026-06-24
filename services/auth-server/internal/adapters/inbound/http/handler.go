@@ -171,9 +171,24 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request, logger logging.Lo
 }
 
 // writeTokenError maps an application error to an RFC 6749-compliant OAuth2 error response.
+// Order matters: more-specific sentinels (ADR-0009) are checked before the
+// apperrors fallbacks so a sentinel-wrapped Unauthorized is not silently
+// remapped by the IsUnauthorized branch.
 func writeTokenError(w http.ResponseWriter, logger logging.Logger, err error) {
 	if errors.Is(err, application.ErrUnsupportedGrantType) {
 		writeOAuthError(w, logger, "unsupported_grant_type", "grant type not supported", http.StatusBadRequest)
+		return
+	}
+	if errors.Is(err, application.ErrInvalidRequest) {
+		writeOAuthError(w, logger, "invalid_request", err.Error(), http.StatusBadRequest)
+		return
+	}
+	if errors.Is(err, application.ErrInvalidGrant) {
+		writeOAuthError(w, logger, "invalid_grant", err.Error(), http.StatusBadRequest)
+		return
+	}
+	if errors.Is(err, application.ErrUnauthorizedClient) {
+		writeOAuthError(w, logger, "unauthorized_client", err.Error(), http.StatusBadRequest)
 		return
 	}
 	if apperrors.IsUnauthorized(err) {

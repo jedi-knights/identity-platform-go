@@ -2,7 +2,6 @@ package application_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -464,20 +463,7 @@ func TestClientCredentialsStrategy_Supports(t *testing.T) {
 	}
 }
 
-func TestAuthorizationCodeStrategy_Handle_ReturnsNotImplemented(t *testing.T) {
-	// Arrange
-	strategy := application.NewAuthorizationCodeStrategy(nil, nil, nil, time.Hour, nil)
-
-	// Act
-	_, err := strategy.Handle(context.Background(), domain.GrantRequest{
-		GrantType: domain.GrantTypeAuthorizationCode,
-	})
-
-	// Assert — stub always returns ErrUnsupportedGrantType; credential fields no longer exist
-	if err == nil {
-		t.Fatal("expected stub error, got nil")
-	}
-	if !errors.Is(err, application.ErrUnsupportedGrantType) {
-		t.Errorf("error = %v, want ErrUnsupportedGrantType", err)
-	}
-}
+// The previous stub test (TestAuthorizationCodeStrategy_Handle_ReturnsNotImplemented)
+// expected ErrUnsupportedGrantType. ADR-0009 implements the grant; the full
+// behaviour is covered by TestAuthorizationCodeStrategy_Handle_* in
+// authcode_strategy_test.go.
