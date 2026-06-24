@@ -14,6 +14,7 @@ import (
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	platform "github.com/jedi-knights/go-platform/container"
+	"github.com/jedi-knights/go-platform/jwtutil"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/config"
@@ -78,7 +79,8 @@ func run(_ *cobra.Command, _ []string) error {
 
 	handler := platform.MustResolve[*inboundhttp.Handler](startCtx, ctr)
 	introspector := platform.MustResolve[ports.TokenIntrospector](startCtx, ctr)
-	router := inboundhttp.NewRouter(handler, logger, []byte(cfg.JWT.SigningKey), cfg.JWT.Audience, cfg.JWT.Issuer, introspector)
+	keySource := platform.MustResolve[jwtutil.KeySource](startCtx, ctr)
+	router := inboundhttp.NewRouter(handler, logger, []byte(cfg.JWT.SigningKey), keySource, cfg.JWT.Audience, cfg.JWT.Issuer, introspector)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{

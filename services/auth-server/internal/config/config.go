@@ -29,10 +29,41 @@ type ServerConfig struct {
 }
 
 type JWTConfig struct {
-	SigningKey string   `mapstructure:"signing_key"`
-	Issuer     string   `mapstructure:"issuer"`
-	Audience   []string `mapstructure:"audience"` // AUTH_JWT_AUDIENCE (comma-separated); included in all issued tokens per RFC 9068 §2.2
+	// SigningAlg selects the JWT signing scheme. "RS256" (default) uses an
+	// asymmetric RSA keypair so resource servers can verify tokens via JWKS
+	// without holding forgery-equivalent secrets. "HS256" is the legacy
+	// shared-HMAC path retained for backwards compatibility during migration.
+	SigningAlg string `mapstructure:"signing_alg"` // AUTH_JWT_SIGNING_ALG
+
+	// SigningKey is the HMAC secret used only when SigningAlg == "HS256".
+	// Ignored under RS256.
+	SigningKey string `mapstructure:"signing_key"` // AUTH_JWT_SIGNING_KEY
+
+	// RSAPrivateKeyPEM is the PEM-encoded RSA private key used only when
+	// SigningAlg == "RS256". When empty (and SigningAlg == "RS256"), the
+	// service generates a fresh 2048-bit keypair in memory at startup —
+	// suitable for local development; not durable across restarts.
+	RSAPrivateKeyPEM string `mapstructure:"rsa_private_key_pem"` // AUTH_JWT_RSA_PRIVATE_KEY_PEM
+
+	// RSAPrivateKeyPEMNext is an optional pre-staged successor key. When set,
+	// its public half is included in JWKS so verifiers can pre-fetch it
+	// before it becomes Current at the next rotation.
+	RSAPrivateKeyPEMNext string `mapstructure:"rsa_private_key_pem_next"` // AUTH_JWT_RSA_PRIVATE_KEY_PEM_NEXT
+
+	// RSAPrivateKeyPEMPrevious is an optional retiring key. Its public half
+	// stays in JWKS so tokens signed by the prior Current key continue to
+	// validate for the remainder of their TTL after rotation.
+	RSAPrivateKeyPEMPrevious string `mapstructure:"rsa_private_key_pem_previous"` // AUTH_JWT_RSA_PRIVATE_KEY_PEM_PREVIOUS
+
+	Issuer   string   `mapstructure:"issuer"`
+	Audience []string `mapstructure:"audience"` // AUTH_JWT_AUDIENCE (comma-separated); included in all issued tokens per RFC 9068 §2.2
 }
+
+// SigningAlg values.
+const (
+	SigningAlgRS256 = "RS256"
+	SigningAlgHS256 = "HS256"
+)
 
 // TokenConfig holds token lifetime configuration.
 type TokenConfig struct {
@@ -84,7 +115,11 @@ func Load() (*Config, error) {
 
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", 8080)
-	v.SetDefault("jwt.signing_key", "change-me-in-production")
+	v.SetDefault("jwt.signing_alg", SigningAlgRS256)
+	v.SetDefault("jwt.signing_key", "")
+	v.SetDefault("jwt.rsa_private_key_pem", "")
+	v.SetDefault("jwt.rsa_private_key_pem_next", "")
+	v.SetDefault("jwt.rsa_private_key_pem_previous", "")
 	v.SetDefault("jwt.issuer", "identity-platform")
 	v.SetDefault("token.ttl_seconds", 300)
 	v.SetDefault("token.refresh_token_ttl_seconds", 604800)
@@ -121,13 +156,50 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unmarshalling config: %w", err)
 	}
 
-	if err := validateSigningKey(cfg.JWT.SigningKey); err != nil {
-		return nil, fmt.Errorf("validating jwt signing key: %w", err)
+	if err := validateJWTConfig(cfg.JWT); err != nil {
+		return nil, fmt.Errorf("validating jwt config: %w", err)
 	}
 	return &cfg, nil
 }
 
-func validateSigningKey(key string) error {
+// validateJWTConfig enforces alg-specific rules. HS256 requires a strong shared
+// secret. RS256 accepts an empty PEM (fall back to in-memory key generation at
+// container startup) but rejects malformed PEM material — better to fail at
+// Load() than to fail at first signing call.
+func validateJWTConfig(cfg JWTConfig) error {
+	switch cfg.SigningAlg {
+	case SigningAlgRS256:
+		return validateRS256Config(cfg)
+	case SigningAlgHS256:
+		return validateHS256SigningKey(cfg.SigningKey)
+	default:
+		return fmt.Errorf("unsupported jwt.signing_alg %q (want %q or %q)", cfg.SigningAlg, SigningAlgRS256, SigningAlgHS256)
+	}
+}
+
+func validateRS256Config(cfg JWTConfig) error {
+	for _, pemStr := range []struct {
+		envVar string
+		value  string
+	}{
+		{"AUTH_JWT_RSA_PRIVATE_KEY_PEM", cfg.RSAPrivateKeyPEM},
+		{"AUTH_JWT_RSA_PRIVATE_KEY_PEM_NEXT", cfg.RSAPrivateKeyPEMNext},
+		{"AUTH_JWT_RSA_PRIVATE_KEY_PEM_PREVIOUS", cfg.RSAPrivateKeyPEMPrevious},
+	} {
+		if pemStr.value == "" {
+			continue
+		}
+		// Cheap structural check — the domain loader does the real parse and
+		// 2048-bit floor check at container build time. Doing the parse here
+		// would couple config to crypto/x509 unnecessarily.
+		if !strings.Contains(pemStr.value, "-----BEGIN") {
+			return fmt.Errorf("%s does not look like a PEM block (no BEGIN marker)", pemStr.envVar)
+		}
+	}
+	return nil
+}
+
+func validateHS256SigningKey(key string) error {
 	insecureDefaults := []string{"change-me-in-production", "default-signing-key"}
 	for _, d := range insecureDefaults {
 		if key == d {

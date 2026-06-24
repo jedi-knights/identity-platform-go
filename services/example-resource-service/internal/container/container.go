@@ -13,9 +13,11 @@ import (
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	"github.com/jedi-knights/go-platform/apperrors"
 	platform "github.com/jedi-knights/go-platform/container"
+	"github.com/jedi-knights/go-platform/jwtutil"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/introspection"
+	jwksadapter "github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/jwks"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/memory"
 	policyadapter "github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/policy"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/postgres"
@@ -58,6 +60,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, resourceRepositoryProvider)
 	platform.Register(c, resourceServiceProvider)
 	platform.Register(c, introspectorProvider)
+	platform.Register(c, keySourceProvider)
 	platform.Register(c, policyCheckerProvider)
 	platform.Register(c, handlerProvider)
 
@@ -108,6 +111,32 @@ func introspectorProvider(ctx context.Context, c *platform.Container) (ports.Tok
 	}
 	log.Info("using remote token-introspection-service", "url", cfg.Introspection.URL)
 	return introspection.NewClient(cfg.Introspection.URL, &http.Client{Timeout: 5 * time.Second}, cfg.Introspection.Secret), nil
+}
+
+// keySourceProvider builds a JWKS-backed jwtutil.KeySource when
+// RESOURCE_JWT_JWKS_URL is set. Returns nil otherwise — the router uses nil
+// to fall through to the HS256 path. Skipped (returns nil) when introspection
+// is configured, since introspection wins in the router's selection order.
+func keySourceProvider(ctx context.Context, c *platform.Container) (jwtutil.KeySource, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if cfg.Introspection.URL != "" || cfg.JWT.JWKSURL == "" {
+		return nil, nil
+	}
+	ttl := parseJWKSCacheTTL(cfg.JWT.JWKSCacheTTL)
+	log.Info("using JWKS-backed local RS256 validation", "url", cfg.JWT.JWKSURL, "cache_ttl", ttl)
+	fetcher := jwksadapter.NewFetcher(cfg.JWT.JWKSURL, jwksadapter.WithCacheTTL(ttl))
+	return fetcher.KeyByID, nil
+}
+
+// parseJWKSCacheTTL falls back to 1h on parse failure — operators should set
+// a Go-duration string ("1h", "30m"); anything else degrades quietly.
+func parseJWKSCacheTTL(s string) time.Duration {
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return time.Hour
+	}
+	return d
 }
 
 func policyCheckerProvider(ctx context.Context, c *platform.Container) (ports.PolicyChecker, error) {

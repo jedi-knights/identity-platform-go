@@ -6,6 +6,8 @@ package container
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"time"
@@ -62,6 +64,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, clientWiringProvider)
 	platform.Register(c, userAuthenticatorProvider)
 	platform.Register(c, permissionsFetcherProvider)
+	platform.Register(c, signingKeySetProvider)
 	platform.Register(c, tokenGeneratorProvider)
 	platform.Register(c, tokenValidatorProvider)
 	platform.Register(c, clientCredentialsStrategyProvider)
@@ -70,6 +73,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, grantRegistryProvider)
 	platform.Register(c, tokenServiceProvider)
 	platform.Register(c, handlerProvider)
+	platform.Register(c, jwksHandlerProvider)
 
 	if err := c.Bootstrap(ctx); err != nil {
 		return nil, fmt.Errorf("bootstrapping container: %w", err)
@@ -168,16 +172,100 @@ func permissionsFetcherProvider(ctx context.Context, c *platform.Container) (por
 	return policyadapter.New(cfg.Policy.URL), nil
 }
 
-func tokenGeneratorProvider(ctx context.Context, c *platform.Container) (*application.JWTTokenGenerator, error) {
+// resolvedSigningAlg returns the configured signing alg, treating an empty
+// value as the default (RS256). This lets direct callers of container.New —
+// including tests that build a Config struct by hand — get the same default
+// as config.Load() callers without setting the field explicitly.
+func resolvedSigningAlg(cfg *config.Config) string {
+	if cfg.JWT.SigningAlg == "" {
+		return config.SigningAlgRS256
+	}
+	return cfg.JWT.SigningAlg
+}
+
+// signingKeySetProvider builds the RSA KeySet for RS256 mode. Loads the
+// current key from AUTH_JWT_RSA_PRIVATE_KEY_PEM when set; generates a fresh
+// in-memory 2048-bit keypair otherwise (the dev-friendly fallback per ADR-0008).
+// In HS256 mode, returns nil — the resolver will not be called from the HS256
+// generator/validator providers, but the registration must succeed.
+func signingKeySetProvider(ctx context.Context, c *platform.Container) (*domain.KeySet, error) {
 	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if resolvedSigningAlg(cfg) != config.SigningAlgRS256 {
+		return nil, nil
+	}
+	current, err := loadOrGenerateCurrentKey(cfg.JWT.RSAPrivateKeyPEM, log)
+	if err != nil {
+		return nil, fmt.Errorf("loading current signing key: %w", err)
+	}
+	retiring, err := loadOptionalKey("AUTH_JWT_RSA_PRIVATE_KEY_PEM_PREVIOUS", cfg.JWT.RSAPrivateKeyPEMPrevious, "retiring")
+	if err != nil {
+		return nil, err
+	}
+	next, err := loadOptionalKey("AUTH_JWT_RSA_PRIVATE_KEY_PEM_NEXT", cfg.JWT.RSAPrivateKeyPEMNext, "next")
+	if err != nil {
+		return nil, err
+	}
+	return domain.NewKeySet(current, retiring, next)
+}
+
+// loadOrGenerateCurrentKey returns the current signing key. PEM env var wins
+// when set; otherwise a fresh in-memory keypair is generated with a kid
+// derived from a CSPRNG hex string — distinct across restarts so consumers
+// will see the kid change and refresh their JWKS cache.
+func loadOrGenerateCurrentKey(pemStr string, log logging.Logger) (*domain.SigningKey, error) {
+	if pemStr != "" {
+		log.Info("loading RSA signing key from AUTH_JWT_RSA_PRIVATE_KEY_PEM")
+		return domain.LoadSigningKey(pemStr, "current")
+	}
+	kid, err := randomKID("dev-")
+	if err != nil {
+		return nil, fmt.Errorf("generating kid: %w", err)
+	}
+	log.Info("AUTH_JWT_RSA_PRIVATE_KEY_PEM not set; generating in-memory RSA keypair (tokens will not survive restart)", "kid", kid)
+	return domain.GenerateSigningKey(kid)
+}
+
+func loadOptionalKey(envName, pemStr, slot string) (*domain.SigningKey, error) {
+	if pemStr == "" {
+		return nil, nil
+	}
+	key, err := domain.LoadSigningKey(pemStr, slot)
+	if err != nil {
+		return nil, fmt.Errorf("loading %s signing key from %s: %w", slot, envName, err)
+	}
+	return key, nil
+}
+
+// randomKID returns prefix + 16 hex chars of CSPRNG entropy. 64 bits of entropy
+// is plenty for a non-secret identifier whose only job is to disambiguate
+// concurrently-live signing keys.
+func randomKID(prefix string) (string, error) {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return prefix + hex.EncodeToString(b), nil
+}
+
+func tokenGeneratorProvider(ctx context.Context, c *platform.Container) (application.TokenGenerator, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	if resolvedSigningAlg(cfg) == config.SigningAlgRS256 {
+		keys := platform.MustResolve[*domain.KeySet](ctx, c)
+		return application.NewRS256TokenGenerator(keys, cfg.JWT.Issuer, cfg.JWT.Audience), nil
+	}
 	return application.NewJWTTokenGenerator([]byte(cfg.JWT.SigningKey), cfg.JWT.Issuer, cfg.JWT.Audience), nil
 }
 
-func tokenValidatorProvider(ctx context.Context, c *platform.Container) (*application.JWTTokenValidator, error) {
+func tokenValidatorProvider(ctx context.Context, c *platform.Container) (application.TokenValidator, error) {
 	cfg := platform.MustResolve[*config.Config](ctx, c)
 	repos, err := platform.Resolve[*tokenRepositories](ctx, c)
 	if err != nil {
 		return nil, err
+	}
+	if resolvedSigningAlg(cfg) == config.SigningAlgRS256 {
+		keys := platform.MustResolve[*domain.KeySet](ctx, c)
+		return application.NewRS256TokenValidator(keys, repos.token, cfg.JWT.Issuer), nil
 	}
 	return application.NewJWTTokenValidator([]byte(cfg.JWT.SigningKey), repos.token, cfg.JWT.Issuer), nil
 }
@@ -189,7 +277,7 @@ func clientCredentialsStrategyProvider(ctx context.Context, c *platform.Containe
 	if err != nil {
 		return nil, err
 	}
-	gen := platform.MustResolve[*application.JWTTokenGenerator](ctx, c)
+	gen := platform.MustResolve[application.TokenGenerator](ctx, c)
 	fetcher := platform.MustResolve[ports.SubjectPermissionsFetcher](ctx, c)
 	ttl, refreshTTL := tokenTTLs(cfg)
 	return application.NewClientCredentialsStrategy(cw.authenticator, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL), nil
@@ -202,7 +290,7 @@ func authorizationCodeStrategyProvider(ctx context.Context, c *platform.Containe
 	if err != nil {
 		return nil, err
 	}
-	gen := platform.MustResolve[*application.JWTTokenGenerator](ctx, c)
+	gen := platform.MustResolve[application.TokenGenerator](ctx, c)
 	userAuth := platform.MustResolve[ports.UserAuthenticator](ctx, c)
 	ttl, _ := tokenTTLs(cfg)
 	return application.NewAuthorizationCodeStrategy(cw.repoForAC, repos.token, gen, ttl, userAuth), nil
@@ -215,7 +303,7 @@ func refreshTokenStrategyProvider(ctx context.Context, c *platform.Container) (*
 	if err != nil {
 		return nil, err
 	}
-	gen := platform.MustResolve[*application.JWTTokenGenerator](ctx, c)
+	gen := platform.MustResolve[application.TokenGenerator](ctx, c)
 	fetcher := platform.MustResolve[ports.SubjectPermissionsFetcher](ctx, c)
 	ttl, refreshTTL := tokenTTLs(cfg)
 	return application.NewRefreshTokenStrategy(cw.authenticator, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL), nil
@@ -233,7 +321,7 @@ func tokenServiceProvider(ctx context.Context, c *platform.Container) (*applicat
 	if err != nil {
 		return nil, err
 	}
-	val := platform.MustResolve[*application.JWTTokenValidator](ctx, c)
+	val := platform.MustResolve[application.TokenValidator](ctx, c)
 	return application.NewTokenService(repos.token, repos.refresh, val), nil
 }
 
@@ -248,6 +336,18 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	introspector := inboundhttp.NewTokenIntrospectorAdapter(tokens)
 	revoker := inboundhttp.NewTokenRevokerAdapter(tokens)
 	return inboundhttp.NewHandler(issuer, introspector, revoker, cw.authenticator, log, cfg.Introspection.Secret), nil
+}
+
+// jwksHandlerProvider builds the JWKS endpoint handler. Returns nil in HS256
+// mode — the router uses nil-resolution to skip registering the route, since
+// HS256 has nothing to publish as a JWKS document.
+func jwksHandlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.JWKSHandler, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	if resolvedSigningAlg(cfg) != config.SigningAlgRS256 {
+		return nil, nil
+	}
+	keys := platform.MustResolve[*domain.KeySet](ctx, c)
+	return inboundhttp.NewJWKSHandler(keys), nil
 }
 
 func tokenTTLs(cfg *config.Config) (time.Duration, time.Duration) {

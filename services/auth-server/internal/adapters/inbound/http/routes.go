@@ -13,7 +13,9 @@ import (
 )
 
 // NewRouter sets up the HTTP routes and applies the middleware chain.
-func NewRouter(h *Handler, logger logging.Logger) http.Handler {
+// jwks may be nil — when nil, the /.well-known/jwks.json route is not
+// registered (HS256 mode does not publish a JWKS document).
+func NewRouter(h *Handler, jwks *JWKSHandler, logger logging.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /oauth/token", h.Token)
@@ -24,6 +26,10 @@ func NewRouter(h *Handler, logger logging.Logger) http.Handler {
 	mux.Handle("GET /swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),
 	))
+	if jwks != nil {
+		// RFC 7517 §4.1: JWKS lives at /.well-known/jwks.json by convention.
+		mux.HandleFunc("GET /.well-known/jwks.json", jwks.Get)
+	}
 
 	// Apply middleware chain (Chain of Responsibility pattern).
 	return httputil.RecoveryMiddleware(logger)(
