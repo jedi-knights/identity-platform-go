@@ -325,14 +325,20 @@ Routes are declared in `gateway.yaml` (or `/etc/gateway/gateway.yaml`). See [api
 
 ### auth-server
 
-| Variable                  | Default                   | Description              |
-|---------------------------|---------------------------|--------------------------|
-| `AUTH_SERVER_HOST`        | `0.0.0.0`                | Server bind host         |
-| `AUTH_SERVER_PORT`        | `8080`                   | Server port              |
-| `AUTH_JWT_SIGNING_KEY`    | `change-me-in-production`| JWT HMAC signing key     |
-| `AUTH_JWT_ISSUER`         | `identity-platform`      | JWT issuer claim         |
-| `AUTH_TOKEN_TTL_SECONDS`  | `3600`                   | Token time-to-live       |
-| `AUTH_LOG_LEVEL`          | `info`                   | Log level                |
+| Variable                                  | Default              | Description                                                                                                  |
+|-------------------------------------------|----------------------|--------------------------------------------------------------------------------------------------------------|
+| `AUTH_SERVER_HOST`                        | `0.0.0.0`            | Server bind host                                                                                             |
+| `AUTH_SERVER_PORT`                        | `8080`               | Server port                                                                                                  |
+| `AUTH_JWT_SIGNING_ALG`                    | `RS256`              | `RS256` (default) or `HS256` (legacy fallback)                                                               |
+| `AUTH_JWT_RSA_PRIVATE_KEY_PEM`            | _unset_              | PEM-encoded current RSA private key (RS256 mode). Unset → in-memory keypair generated at startup            |
+| `AUTH_JWT_RSA_PRIVATE_KEY_PEM_NEXT`       | _unset_              | Optional pre-staged successor key; published in JWKS ahead of promotion                                      |
+| `AUTH_JWT_RSA_PRIVATE_KEY_PEM_PREVIOUS`   | _unset_              | Optional retiring key; stays in JWKS for the rotation drain window                                           |
+| `AUTH_JWT_SIGNING_KEY`                    | _unset_              | HMAC signing key (HS256 mode only)                                                                           |
+| `AUTH_JWT_ISSUER`                         | `identity-platform`  | JWT issuer claim                                                                                             |
+| `AUTH_TOKEN_TTL_SECONDS`                  | `3600`               | Token time-to-live                                                                                           |
+| `AUTH_LOG_LEVEL`                          | `info`               | Log level                                                                                                    |
+
+The JWKS document is available at `GET /.well-known/jwks.json` whenever `AUTH_JWT_SIGNING_ALG=RS256`. Under HS256 the route is not registered.
 
 ### identity-service
 
@@ -350,10 +356,12 @@ Routes are declared in `gateway.yaml` (or `/etc/gateway/gateway.yaml`). See [api
 
 ### token-introspection-service
 
-| Variable                      | Default | Description          |
-|-------------------------------|---------|----------------------|
-| `INTROSPECT_SERVER_PORT`      | `8083`  | Server port          |
-| `INTROSPECT_JWT_SIGNING_KEY`  | -       | JWT HMAC signing key |
+| Variable                          | Default | Description                                                                                  |
+|-----------------------------------|---------|----------------------------------------------------------------------------------------------|
+| `INTROSPECT_SERVER_PORT`          | `8083`  | Server port                                                                                  |
+| `INTROSPECT_JWT_JWKS_URL`         | _unset_ | When set, validate tokens as RS256 via JWKS. Takes precedence over HS256 signing key         |
+| `INTROSPECT_JWT_JWKS_CACHE_TTL`   | `1h`    | How long a successful JWKS fetch is cached (Go duration string)                              |
+| `INTROSPECT_JWT_SIGNING_KEY`      | _unset_ | HS256 HMAC signing key. Required only when `INTROSPECT_JWT_JWKS_URL` is unset                |
 
 ### authorization-policy-service
 
@@ -363,10 +371,13 @@ Routes are declared in `gateway.yaml` (or `/etc/gateway/gateway.yaml`). See [api
 
 ### example-resource-service
 
-| Variable                    | Default | Description          |
-|-----------------------------|---------|----------------------|
-| `RESOURCE_SERVER_PORT`      | `8085`  | Server port          |
-| `RESOURCE_JWT_SIGNING_KEY`  | -       | JWT HMAC signing key |
+| Variable                        | Default | Description                                                                                                                  |
+|---------------------------------|---------|------------------------------------------------------------------------------------------------------------------------------|
+| `RESOURCE_SERVER_PORT`          | `8085`  | Server port                                                                                                                  |
+| `RESOURCE_INTROSPECTION_URL`    | _unset_ | When set, validate via token-introspection-service (handles revocation). Takes precedence over JWKS and HS256                |
+| `RESOURCE_JWT_JWKS_URL`         | _unset_ | When set, validate tokens locally as RS256 via JWKS. Used when introspection is unset                                        |
+| `RESOURCE_JWT_JWKS_CACHE_TTL`   | `1h`    | How long a successful JWKS fetch is cached                                                                                   |
+| `RESOURCE_JWT_SIGNING_KEY`      | _unset_ | HS256 HMAC signing key. Required only when both `RESOURCE_INTROSPECTION_URL` and `RESOURCE_JWT_JWKS_URL` are unset            |
 
 ---
 
@@ -385,13 +396,14 @@ All other paths are routed to upstream services by longest-prefix match (see [ga
 
 ### auth-server
 
-| Method | Path                | Description                    |
-|--------|---------------------|--------------------------------|
-| POST   | `/oauth/token`      | Issue access token (RFC 6749)  |
-| GET    | `/oauth/authorize`  | Authorization endpoint (stub)  |
-| POST   | `/oauth/introspect` | Token introspection (RFC 7662) |
-| POST   | `/oauth/revoke`     | Token revocation (RFC 7009)    |
-| GET    | `/health`           | Health check                   |
+| Method | Path                          | Description                                                 |
+|--------|-------------------------------|-------------------------------------------------------------|
+| POST   | `/oauth/token`                | Issue access token (RFC 6749)                               |
+| GET    | `/oauth/authorize`            | Authorization endpoint (stub)                               |
+| POST   | `/oauth/introspect`           | Token introspection (RFC 7662)                              |
+| POST   | `/oauth/revoke`               | Token revocation (RFC 7009)                                 |
+| GET    | `/.well-known/jwks.json`      | Public RSA keys for RS256 verification (RFC 7517 — RS256 mode only) |
+| GET    | `/health`                     | Health check                                                |
 
 ### identity-service
 

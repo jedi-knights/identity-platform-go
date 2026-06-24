@@ -73,7 +73,9 @@ func run(_ *cobra.Command, _ []string) error {
 	}()
 
 	handler := platform.MustResolve[*inboundhttp.Handler](startCtx, ctr)
-	router := inboundhttp.NewRouter(handler, logger)
+	// JWKSHandler is nil-resolved in HS256 mode; NewRouter skips the route in that case.
+	jwks := platform.MustResolve[*inboundhttp.JWKSHandler](startCtx, ctr)
+	router := inboundhttp.NewRouter(handler, jwks, logger)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
