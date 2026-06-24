@@ -73,6 +73,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, grantRegistryProvider)
 	platform.Register(c, tokenServiceProvider)
 	platform.Register(c, handlerProvider)
+	platform.Register(c, jwksHandlerProvider)
 
 	if err := c.Bootstrap(ctx); err != nil {
 		return nil, fmt.Errorf("bootstrapping container: %w", err)
@@ -335,6 +336,18 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	introspector := inboundhttp.NewTokenIntrospectorAdapter(tokens)
 	revoker := inboundhttp.NewTokenRevokerAdapter(tokens)
 	return inboundhttp.NewHandler(issuer, introspector, revoker, cw.authenticator, log, cfg.Introspection.Secret), nil
+}
+
+// jwksHandlerProvider builds the JWKS endpoint handler. Returns nil in HS256
+// mode — the router uses nil-resolution to skip registering the route, since
+// HS256 has nothing to publish as a JWKS document.
+func jwksHandlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.JWKSHandler, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	if resolvedSigningAlg(cfg) != config.SigningAlgRS256 {
+		return nil, nil
+	}
+	keys := platform.MustResolve[*domain.KeySet](ctx, c)
+	return inboundhttp.NewJWKSHandler(keys), nil
 }
 
 func tokenTTLs(cfg *config.Config) (time.Duration, time.Duration) {
