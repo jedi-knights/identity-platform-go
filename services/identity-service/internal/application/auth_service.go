@@ -82,6 +82,32 @@ func (s *AuthService) Register(ctx context.Context, req domain.RegisterRequest) 
 	}, nil
 }
 
+// GetUserClaims returns the OIDC claim projection for the user with the
+// given subject ID. ADR-0010's auth-server /userinfo endpoint and ID-token
+// issuer both call this through the UserClaimsProvider port; the response
+// shape mirrors OIDC Core §5.1.
+//
+// Identity-service is intentionally OIDC-scope-agnostic — it returns the
+// full claim set on every call and lets auth-server filter by what the
+// access token's scopes permit. Keeping scope-aware filtering at the auth
+// boundary preserves the "identity-service does not understand OAuth"
+// rule from CLAUDE.md.
+//
+// Returns ErrCodeNotFound when no user has the supplied ID.
+func (s *AuthService) GetUserClaims(ctx context.Context, userID string) (*domain.UserClaims, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching user: %w", err)
+	}
+	return &domain.UserClaims{
+		Subject:       user.ID,
+		Email:         user.Email,
+		EmailVerified: user.IsEmailVerified(),
+		Name:          user.Name,
+		UpdatedAt:     user.UpdatedAt,
+	}, nil
+}
+
 // assertEmailAvailable returns an error if the email is already taken or if
 // the repository check fails for a reason other than "not found".
 func (s *AuthService) assertEmailAvailable(ctx context.Context, email string) error {

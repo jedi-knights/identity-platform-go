@@ -25,7 +25,11 @@ type GrantRequest struct {
 
 // GrantResponse contains the issued token information.
 type GrantResponse struct {
-	AccessToken  string `json:"access_token"`
+	AccessToken string `json:"access_token"`
+	// IDToken is the OIDC ID token (OIDC Core §2) issued when the granted
+	// scopes include "openid". Empty + omitempty when OIDC mode is not active,
+	// matching the OAuth-only response shape clients see today.
+	IDToken      string `json:"id_token,omitempty"`
 	TokenType    string `json:"token_type"`
 	ExpiresIn    int    `json:"expires_in"`
 	Scope        string `json:"scope,omitempty"`

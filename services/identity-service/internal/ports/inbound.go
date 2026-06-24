@@ -31,3 +31,16 @@ type EmailVerifier interface {
 	// unknown / expired / already-used tokens.
 	VerifyEmail(ctx context.Context, req domain.VerifyEmailRequest) (*domain.VerifyEmailResponse, error)
 }
+
+// UserClaimsProvider is the inbound port behind GET /users/{id}/claims —
+// the projection ADR-0010's /userinfo endpoint on auth-server consumes to
+// fill the OIDC profile/email claims into its response.
+//
+// This service does NOT understand the OIDC scope vocabulary — it returns
+// the full claim set every time and lets auth-server filter by what the
+// access token's scopes permit. Keeping the scope-aware filtering at
+// auth-server's edge means identity-service stays OAuth-protocol-agnostic
+// (the boundary in identity-service/CLAUDE.md).
+type UserClaimsProvider interface {
+	GetUserClaims(ctx context.Context, userID string) (*domain.UserClaims, error)
+}

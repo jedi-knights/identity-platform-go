@@ -20,6 +20,7 @@ type Handler struct {
 	authenticator ports.Authenticator
 	registrar     ports.UserRegistrar
 	verifier      ports.EmailVerifier
+	claims        ports.UserClaimsProvider
 	logger        logging.Logger
 }
 
@@ -27,14 +28,49 @@ func NewHandler(
 	authenticator ports.Authenticator,
 	registrar ports.UserRegistrar,
 	verifier ports.EmailVerifier,
+	claims ports.UserClaimsProvider,
 	logger logging.Logger,
 ) *Handler {
 	return &Handler{
 		authenticator: authenticator,
 		registrar:     registrar,
 		verifier:      verifier,
+		claims:        claims,
 		logger:        logger,
 	}
+}
+
+// GetUserClaims handles GET /users/{id}/claims — the OIDC claim projection
+// consumed by auth-server's /userinfo endpoint and ID-token issuer. The
+// endpoint is internal: identity-service does not understand the OIDC scope
+// vocabulary, so it returns the full claim set every time and lets
+// auth-server filter by what the access token's scopes permit.
+//
+// @Summary      Get user OIDC claims
+// @Description  Returns OIDC Core §5.1 claim projection for the user with the given id
+// @Tags         users
+// @Produce      json
+// @Param        id   path      string  true  "User ID"
+// @Success      200  {object}  domain.UserClaims
+// @Failure      404  {object}  httputil.ErrorResponse
+// @Router       /users/{id}/claims [get]
+func (h *Handler) GetUserClaims(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "user id is required"))
+		return
+	}
+	claims, err := h.claims.GetUserClaims(r.Context(), id)
+	if err != nil {
+		if apperrors.IsNotFound(err) {
+			httputil.WriteError(w, apperrors.New(apperrors.ErrCodeNotFound, "user not found"))
+			return
+		}
+		h.logger.Error("failed to fetch user claims", "error", err)
+		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeInternal, "failed to fetch user claims"))
+		return
+	}
+	httputil.WriteJSON(w, http.StatusOK, claims)
 }
 
 // Login handles POST /auth/login.

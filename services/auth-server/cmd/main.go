@@ -75,7 +75,9 @@ func run(_ *cobra.Command, _ []string) error {
 	handler := platform.MustResolve[*inboundhttp.Handler](startCtx, ctr)
 	// JWKSHandler is nil-resolved in HS256 mode; NewRouter skips the route in that case.
 	jwks := platform.MustResolve[*inboundhttp.JWKSHandler](startCtx, ctr)
-	router := inboundhttp.NewRouter(handler, jwks, logger)
+	// UserInfoHandler is nil-resolved when OIDC mode is disabled (no OIDC issuer URL).
+	userInfo := platform.MustResolve[*inboundhttp.UserInfoHandler](startCtx, ctr)
+	router := inboundhttp.NewRouter(handler, jwks, userInfo, logger)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
