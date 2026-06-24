@@ -123,6 +123,10 @@ Fine-grained authorization using the **Strategy** and **Specification** patterns
 
 A protected API that demonstrates JWT-based authentication and scope enforcement. Requires valid tokens with appropriate scopes (`read`, `write`) to access resources.
 
+### [login-ui](services/login-ui/) (`:8087`)
+
+The platform's unified, multi-tenant user-facing sign-in surface (ADR-0011). Every relying party's OAuth flow lands here: `auth-server`'s `/oauth/authorize` 302-redirects the user-agent to `login-ui /sign-in?login_challenge=<id>`, `login-ui` verifies credentials against `identity-service`, calls `auth-server`'s `POST /internal/issue-code` to redeem the challenge into an authorization code, and 302s back to the relying party.
+
 ---
 
 ## Shared Libraries
@@ -180,6 +184,7 @@ Open `.env` and set the two required values:
 |----------|-------------|
 | `JWT_SIGNING_KEY` | Random string, minimum 32 characters. Used by `auth-server`, `token-introspection-service`, and `example-resource-service` — all three must share the same value for token validation to work across services. Generate one with: `openssl rand -hex 32` |
 | `DEV_CLIENT_SECRET` | Secret for the test OAuth client seeded into `auth-server` on startup (`client_id=test-client`). Any non-empty string works locally. |
+| `LOGIN_UI_SERVICE_TOKEN` | Bearer token shared between `login-ui` and `auth-server`'s `POST /internal/issue-code` endpoint (ADR-0011). Must be at least 32 characters of high-entropy random data. Generate with: `openssl rand -hex 32` |
 
 #### 2. Build and start all services
 
@@ -198,6 +203,7 @@ All seven services start in parallel. Health checks on each `/health` endpoint c
 | token-introspection-service | http://localhost:9083 |
 | authorization-policy-service | http://localhost:9084 |
 | example-resource-service | http://localhost:9085 |
+| login-ui | http://localhost:9087 |
 
 #### 3. Request a token
 
