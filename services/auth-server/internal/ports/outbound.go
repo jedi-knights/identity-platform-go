@@ -40,3 +40,27 @@ type UserAuthenticator interface {
 type SubjectPermissionsFetcher interface {
 	GetSubjectPermissions(ctx context.Context, subjectID string) (roles []string, permissions []string, err error)
 }
+
+// UserClaims is the auth-server-side projection of identity-service's user
+// claims response. Field shape mirrors OIDC Core §5.1 standard claim names;
+// auth-server selects which fields to copy into the issued ID token (and
+// the /userinfo response) based on the access token's scope set.
+type UserClaims struct {
+	Subject       string
+	Email         string
+	EmailVerified bool
+	Name          string
+	UpdatedAt     int64 // Unix seconds
+}
+
+// UserClaimsFetcher is the outbound port for retrieving the identity claims
+// auth-server's ID-token issuer and /userinfo endpoint use to populate
+// profile and email information. Backed by identity-service's
+// GET /users/{id}/claims projection (ADR-0010).
+//
+// When the auth-server is run without AUTH_IDENTITY_SERVICE_URL the
+// implementation is nil — issuance falls back to omitting profile claims,
+// and /userinfo returns the platform's minimum (sub only).
+type UserClaimsFetcher interface {
+	GetUserClaims(ctx context.Context, subjectID string) (*UserClaims, error)
+}

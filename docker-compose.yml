@@ -86,6 +86,12 @@ services:
       # the legacy shared-HMAC path.
       AUTH_JWT_SIGNING_ALG: "RS256"
       AUTH_JWT_ISSUER: "identity-platform"
+      # ADR-0010: OIDC issuer URL. Drives the iss claim on ID tokens and
+      # the issuer field in RFC 8414 metadata. Unset disables OIDC mode.
+      AUTH_JWT_OIDC_ISSUER: "http://auth-server:8080"
+      # ADR-0010: ID-token TTL. 300s default mirrors the ADR — ID tokens
+      # are for immediate consumption, not long-lived API access.
+      AUTH_JWT_ID_TOKEN_TTL_SECONDS: "300"
       AUTH_TOKEN_TTL_SECONDS: "3600"
       AUTH_LOG_LEVEL: "info"
       AUTH_LOG_FORMAT: "json"
