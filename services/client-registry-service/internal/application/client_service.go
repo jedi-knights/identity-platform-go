@@ -64,22 +64,18 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 		return nil, fmt.Errorf("failed to generate client ID: %w", err)
 	}
 
-	secret, err := generateHex(32)
+	clientType := normalizeIncomingClientType(req.ClientType)
+	plainSecret, storedSecret, err := s.generateSecretFor(clientType)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate client secret: %w", err)
-	}
-
-	// Hash the secret before storing so plain-text credentials are never persisted.
-	hash, err := bcrypt.GenerateFromPassword([]byte(secret), s.bcryptCost)
-	if err != nil {
-		return nil, fmt.Errorf("failed to hash client secret: %w", err)
+		return nil, err
 	}
 
 	now := time.Now()
 	client := &domain.OAuthClient{
 		ID:           id,
-		Secret:       string(hash),
+		Secret:       storedSecret,
 		Name:         req.Name,
+		Type:         clientType,
 		Scopes:       req.Scopes,
 		RedirectURIs: req.RedirectURIs,
 		GrantTypes:   req.GrantTypes,
@@ -92,11 +88,14 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 		return nil, fmt.Errorf("failed to save client: %w", err)
 	}
 
-	// Return the plain-text secret once — it will not be recoverable from storage.
+	// Return the plain-text secret once — it will not be recoverable from
+	// storage. Public clients receive an empty ClientSecret (omitempty in
+	// the response struct strips it from the JSON).
 	return &domain.CreateClientResponse{
 		ClientID:     client.ID,
-		ClientSecret: secret,
+		ClientSecret: plainSecret,
 		Name:         client.Name,
+		ClientType:   string(client.Type),
 		Scopes:       client.Scopes,
 		RedirectURIs: client.RedirectURIs,
 		GrantTypes:   client.GrantTypes,
@@ -114,11 +113,53 @@ func (s *ClientService) GetClient(ctx context.Context, id string) (*domain.GetCl
 	return &domain.GetClientResponse{
 		ClientID:     client.ID,
 		Name:         client.Name,
+		ClientType:   normalizeClientType(client.Type),
 		Scopes:       client.Scopes,
 		RedirectURIs: client.RedirectURIs,
 		GrantTypes:   client.GrantTypes,
 		Active:       client.Active,
 	}, nil
+}
+
+// normalizeClientType returns the wire value of t, defaulting to
+// "confidential" for empty or unrecognised stored values. This is the
+// fail-closed mirror of the application's IsPublic logic and keeps the
+// API contract honest for clients persisted before ADR-0009 added the
+// column.
+func normalizeClientType(t domain.ClientType) string {
+	if t == domain.ClientTypePublic {
+		return string(domain.ClientTypePublic)
+	}
+	return string(domain.ClientTypeConfidential)
+}
+
+// normalizeIncomingClientType maps the wire value on a CreateClientRequest
+// to a domain.ClientType, defaulting empty / unknown to confidential per
+// the fail-closed rule in ADR-0009.
+func normalizeIncomingClientType(wire string) domain.ClientType {
+	if domain.ClientType(wire) == domain.ClientTypePublic {
+		return domain.ClientTypePublic
+	}
+	return domain.ClientTypeConfidential
+}
+
+// generateSecretFor returns (plain, stored) for the given client type.
+// Public clients get ("", ""); confidential clients get a fresh 32-byte
+// hex secret and its bcrypt hash. Extracted from CreateClient so the
+// caller stays under the cyclomatic complexity cap.
+func (s *ClientService) generateSecretFor(t domain.ClientType) (plain, stored string, err error) {
+	if t != domain.ClientTypeConfidential {
+		return "", "", nil
+	}
+	plain, err = generateHex(32)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate client secret: %w", err)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(plain), s.bcryptCost)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to hash client secret: %w", err)
+	}
+	return plain, string(hash), nil
 }
 
 // ValidateClient checks whether the provided client credentials are valid.
@@ -160,6 +201,7 @@ func (s *ClientService) ListClients(ctx context.Context) ([]*domain.GetClientRes
 		result = append(result, &domain.GetClientResponse{
 			ClientID:     c.ID,
 			Name:         c.Name,
+			ClientType:   normalizeClientType(c.Type),
 			Scopes:       c.Scopes,
 			RedirectURIs: c.RedirectURIs,
 			GrantTypes:   c.GrantTypes,

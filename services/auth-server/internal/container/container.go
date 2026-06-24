@@ -61,6 +61,8 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	})
 	platform.Register(c, httpClientProvider)
 	platform.Register(c, tokenRepositoriesProvider)
+	platform.Register(c, authorizationCodeRepositoryProvider)
+	platform.Register(c, authorizationCodeIssuerProvider)
 	platform.Register(c, clientWiringProvider)
 	platform.Register(c, userAuthenticatorProvider)
 	platform.Register(c, permissionsFetcherProvider)
@@ -118,15 +120,42 @@ func tokenRepositoriesProvider(ctx context.Context, c *platform.Container) (*tok
 }
 
 // clientWiring bundles the ClientAuthenticator with the underlying
-// domain.ClientRepository so AuthorizationCodeStrategy (which needs direct
-// repo access for redirect URI validation) shares the same in-memory store
-// as the authenticator — no duplicate seed, no split state. The repo is nil
-// when the remote HTTP adapter is selected; AuthorizationCodeStrategy
-// receives nil and skips redirect-URI validation (the grant is a stub
-// until PKCE is implemented).
+// domain.ClientRepository so the authentication path can share the same
+// in-memory store as the seeded test client when running without a remote
+// client registry. The repo is nil when the remote HTTP adapter is selected;
+// the authorization_code grant authenticates via ClientAuthenticator only.
 type clientWiring struct {
 	authenticator ports.ClientAuthenticator
-	repoForAC     domain.ClientRepository
+	repoForAC     domain.ClientRepository // unused by AuthorizationCodeStrategy after ADR-0009
+}
+
+// authorizationCodeRepositoryProvider wires the auth-code store. Uses the
+// Redis adapter when AUTH_REDIS_URL is set (atomic Lua-script Consume),
+// otherwise the in-memory adapter (mutex-protected, single-replica).
+func authorizationCodeRepositoryProvider(ctx context.Context, c *platform.Container) (domain.AuthorizationCodeRepository, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if cfg.Redis.URL == "" {
+		log.Info("using in-memory authorization-code store (AUTH_REDIS_URL not set)")
+		return memory.NewAuthorizationCodeRepository(), nil
+	}
+	log.Info("using Redis authorization-code store")
+	client, err := redisadapter.NewClient(cfg.Redis.URL)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to Redis for auth codes: %w", err)
+	}
+	return redisadapter.NewAuthorizationCodeRepository(client), nil
+}
+
+// authorizationCodeIssuerProvider wires the application-layer issuer that
+// ADR-0011's /oauth/authorize handler will call once user identity and
+// consent are established. Bound via the ports.AuthorizationCodeIssuer
+// interface so the handler can be tested without a real container.
+func authorizationCodeIssuerProvider(ctx context.Context, c *platform.Container) (ports.AuthorizationCodeIssuer, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	repo := platform.MustResolve[domain.AuthorizationCodeRepository](ctx, c)
+	ttl := time.Duration(cfg.AuthorizationCode.TTLSeconds) * time.Second
+	return application.NewAuthorizationCodeIssuer(repo, ttl), nil
 }
 
 func clientWiringProvider(ctx context.Context, c *platform.Container) (*clientWiring, error) {
@@ -290,10 +319,11 @@ func authorizationCodeStrategyProvider(ctx context.Context, c *platform.Containe
 	if err != nil {
 		return nil, err
 	}
+	codeRepo := platform.MustResolve[domain.AuthorizationCodeRepository](ctx, c)
 	gen := platform.MustResolve[application.TokenGenerator](ctx, c)
-	userAuth := platform.MustResolve[ports.UserAuthenticator](ctx, c)
-	ttl, _ := tokenTTLs(cfg)
-	return application.NewAuthorizationCodeStrategy(cw.repoForAC, repos.token, gen, ttl, userAuth), nil
+	fetcher := platform.MustResolve[ports.SubjectPermissionsFetcher](ctx, c)
+	ttl, refreshTTL := tokenTTLs(cfg)
+	return application.NewAuthorizationCodeStrategy(cw.authenticator, codeRepo, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL), nil
 }
 
 func refreshTokenStrategyProvider(ctx context.Context, c *platform.Container) (*application.RefreshTokenStrategy, error) {

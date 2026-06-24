@@ -10,17 +10,18 @@ import (
 
 // Config holds all auth-server configuration.
 type Config struct {
-	Server          ServerConfig          `mapstructure:"server"`
-	JWT             JWTConfig             `mapstructure:"jwt"`
-	Token           TokenConfig           `mapstructure:"token"`
-	Log             LogConfig             `mapstructure:"log"`
-	ClientRegistry  ClientRegistryConfig  `mapstructure:"client_registry"`
-	IdentityService IdentityServiceConfig `mapstructure:"identity_service"`
-	Redis           RedisConfig           `mapstructure:"redis"`
-	Policy          PolicyConfig          `mapstructure:"policy"`
-	Introspection   IntrospectionConfig   `mapstructure:"introspection"`
-	DevSeedClients  bool                  `mapstructure:"dev_seed_clients"`
-	DevClientSecret string                `mapstructure:"dev_client_secret"` // AUTH_DEV_CLIENT_SECRET; only used when DevSeedClients=true
+	Server            ServerConfig            `mapstructure:"server"`
+	JWT               JWTConfig               `mapstructure:"jwt"`
+	Token             TokenConfig             `mapstructure:"token"`
+	AuthorizationCode AuthorizationCodeConfig `mapstructure:"authorization_code"`
+	Log               LogConfig               `mapstructure:"log"`
+	ClientRegistry    ClientRegistryConfig    `mapstructure:"client_registry"`
+	IdentityService   IdentityServiceConfig   `mapstructure:"identity_service"`
+	Redis             RedisConfig             `mapstructure:"redis"`
+	Policy            PolicyConfig            `mapstructure:"policy"`
+	Introspection     IntrospectionConfig     `mapstructure:"introspection"`
+	DevSeedClients    bool                    `mapstructure:"dev_seed_clients"`
+	DevClientSecret   string                  `mapstructure:"dev_client_secret"` // AUTH_DEV_CLIENT_SECRET; only used when DevSeedClients=true
 }
 
 type ServerConfig struct {
@@ -69,6 +70,13 @@ const (
 type TokenConfig struct {
 	TTLSeconds             int `mapstructure:"ttl_seconds"`
 	RefreshTokenTTLSeconds int `mapstructure:"refresh_token_ttl_seconds"`
+}
+
+// AuthorizationCodeConfig holds the lifetime for OAuth 2.1 authorization
+// codes (ADR-0009). The default of 60 seconds is the tight bound that limits
+// the exfiltration-then-redeem window.
+type AuthorizationCodeConfig struct {
+	TTLSeconds int `mapstructure:"ttl_seconds"` // AUTH_AUTHORIZATION_CODE_TTL_SECONDS
 }
 
 // PolicyConfig holds the URL for authorization-policy-service.
@@ -123,6 +131,7 @@ func Load() (*Config, error) {
 	v.SetDefault("jwt.issuer", "identity-platform")
 	v.SetDefault("token.ttl_seconds", 300)
 	v.SetDefault("token.refresh_token_ttl_seconds", 604800)
+	v.SetDefault("authorization_code.ttl_seconds", 60) // ADR-0009 §"Authorization code shape"
 	v.SetDefault("policy.url", "")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")

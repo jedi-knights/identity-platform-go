@@ -12,9 +12,9 @@ The OAuth 2.0 authorization server. Issues, introspects, and revokes tokens. Thi
 |-----------|--------|-------|
 | `client_credentials` | Fully implemented | Includes refresh token issuance and RBAC claims |
 | `refresh_token` | Fully implemented | Rotates refresh token on use (old deleted, new issued) |
-| `authorization_code` | **Intentional stub** | `AuthorizationCodeStrategy.Handle` returns `ErrUnsupportedGrantType`; PKCE (RFC 7636) is the missing piece |
+| `authorization_code` | Fully implemented (ADR-0009) | Mandatory PKCE-S256 for every client; exact redirect-URI match; 60s default code TTL; atomic Consume detects replay |
 
-**Do not treat the `authorization_code` stub as forgotten work.** It is an extension point. Full implementation requires an ADR covering PKCE, redirect URI validation, and code issuance before any code is written.
+The authorization_code grant runs a 12-step validation pipeline at the token endpoint (see ADR-0009 §"Token-endpoint exchange — validation order"). Both public clients (no secret, PKCE-only) and confidential clients (secret + PKCE) work; the `domain.Client.Type` field controls which path the strategy follows. The `/oauth/authorize` endpoint is still a stub — the login/consent UI lands in ADR-0011.
 
 ---
 
@@ -74,5 +74,5 @@ Rotation is the operator pattern: stage `_NEXT` → restart → promote `_NEXT` 
 ## RFC Notes
 
 - **client_credentials refresh tokens**: RFC 6749 §4.4.3 says SHOULD NOT issue refresh tokens for this grant. This implementation does so intentionally to make the full token lifecycle testable. See `domain/token.go` for the rationale comment.
-- **PKCE** (RFC 7636): `CodeVerifier` is parsed and stored in `GrantRequest` but validation is not yet implemented. Do not add validation without the full `authorization_code` flow.
+- **PKCE** (RFC 7636 + OAuth 2.1 §4.1.2.1): mandatory and S256-only. `plain` is rejected at the issuer (ADR-0009). The S256 comparison at the token endpoint uses `subtle.ConstantTimeCompare`. Do not relax to per-client opt-in — public clients have nothing else to authenticate with.
 - **RS256 + JWKS** (RFC 7517 / RFC 7518): per ADR-0008, the algorithm-confusion defence (RFC 8725 §3.1) is enforced by `jwtutil.ParseRS256` — HS256-signed tokens are rejected outright. Do not relax that check.
