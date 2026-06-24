@@ -103,7 +103,7 @@ func TestAuthorizationCodeIssuer_Issue_CodeIs64HexChars(t *testing.T) {
 // cyclomatic complexity within the project cap.
 func firstNonHex(s string) (rune, bool) {
 	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return c, true
 		}
 	}
