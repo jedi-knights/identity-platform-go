@@ -64,24 +64,10 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 		return nil, fmt.Errorf("failed to generate client ID: %w", err)
 	}
 
-	// Normalise the wire value: empty / unknown → confidential (fail closed
-	// per ADR-0009). Public clients hold no secret; everything else does.
-	clientType := domain.ClientType(req.ClientType)
-	if clientType != domain.ClientTypePublic {
-		clientType = domain.ClientTypeConfidential
-	}
-
-	var plainSecret, storedSecret string
-	if clientType == domain.ClientTypeConfidential {
-		plainSecret, err = generateHex(32)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate client secret: %w", err)
-		}
-		hash, hashErr := bcrypt.GenerateFromPassword([]byte(plainSecret), s.bcryptCost)
-		if hashErr != nil {
-			return nil, fmt.Errorf("failed to hash client secret: %w", hashErr)
-		}
-		storedSecret = string(hash)
+	clientType := normalizeIncomingClientType(req.ClientType)
+	plainSecret, storedSecret, err := s.generateSecretFor(clientType)
+	if err != nil {
+		return nil, err
 	}
 
 	now := time.Now()
@@ -145,6 +131,35 @@ func normalizeClientType(t domain.ClientType) string {
 		return string(domain.ClientTypePublic)
 	}
 	return string(domain.ClientTypeConfidential)
+}
+
+// normalizeIncomingClientType maps the wire value on a CreateClientRequest
+// to a domain.ClientType, defaulting empty / unknown to confidential per
+// the fail-closed rule in ADR-0009.
+func normalizeIncomingClientType(wire string) domain.ClientType {
+	if domain.ClientType(wire) == domain.ClientTypePublic {
+		return domain.ClientTypePublic
+	}
+	return domain.ClientTypeConfidential
+}
+
+// generateSecretFor returns (plain, stored) for the given client type.
+// Public clients get ("", ""); confidential clients get a fresh 32-byte
+// hex secret and its bcrypt hash. Extracted from CreateClient so the
+// caller stays under the cyclomatic complexity cap.
+func (s *ClientService) generateSecretFor(t domain.ClientType) (plain, stored string, err error) {
+	if t != domain.ClientTypeConfidential {
+		return "", "", nil
+	}
+	plain, err = generateHex(32)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate client secret: %w", err)
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(plain), s.bcryptCost)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to hash client secret: %w", err)
+	}
+	return plain, string(hash), nil
 }
 
 // ValidateClient checks whether the provided client credentials are valid.
