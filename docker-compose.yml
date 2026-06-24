@@ -78,7 +78,13 @@ services:
     environment:
       AUTH_SERVER_HOST: "0.0.0.0"
       AUTH_SERVER_PORT: "8080"
-      AUTH_JWT_SIGNING_KEY: ${JWT_SIGNING_KEY}
+      # ADR-0008: RS256 is the default signing scheme. AUTH_JWT_RSA_PRIVATE_KEY_PEM
+      # is unset here, so auth-server generates a fresh in-memory keypair at
+      # startup — fine for local dev, tokens do not survive restart. For
+      # production, set AUTH_JWT_RSA_PRIVATE_KEY_PEM to a PEM-encoded key.
+      # Set AUTH_JWT_SIGNING_ALG=HS256 and AUTH_JWT_SIGNING_KEY to fall back to
+      # the legacy shared-HMAC path.
+      AUTH_JWT_SIGNING_ALG: "RS256"
       AUTH_JWT_ISSUER: "identity-platform"
       AUTH_TOKEN_TTL_SECONDS: "3600"
       AUTH_LOG_LEVEL: "info"
@@ -168,7 +174,9 @@ services:
 
   # ---------------------------------------------------------------------------
   # token-introspection-service — standalone JWT validation (RFC 7662)
-  # Must share JWT_SIGNING_KEY with auth-server to validate tokens it issues.
+  # ADR-0008: validates tokens via auth-server's JWKS endpoint when
+  # INTROSPECT_JWT_JWKS_URL is set; otherwise falls back to HS256 with a
+  # shared signing key (legacy).
   # Endpoint: POST /introspect
   # ---------------------------------------------------------------------------
   token-introspection-service:
@@ -183,7 +191,8 @@ services:
     environment:
       INTROSPECT_SERVER_HOST: "0.0.0.0"
       INTROSPECT_SERVER_PORT: "8083"
-      INTROSPECT_JWT_SIGNING_KEY: ${JWT_SIGNING_KEY}
+      # Validate tokens via auth-server's JWKS endpoint. SigningKey is unused.
+      INTROSPECT_JWT_JWKS_URL: "http://auth-server:8080/.well-known/jwks.json"
       INTROSPECT_LOG_LEVEL: "info"
       INTROSPECT_LOG_FORMAT: "json"
       INTROSPECT_LOG_ENVIRONMENT: "development"
@@ -262,10 +271,11 @@ services:
     environment:
       RESOURCE_SERVER_HOST: "0.0.0.0"
       RESOURCE_SERVER_PORT: "8085"
-      # JWT_SIGNING_KEY is only needed as a fallback when RESOURCE_INTROSPECTION_URL
-      # is not set. It is kept here so the service starts correctly if the introspection
-      # service is temporarily unavailable during development.
-      RESOURCE_JWT_SIGNING_KEY: ${JWT_SIGNING_KEY}
+      # ADR-0008: validate tokens via auth-server's JWKS endpoint as a fallback
+      # when introspection is unavailable. SigningKey is unused under either
+      # JWKS or introspection; the variable can be removed entirely once
+      # production deployments confirm the new paths.
+      RESOURCE_JWT_JWKS_URL: "http://auth-server:8080/.well-known/jwks.json"
       RESOURCE_LOG_LEVEL: "info"
       RESOURCE_LOG_FORMAT: "json"
       RESOURCE_LOG_ENVIRONMENT: "development"

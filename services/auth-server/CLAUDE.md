@@ -51,9 +51,23 @@ When a URL env var is unset, `container.go` wires the fallback. This allows auth
 
 ## Token Structure
 
-Tokens are JWTs signed with HS256 using the key from `AUTH_SIGNING_KEY`. Claims type is `jwtutil.Claims` — the single source of truth in `libs/jwtutil`. The `Roles` and `Permissions` claims are populated at issuance from `SubjectPermissionsFetcher`; when the fetcher is nil, these fields are omitted (tokens remain valid for scope-only authorization).
+Per ADR-0008, tokens are JWTs signed with **RS256 by default**. The current signing key is held in a `domain.KeySet` built from `AUTH_JWT_RSA_PRIVATE_KEY_PEM` (production) or generated in-memory at startup (local dev fallback). Every token carries a `kid` JOSE header so verifiers can resolve the public key via `GET /.well-known/jwks.json`.
+
+Set `AUTH_JWT_SIGNING_ALG=HS256` and `AUTH_JWT_SIGNING_KEY` to fall back to the legacy shared-HMAC path during migration. Under HS256 the JWKS endpoint is **not** registered — a probe for `/.well-known/jwks.json` returns 404.
+
+Claims type is `jwtutil.Claims` — the single source of truth in `go-platform/jwtutil`. The `Roles` and `Permissions` claims are populated at issuance from `SubjectPermissionsFetcher`; when the fetcher is nil, these fields are omitted (tokens remain valid for scope-only authorization).
 
 Refresh tokens are opaque random hex values — never JWTs.
+
+### Key rotation surface
+
+| Env var | Slot | When emitted in JWKS |
+|---|---|---|
+| `AUTH_JWT_RSA_PRIVATE_KEY_PEM` | Current — used to sign new tokens | Always |
+| `AUTH_JWT_RSA_PRIVATE_KEY_PEM_PREVIOUS` | Retiring — kept for verifier-side validity during the rotation window | When set |
+| `AUTH_JWT_RSA_PRIVATE_KEY_PEM_NEXT` | Pre-staged successor — visible to verifiers ahead of promotion to Current | When set |
+
+Rotation is the operator pattern: stage `_NEXT` → restart → promote `_NEXT` to current and previous-current to `_PREVIOUS` → restart → drop `_PREVIOUS` after access-token TTL has fully drained.
 
 ---
 
@@ -61,3 +75,4 @@ Refresh tokens are opaque random hex values — never JWTs.
 
 - **client_credentials refresh tokens**: RFC 6749 §4.4.3 says SHOULD NOT issue refresh tokens for this grant. This implementation does so intentionally to make the full token lifecycle testable. See `domain/token.go` for the rationale comment.
 - **PKCE** (RFC 7636): `CodeVerifier` is parsed and stored in `GrantRequest` but validation is not yet implemented. Do not add validation without the full `authorization_code` flow.
+- **RS256 + JWKS** (RFC 7517 / RFC 7518): per ADR-0008, the algorithm-confusion defence (RFC 8725 §3.1) is enforced by `jwtutil.ParseRS256` — HS256-signed tokens are rejected outright. Do not relax that check.
