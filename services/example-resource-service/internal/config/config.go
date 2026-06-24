@@ -35,7 +35,19 @@ type LogConfig struct {
 }
 
 type JWTConfig struct {
-	SigningKey string `mapstructure:"signing_key"`
+	// SigningKey is the HS256 HMAC secret used for local validation when
+	// neither JWKSURL nor IntrospectionURL is configured.
+	SigningKey string `mapstructure:"signing_key"` // RESOURCE_JWT_SIGNING_KEY
+
+	// JWKSURL is the auth-server JWKS document URL. When set, this service
+	// validates tokens as RS256 against the discovered public keys. SigningKey
+	// is ignored. Skipped entirely when IntrospectionURL is set (introspection
+	// takes precedence since it also handles revocation).
+	JWKSURL string `mapstructure:"jwks_url"` // RESOURCE_JWT_JWKS_URL
+
+	// JWKSCacheTTL is how long a successful JWKS fetch is cached. Default 1h.
+	JWKSCacheTTL string `mapstructure:"jwks_cache_ttl"` // RESOURCE_JWT_JWKS_CACHE_TTL
+
 	// Audience is the expected audience value for locally-validated JWTs.
 	// When set, tokens must carry a matching aud claim (RFC 9068 §4).
 	// Maps to RESOURCE_JWT_AUDIENCE. Empty disables audience validation.
@@ -70,6 +82,8 @@ func Load() (*Config, error) {
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.environment", "development")
 	v.SetDefault("jwt.signing_key", "")
+	v.SetDefault("jwt.jwks_url", "")
+	v.SetDefault("jwt.jwks_cache_ttl", "1h")
 	v.SetDefault("jwt.audience", "")
 	v.SetDefault("jwt.issuer", "")
 	v.SetDefault("introspection.url", "")
@@ -98,8 +112,12 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unmarshalling config: %w", err)
 	}
 
-	// Signing key is required only when introspection service is not configured.
-	if cfg.Introspection.URL == "" {
+	// HS256 signing key is required only when neither introspection nor JWKS
+	// is configured. The selection order at request time is:
+	// 1. IntrospectionURL set → IntrospectionAuthMiddleware (handles revocation)
+	// 2. JWKSURL set → RS256AuthMiddleware (local RS256 + JWKS)
+	// 3. otherwise → JWTAuthMiddleware (legacy HS256 with shared secret)
+	if cfg.Introspection.URL == "" && cfg.JWT.JWKSURL == "" {
 		if err := validateSigningKey(cfg.JWT.SigningKey); err != nil {
 			return nil, fmt.Errorf("validating jwt signing key: %w", err)
 		}

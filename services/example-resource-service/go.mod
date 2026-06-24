@@ -2,6 +2,13 @@ module github.com/ocrosby/identity-platform-go/services/example-resource-service
 
 go 1.26
 
+// TODO(ADR-0008): remove this replace before opening the PR.
+// Same as auth-server and token-introspection-service — points at the
+// local feat/jwtutil-rs256 branch (jedi-knights/go-platform PR #9) while
+// we iterate on JWKS-based local validation. Remove after PR #9 merges
+// and a new go-platform tag is released; bump the require above to that tag.
+replace github.com/jedi-knights/go-platform => ../../../../jedi-knights/go-platform
+
 require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.9.1

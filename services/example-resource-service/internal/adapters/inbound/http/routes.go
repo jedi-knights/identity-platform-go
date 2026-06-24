@@ -8,6 +8,7 @@ import (
 	"github.com/jedi-knights/go-logging/pkg/logging"
 
 	"github.com/jedi-knights/go-platform/httputil"
+	"github.com/jedi-knights/go-platform/jwtutil"
 
 	_ "github.com/ocrosby/identity-platform-go/services/example-resource-service/docs"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/ports"
@@ -15,17 +16,15 @@ import (
 
 // NewRouter sets up HTTP routes with auth and scope middleware (Chain of Responsibility).
 //
-// When introspector is non-nil, IntrospectionAuthMiddleware is used — tokens are
-// validated remotely and revocation is honoured. When nil, JWTAuthMiddleware is used
-// as a fallback for local dev without the full stack running.
+// Auth middleware selection (in priority order):
+//  1. introspector != nil       → IntrospectionAuthMiddleware (handles revocation)
+//  2. keySource != nil          → RS256AuthMiddleware (local RS256 + JWKS)
+//  3. otherwise                 → JWTAuthMiddleware (legacy HS256 with shared secret)
 //
-// audience is used for token audience validation (RFC 9068 §2.2):
-//   - In the introspection path: checks the aud claim in the introspection result.
-//   - In the local JWT path: passed to ParseWithAudience when non-empty.
-//
-// issuer is used for issuer validation in the local JWT path only (RFC 8725 §3.8).
+// audience is used for token audience validation (RFC 9068 §2.2). issuer is
+// used for issuer validation in the local paths only (RFC 8725 §3.8).
 // Empty strings disable the respective validation.
-func NewRouter(h *Handler, logger logging.Logger, signingKey []byte, audience, issuer string, introspector ports.TokenIntrospector) http.Handler {
+func NewRouter(h *Handler, logger logging.Logger, signingKey []byte, keySource jwtutil.KeySource, audience, issuer string, introspector ports.TokenIntrospector) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", h.Health)
@@ -33,11 +32,16 @@ func NewRouter(h *Handler, logger logging.Logger, signingKey []byte, audience, i
 		httpSwagger.URL("/swagger/doc.json"),
 	))
 
-	// Select the auth middleware based on whether token-introspection-service is configured.
+	// Select the auth middleware. Introspection wins because it is the only
+	// path that honours revocation; JWKS next for asymmetric local validation;
+	// HS256 last for legacy / standalone-dev mode.
 	var authMiddleware func(http.Handler) http.Handler
-	if introspector != nil {
+	switch {
+	case introspector != nil:
 		authMiddleware = IntrospectionAuthMiddleware(introspector, logger, audience)
-	} else {
+	case keySource != nil:
+		authMiddleware = RS256AuthMiddleware(keySource, audience, issuer, logger)
+	default:
 		authMiddleware = JWTAuthMiddleware(signingKey, audience, issuer, logger)
 	}
 
