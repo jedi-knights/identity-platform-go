@@ -64,22 +64,32 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 		return nil, fmt.Errorf("failed to generate client ID: %w", err)
 	}
 
-	secret, err := generateHex(32)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate client secret: %w", err)
+	// Normalise the wire value: empty / unknown → confidential (fail closed
+	// per ADR-0009). Public clients hold no secret; everything else does.
+	clientType := domain.ClientType(req.ClientType)
+	if clientType != domain.ClientTypePublic {
+		clientType = domain.ClientTypeConfidential
 	}
 
-	// Hash the secret before storing so plain-text credentials are never persisted.
-	hash, err := bcrypt.GenerateFromPassword([]byte(secret), s.bcryptCost)
-	if err != nil {
-		return nil, fmt.Errorf("failed to hash client secret: %w", err)
+	var plainSecret, storedSecret string
+	if clientType == domain.ClientTypeConfidential {
+		plainSecret, err = generateHex(32)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate client secret: %w", err)
+		}
+		hash, hashErr := bcrypt.GenerateFromPassword([]byte(plainSecret), s.bcryptCost)
+		if hashErr != nil {
+			return nil, fmt.Errorf("failed to hash client secret: %w", hashErr)
+		}
+		storedSecret = string(hash)
 	}
 
 	now := time.Now()
 	client := &domain.OAuthClient{
 		ID:           id,
-		Secret:       string(hash),
+		Secret:       storedSecret,
 		Name:         req.Name,
+		Type:         clientType,
 		Scopes:       req.Scopes,
 		RedirectURIs: req.RedirectURIs,
 		GrantTypes:   req.GrantTypes,
@@ -92,11 +102,14 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 		return nil, fmt.Errorf("failed to save client: %w", err)
 	}
 
-	// Return the plain-text secret once — it will not be recoverable from storage.
+	// Return the plain-text secret once — it will not be recoverable from
+	// storage. Public clients receive an empty ClientSecret (omitempty in
+	// the response struct strips it from the JSON).
 	return &domain.CreateClientResponse{
 		ClientID:     client.ID,
-		ClientSecret: secret,
+		ClientSecret: plainSecret,
 		Name:         client.Name,
+		ClientType:   string(client.Type),
 		Scopes:       client.Scopes,
 		RedirectURIs: client.RedirectURIs,
 		GrantTypes:   client.GrantTypes,
@@ -114,11 +127,24 @@ func (s *ClientService) GetClient(ctx context.Context, id string) (*domain.GetCl
 	return &domain.GetClientResponse{
 		ClientID:     client.ID,
 		Name:         client.Name,
+		ClientType:   normalizeClientType(client.Type),
 		Scopes:       client.Scopes,
 		RedirectURIs: client.RedirectURIs,
 		GrantTypes:   client.GrantTypes,
 		Active:       client.Active,
 	}, nil
+}
+
+// normalizeClientType returns the wire value of t, defaulting to
+// "confidential" for empty or unrecognised stored values. This is the
+// fail-closed mirror of the application's IsPublic logic and keeps the
+// API contract honest for clients persisted before ADR-0009 added the
+// column.
+func normalizeClientType(t domain.ClientType) string {
+	if t == domain.ClientTypePublic {
+		return string(domain.ClientTypePublic)
+	}
+	return string(domain.ClientTypeConfidential)
 }
 
 // ValidateClient checks whether the provided client credentials are valid.
@@ -160,6 +186,7 @@ func (s *ClientService) ListClients(ctx context.Context) ([]*domain.GetClientRes
 		result = append(result, &domain.GetClientResponse{
 			ClientID:     c.ID,
 			Name:         c.Name,
+			ClientType:   normalizeClientType(c.Type),
 			Scopes:       c.Scopes,
 			RedirectURIs: c.RedirectURIs,
 			GrantTypes:   c.GrantTypes,

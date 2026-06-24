@@ -99,8 +99,7 @@ The single ingress point for all client traffic. Routes inbound requests to upst
 
 The core OAuth 2.0 authorization server. Issues access tokens, performs token introspection, and handles token revocation.
 
-- Implements `client_credentials` grant type (fully functional)
-- `authorization_code` and `refresh_token` grants are stubbed for extension
+- Implements `client_credentials`, `refresh_token`, and `authorization_code` (with mandatory PKCE-S256 per OAuth 2.1 §4.1.2.1) grant types
 - Uses the **Strategy Pattern** via a `GrantStrategyRegistry` to route grant requests
 - JWT token generation with configurable signing key, issuer, and TTL
 
@@ -339,6 +338,14 @@ Routes are declared in `gateway.yaml` (or `/etc/gateway/gateway.yaml`). See [api
 | `AUTH_LOG_LEVEL`                          | `info`               | Log level                                                                                                    |
 
 The JWKS document is available at `GET /.well-known/jwks.json` whenever `AUTH_JWT_SIGNING_ALG=RS256`. Under HS256 the route is not registered.
+
+ADR-0009 adds the authorization_code grant. Its only new env var is:
+
+| Variable                                  | Default | Description                                                                    |
+|-------------------------------------------|---------|--------------------------------------------------------------------------------|
+| `AUTH_AUTHORIZATION_CODE_TTL_SECONDS`     | `60`    | Authorization code lifetime. Tighter values shrink the exfiltration window.   |
+
+Authorization codes are persisted in Redis (atomic GET+DEL via Lua) when `AUTH_REDIS_URL` is set, otherwise the in-memory adapter is used. PKCE-S256 is mandatory for every client; `plain` is rejected.
 
 ### identity-service
 
