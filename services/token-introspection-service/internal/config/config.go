@@ -36,7 +36,18 @@ type LogConfig struct {
 }
 
 type JWTConfig struct {
-	SigningKey string `mapstructure:"signing_key"`
+	// SigningKey is the HS256 HMAC secret used only when JWKSURL is unset.
+	SigningKey string `mapstructure:"signing_key"` // INTROSPECT_JWT_SIGNING_KEY
+
+	// JWKSURL is the auth-server JWKS document URL. When set, this service
+	// validates tokens as RS256 against keys fetched from JWKS, and SigningKey
+	// is ignored. When unset, the legacy HS256 path is used.
+	JWKSURL string `mapstructure:"jwks_url"` // INTROSPECT_JWT_JWKS_URL
+
+	// JWKSCacheTTL is how long a successful JWKS fetch is cached. Default 1h.
+	// Ignored when JWKSURL is unset.
+	JWKSCacheTTL string `mapstructure:"jwks_cache_ttl"` // INTROSPECT_JWT_JWKS_CACHE_TTL (Go duration, e.g. "1h")
+
 	// Issuer is the expected iss claim value for tokens validated by this service.
 	// When set, tokens whose iss claim does not match are treated as inactive (RFC 8725 §3.8).
 	// Maps to INTROSPECT_JWT_ISSUER. Empty disables issuer validation.
@@ -59,6 +70,8 @@ func Load() (*Config, error) {
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.environment", "development")
 	v.SetDefault("jwt.signing_key", "")
+	v.SetDefault("jwt.jwks_url", "")
+	v.SetDefault("jwt.jwks_cache_ttl", "1h")
 	v.SetDefault("jwt.issuer", "")
 	v.SetDefault("redis.url", "")
 	v.SetDefault("introspection.secret", "")
@@ -84,7 +97,7 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unmarshalling config: %w", err)
 	}
 
-	if err := validateSigningKey(cfg.JWT.SigningKey); err != nil {
+	if err := validateJWT(cfg.JWT); err != nil {
 		return nil, err
 	}
 	if cfg.Introspection.Secret == "" {
@@ -93,9 +106,23 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
+// validateJWT picks the validation rule appropriate to the configured path.
+// JWKS mode: SigningKey is unused; URL well-formedness is enough.
+// HS256 mode: existing strict shared-secret rule.
+func validateJWT(cfg JWTConfig) error {
+	if cfg.JWKSURL != "" {
+		// Cheap structural check on the URL — defer real validation to first fetch.
+		if !strings.HasPrefix(cfg.JWKSURL, "http://") && !strings.HasPrefix(cfg.JWKSURL, "https://") {
+			return fmt.Errorf("validating jwks url: INTROSPECT_JWT_JWKS_URL must start with http:// or https://")
+		}
+		return nil
+	}
+	return validateSigningKey(cfg.SigningKey)
+}
+
 func validateSigningKey(key string) error {
 	if key == "" {
-		return fmt.Errorf("validating signing key: INTROSPECT_JWT_SIGNING_KEY is not set")
+		return fmt.Errorf("validating signing key: neither INTROSPECT_JWT_JWKS_URL nor INTROSPECT_JWT_SIGNING_KEY is set; one is required")
 	}
 	insecureDefaults := []string{"change-me-in-production", "default-signing-key"}
 	for _, d := range insecureDefaults {

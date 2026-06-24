@@ -8,17 +8,30 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	platform "github.com/jedi-knights/go-platform/container"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/adapters/inbound/http"
+	jwksadapter "github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/adapters/outbound/jwks"
 	jwtadapter "github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/adapters/outbound/jwt"
 	redisadapter "github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/adapters/outbound/redis"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/domain"
 )
+
+// parseJWKSCacheTTL falls back to 1h on any parse failure — operators should
+// set a Go-duration string like "1h" or "30m"; anything else degrades quietly
+// rather than refusing to start.
+func parseJWKSCacheTTL(s string) time.Duration {
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return time.Hour
+	}
+	return d
+}
 
 // redisAddr extracts the host:port from a Redis URL so it can be logged
 // safely — the raw URL may embed a password (redis://:pass@host/db).
@@ -72,6 +85,14 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 
 	platform.Register(c, func(ctx context.Context, c *platform.Container) (domain.TokenValidator, error) {
 		cfg := platform.MustResolve[*config.Config](ctx, c)
+		log := platform.MustResolve[logging.Logger](ctx, c)
+		if cfg.JWT.JWKSURL != "" {
+			ttl := parseJWKSCacheTTL(cfg.JWT.JWKSCacheTTL)
+			log.Info("using JWKS-backed RS256 validation", "url", cfg.JWT.JWKSURL, "cache_ttl", ttl)
+			fetcher := jwksadapter.NewFetcher(cfg.JWT.JWKSURL, jwksadapter.WithCacheTTL(ttl))
+			return jwtadapter.NewRS256Validator(fetcher.KeyByID, cfg.JWT.Issuer), nil
+		}
+		log.Info("using HS256 signing-key validation (legacy path; set INTROSPECT_JWT_JWKS_URL for RS256)")
 		return jwtadapter.NewValidator([]byte(cfg.JWT.SigningKey), cfg.JWT.Issuer), nil
 	})
 
