@@ -2,13 +2,6 @@ module github.com/ocrosby/identity-platform-go/services/token-introspection-serv
 
 go 1.26
 
-// TODO(ADR-0008): remove this replace before opening the PR.
-// Same as auth-server — point at the local feat/jwtutil-rs256 branch
-// (jedi-knights/go-platform PR #9) while iterating on JWKS-based
-// validation. Remove after PR #9 merges and a new go-platform tag is
-// released; bump the require above to that tag.
-replace github.com/jedi-knights/go-platform => ../../../../jedi-knights/go-platform
-
 require (
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -33,7 +26,7 @@ require (
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jedi-knights/go-logging v0.1.0
-	github.com/jedi-knights/go-platform v0.1.0
+	github.com/jedi-knights/go-platform v0.1.1-0.20260624122350-46188a93c2a4
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect

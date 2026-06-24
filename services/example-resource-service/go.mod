@@ -2,13 +2,6 @@ module github.com/ocrosby/identity-platform-go/services/example-resource-service
 
 go 1.26
 
-// TODO(ADR-0008): remove this replace before opening the PR.
-// Same as auth-server and token-introspection-service — points at the
-// local feat/jwtutil-rs256 branch (jedi-knights/go-platform PR #9) while
-// we iterate on JWKS-based local validation. Remove after PR #9 merges
-// and a new go-platform tag is released; bump the require above to that tag.
-replace github.com/jedi-knights/go-platform => ../../../../jedi-knights/go-platform
-
 require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.9.1
@@ -26,7 +19,7 @@ require (
 	github.com/go-openapi/spec v0.20.15 // indirect
 	github.com/go-openapi/swag v0.22.10 // indirect
 	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -35,7 +28,7 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jedi-knights/go-logging v0.1.0
-	github.com/jedi-knights/go-platform v0.1.0
+	github.com/jedi-knights/go-platform v0.1.1-0.20260624122350-46188a93c2a4
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
