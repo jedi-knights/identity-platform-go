@@ -15,6 +15,8 @@ import (
 func NewRouter(h *Handler, logger logging.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", h.Health)
+	mux.HandleFunc("GET /sign-in", h.SignInGet)
+	mux.HandleFunc("POST /sign-in", h.SignInPost)
 
 	return httputil.RecoveryMiddleware(logger)(
 		httputil.LoggingMiddleware(logger)(
