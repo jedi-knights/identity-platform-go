@@ -176,9 +176,9 @@ func TestRS256TokenValidator_Validate_RejectsHS256Token(t *testing.T) {
 	ks := newTestKeySet(t, "kid-rs256-only")
 	validator := application.NewRS256TokenValidator(ks, newMockTokenRepo(), "")
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":     "user-1",
-		"exp":     time.Now().Add(time.Hour).Unix(),
-		"iss":     "test-issuer",
+		"sub":       "user-1",
+		"exp":       time.Now().Add(time.Hour).Unix(),
+		"iss":       "test-issuer",
 		"client_id": "client-a",
 	})
 	token.Header["typ"] = "at+jwt"

@@ -93,33 +93,11 @@ func (f *Fetcher) KeyByID(ctx context.Context, kid string) (*rsa.PublicKey, erro
 		return nil, fmt.Errorf("jwks: context: %w", err)
 	}
 
-	f.mu.Lock()
-	cached, ok := f.keys[kid]
-	stale := time.Since(f.lastFetch) > f.cacheTTL
-	canForceRefresh := f.rateLimit == 0 || time.Since(f.lastForcedRefr) >= f.rateLimit
-	f.mu.Unlock()
-
-	if ok && !stale {
-		return cached, nil
+	if pub, hit := f.cachedKey(kid); hit {
+		return pub, nil
 	}
-
-	// Either no entry, or entry is past TTL → fetch.
-	switch {
-	case !ok && !canForceRefresh:
-		// Cache miss but rate-limited. Surface as unknown kid; the validator
-		// maps that to inactive. Future requests after the rate window will
-		// succeed.
-		return nil, fmt.Errorf("%w: %s (refresh rate-limited)", ErrUnknownKID, kid)
-	case !ok:
-		// Cache miss — perform an out-of-cycle (forced) refresh.
-		if err := f.refresh(ctx, true); err != nil {
-			return nil, err
-		}
-	default:
-		// Stale cache (or empty after first call) — refresh on schedule.
-		if err := f.refresh(ctx, false); err != nil {
-			return nil, err
-		}
+	if err := f.refreshForLookup(ctx, kid); err != nil {
+		return nil, err
 	}
 
 	f.mu.Lock()
@@ -128,6 +106,39 @@ func (f *Fetcher) KeyByID(ctx context.Context, kid string) (*rsa.PublicKey, erro
 		return pub, nil
 	}
 	return nil, fmt.Errorf("%w: %s", ErrUnknownKID, kid)
+}
+
+// cachedKey returns the cached public key for kid and a hit flag. A hit
+// requires the key to be present AND the cache to be fresh; otherwise the
+// caller falls through to refresh.
+func (f *Fetcher) cachedKey(kid string) (*rsa.PublicKey, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cached, ok := f.keys[kid]
+	stale := time.Since(f.lastFetch) > f.cacheTTL
+	if ok && !stale {
+		return cached, true
+	}
+	return nil, false
+}
+
+// refreshForLookup performs the right refresh strategy for a lookup that
+// missed the cache. A pure cache miss (kid not present) triggers an
+// out-of-cycle refresh, rate-limited per WithRefreshRateLimit. A stale
+// cache (any kid present, TTL exceeded) refreshes on schedule.
+func (f *Fetcher) refreshForLookup(ctx context.Context, kid string) error {
+	f.mu.Lock()
+	_, present := f.keys[kid]
+	canForceRefresh := f.rateLimit == 0 || time.Since(f.lastForcedRefr) >= f.rateLimit
+	f.mu.Unlock()
+
+	if !present && !canForceRefresh {
+		// Cache miss but rate-limited. Surface as unknown kid; the validator
+		// maps that to inactive. Future requests after the rate window will
+		// succeed.
+		return fmt.Errorf("%w: %s (refresh rate-limited)", ErrUnknownKID, kid)
+	}
+	return f.refresh(ctx, !present)
 }
 
 // refresh fetches the JWKS document and replaces the in-memory cache.
@@ -141,37 +152,53 @@ func (f *Fetcher) refresh(ctx context.Context, forced bool) error {
 	if forced {
 		f.lastForcedRefr = time.Now()
 	}
+	doc, err := f.fetchJWKS(ctx)
+	if err != nil {
+		return err
+	}
+	f.keys = decodeKeySet(doc.Keys)
+	f.lastFetch = time.Now()
+	return nil
+}
+
+// fetchJWKS performs the GET and decodes the JSON document. Extracted so
+// refresh stays focused on the cache-update side.
+func (f *Fetcher) fetchJWKS(ctx context.Context) (jwksDoc, error) {
+	var doc jwksDoc
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.url, nil)
 	if err != nil {
-		return fmt.Errorf("jwks: build request: %w", err)
+		return doc, fmt.Errorf("jwks: build request: %w", err)
 	}
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("jwks: fetch: %w", err)
+		return doc, fmt.Errorf("jwks: fetch: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("jwks: upstream status %d", resp.StatusCode)
-	}
-	var doc struct {
-		Keys []jwk `json:"keys"`
+		return doc, fmt.Errorf("jwks: upstream status %d", resp.StatusCode)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
-		return fmt.Errorf("jwks: decode: %w", err)
+		return doc, fmt.Errorf("jwks: decode: %w", err)
 	}
+	return doc, nil
+}
 
-	next := make(map[string]*rsa.PublicKey, len(doc.Keys))
-	for _, k := range doc.Keys {
+type jwksDoc struct {
+	Keys []jwk `json:"keys"`
+}
+
+// decodeKeySet converts the wire-format JWK list into a kid → public-key map.
+// One bad key does not invalidate the set; bad keys are skipped silently.
+func decodeKeySet(keys []jwk) map[string]*rsa.PublicKey {
+	next := make(map[string]*rsa.PublicKey, len(keys))
+	for _, k := range keys {
 		pub, err := decodeRSAJWK(k)
 		if err != nil {
-			// One bad key does not invalidate the set; skip it.
 			continue
 		}
 		next[k.Kid] = pub
 	}
-	f.keys = next
-	f.lastFetch = time.Now()
-	return nil
+	return next
 }
 
 type jwk struct {

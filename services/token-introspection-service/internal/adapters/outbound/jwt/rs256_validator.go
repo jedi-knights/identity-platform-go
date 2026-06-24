@@ -35,7 +35,7 @@ func NewRS256Validator(keySource jwtutil.KeySource, issuer string) *RS256Validat
 
 // Validate parses the raw JWT as RS256. Any validation failure produces
 // {Active: false, ...} per RFC 7662 §2.2 — there is no infrastructure-vs-token
-// distinction here; all jwtutil errors are treated as "token not valid."
+// distinction here; all jwtutil errors are treated as token-not-valid.
 func (v *RS256Validator) Validate(ctx context.Context, raw string) (*domain.IntrospectionResult, error) {
 	claims, err := jwtutil.ParseRS256(ctx, raw, v.keySource)
 	if err != nil {
