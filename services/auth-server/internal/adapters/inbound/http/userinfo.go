@@ -145,4 +145,3 @@ func projectUserInfo(scopes []string, claims *ports.UserClaims) map[string]any {
 	}
 	return out
 }
-
