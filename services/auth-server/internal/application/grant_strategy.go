@@ -617,13 +617,12 @@ func (s *AuthorizationCodeStrategy) maybeIssueIDToken(ctx context.Context, clien
 // Failure to fetch claims is non-fatal — the token issues without those
 // fields, matching the same fallback used for permissions.
 func (s *AuthorizationCodeStrategy) populateProfileClaims(ctx context.Context, code *domain.AuthorizationCode, issuance *IDTokenIssuance) {
-	wantsProfile := domain.HasScope(code.Scopes, domain.ScopeProfile)
-	wantsEmail := domain.HasScope(code.Scopes, domain.ScopeEmail)
-	if s.claimsFetcher == nil || (!wantsProfile && !wantsEmail) {
+	wantsEmail, wantsProfile, shouldFetch := s.shouldFetchUserClaims(code.Scopes)
+	if !shouldFetch {
 		return
 	}
-	claims, err := s.claimsFetcher.GetUserClaims(ctx, code.Subject)
-	if err != nil || claims == nil {
+	claims := s.fetchProfileClaims(ctx, code.Subject)
+	if claims == nil {
 		return
 	}
 	if wantsEmail {
@@ -632,6 +631,31 @@ func (s *AuthorizationCodeStrategy) populateProfileClaims(ctx context.Context, c
 	if wantsProfile {
 		applyProfileClaims(issuance, claims)
 	}
+}
+
+// shouldFetchUserClaims tells populateProfileClaims whether to bother
+// calling the fetcher at all. Returns (wantsEmail, wantsProfile, ok) where
+// ok is false when the fetcher is unwired or neither claim subset was
+// requested. Folded out so populateProfileClaims keeps a single
+// straight-line branch budget.
+func (s *AuthorizationCodeStrategy) shouldFetchUserClaims(scopes []string) (wantsEmail, wantsProfile, ok bool) {
+	if s.claimsFetcher == nil {
+		return false, false, false
+	}
+	wantsEmail = domain.HasScope(scopes, domain.ScopeEmail)
+	wantsProfile = domain.HasScope(scopes, domain.ScopeProfile)
+	return wantsEmail, wantsProfile, wantsEmail || wantsProfile
+}
+
+// fetchProfileClaims wraps the fetcher call and translates the (claims,
+// err) tuple into a single nilable return so the caller's branch count
+// drops by one. Failure remains non-fatal — the token still issues.
+func (s *AuthorizationCodeStrategy) fetchProfileClaims(ctx context.Context, subject string) *ports.UserClaims {
+	claims, err := s.claimsFetcher.GetUserClaims(ctx, subject)
+	if err != nil {
+		return nil
+	}
+	return claims
 }
 
 // applyEmailClaims copies the email/email_verified fields onto issuance.
