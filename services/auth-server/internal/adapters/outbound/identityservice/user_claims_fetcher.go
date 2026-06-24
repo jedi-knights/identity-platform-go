@@ -50,6 +50,23 @@ func (f *UserClaimsFetcher) GetUserClaims(ctx context.Context, subjectID string)
 	if subjectID == "" {
 		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "subjectID is required")
 	}
+	resp, err := f.doGetUserClaims(ctx, subjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil && retErr == nil {
+			retErr = apperrors.Wrap(apperrors.ErrCodeInternal, "closing user-claims response", cerr)
+		}
+	}()
+	return decodeUserClaimsResponse(resp)
+}
+
+// doGetUserClaims issues the GET request and surfaces transport / status
+// errors. Returns the response only when StatusCode == 200; callers must
+// close the body. Extracted from GetUserClaims to keep its cyclomatic
+// complexity within the project cap.
+func (f *UserClaimsFetcher) doGetUserClaims(ctx context.Context, subjectID string) (*http.Response, error) {
 	url := fmt.Sprintf("%s/users/%s/claims", f.baseURL, subjectID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -59,17 +76,22 @@ func (f *UserClaimsFetcher) GetUserClaims(ctx context.Context, subjectID string)
 	if err != nil {
 		return nil, apperrors.Wrap(apperrors.ErrCodeInternal, "fetching user claims", err)
 	}
-	defer func() {
-		if cerr := resp.Body.Close(); cerr != nil && retErr == nil {
-			retErr = apperrors.Wrap(apperrors.ErrCodeInternal, "closing user-claims response", cerr)
-		}
-	}()
 	if resp.StatusCode == http.StatusNotFound {
+		_ = resp.Body.Close()
 		return nil, apperrors.New(apperrors.ErrCodeNotFound, "user not found")
 	}
 	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
 		return nil, errors.New("user-claims: unexpected status " + resp.Status)
 	}
+	return resp, nil
+}
+
+// decodeUserClaimsResponse decodes the JSON body into the port type.
+// Extracted so the success path of GetUserClaims has its own focused
+// function — the helper takes a fully-checked 200 response and returns
+// the projected UserClaims (or a decode error).
+func decodeUserClaimsResponse(resp *http.Response) (*ports.UserClaims, error) {
 	var body claimsWireResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, apperrors.Wrap(apperrors.ErrCodeInternal, "decoding user-claims response", err)

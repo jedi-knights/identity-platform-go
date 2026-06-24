@@ -627,15 +627,30 @@ func (s *AuthorizationCodeStrategy) populateProfileClaims(ctx context.Context, c
 		return
 	}
 	if wantsEmail {
-		issuance.Email = claims.Email
-		ev := claims.EmailVerified
-		issuance.EmailVerified = &ev
+		applyEmailClaims(issuance, claims)
 	}
 	if wantsProfile {
-		issuance.Name = claims.Name
-		if claims.UpdatedAt > 0 {
-			issuance.UpdatedAt = time.Unix(claims.UpdatedAt, 0)
-		}
+		applyProfileClaims(issuance, claims)
+	}
+}
+
+// applyEmailClaims copies the email/email_verified fields onto issuance.
+// EmailVerified is dereferenced to a local then re-addressed so the on-the-
+// wire claim distinguishes "we don't know" (nil) from "explicitly false"
+// (&false); the OIDC IDClaims type is *bool for that reason.
+func applyEmailClaims(issuance *IDTokenIssuance, claims *ports.UserClaims) {
+	issuance.Email = claims.Email
+	ev := claims.EmailVerified
+	issuance.EmailVerified = &ev
+}
+
+// applyProfileClaims copies name and updated_at onto issuance, converting
+// the Unix-seconds wire value to time.Time so the generator can format it
+// uniformly with other date claims.
+func applyProfileClaims(issuance *IDTokenIssuance, claims *ports.UserClaims) {
+	issuance.Name = claims.Name
+	if claims.UpdatedAt > 0 {
+		issuance.UpdatedAt = time.Unix(claims.UpdatedAt, 0)
 	}
 }
 

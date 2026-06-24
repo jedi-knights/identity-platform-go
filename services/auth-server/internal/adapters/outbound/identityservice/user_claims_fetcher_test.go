@@ -11,11 +11,27 @@ import (
 	"github.com/jedi-knights/go-platform/apperrors"
 
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/identityservice"
+	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/ports"
 )
 
 func TestUserClaimsFetcher_Success(t *testing.T) {
 	updated := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(canonicalClaimsHandler(t, updated)))
+	t.Cleanup(srv.Close)
+	f := identityservice.NewUserClaimsFetcher(srv.URL, srv.Client())
+
+	got, err := f.GetUserClaims(context.Background(), "u-1")
+	if err != nil {
+		t.Fatalf("GetUserClaims: %v", err)
+	}
+	assertClaimsRoundTrip(t, got, updated)
+}
+
+// canonicalClaimsHandler returns a stable identity-service-shaped response.
+// Extracted so the round-trip test's body stays under the cyclomatic-
+// complexity cap and the canonical wire shape lives in one place.
+func canonicalClaimsHandler(t *testing.T, updated time.Time) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/users/u-1/claims" {
 			t.Errorf("path = %q, want /users/u-1/claims", r.URL.Path)
 		}
@@ -26,16 +42,25 @@ func TestUserClaimsFetcher_Success(t *testing.T) {
 			"name":           "Alice",
 			"updated_at":     updated.Format(time.RFC3339),
 		})
-	}))
-	t.Cleanup(srv.Close)
-	f := identityservice.NewUserClaimsFetcher(srv.URL, srv.Client())
-
-	got, err := f.GetUserClaims(context.Background(), "u-1")
-	if err != nil {
-		t.Fatalf("GetUserClaims: %v", err)
 	}
-	if got.Subject != "u-1" || got.Email != "alice@example.com" || !got.EmailVerified || got.Name != "Alice" {
-		t.Errorf("got = %+v", got)
+}
+
+// assertClaimsRoundTrip checks every field on the canonical response.
+// Splits one test's logical clauses across multiple if-statements without
+// inflating the outer test's complexity.
+func assertClaimsRoundTrip(t *testing.T, got *ports.UserClaims, updated time.Time) {
+	t.Helper()
+	if got.Subject != "u-1" {
+		t.Errorf("Subject = %q, want %q", got.Subject, "u-1")
+	}
+	if got.Email != "alice@example.com" {
+		t.Errorf("Email = %q, want %q", got.Email, "alice@example.com")
+	}
+	if !got.EmailVerified {
+		t.Error("EmailVerified = false, want true")
+	}
+	if got.Name != "Alice" {
+		t.Errorf("Name = %q, want %q", got.Name, "Alice")
 	}
 	if got.UpdatedAt != updated.Unix() {
 		t.Errorf("UpdatedAt = %d, want %d", got.UpdatedAt, updated.Unix())
