@@ -2,6 +2,13 @@ module github.com/ocrosby/identity-platform-go/services/auth-server
 
 go 1.26
 
+// TODO(ADR-0008): remove this replace before opening the auth-server PR.
+// Points at the local feat/jwtutil-rs256 branch in jedi-knights/go-platform
+// (PR #9) while we iterate on the auth-server changes that consume the new
+// SignRS256 / ParseRS256 / KeySource surface. Remove after that PR merges
+// and a new go-platform tag is released; bump the require above to that tag.
+replace github.com/jedi-knights/go-platform => ../../../../jedi-knights/go-platform
+
 require (
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/redis/go-redis/v9 v9.18.0
@@ -21,7 +28,7 @@ require (
 	github.com/go-openapi/spec v0.20.15 // indirect
 	github.com/go-openapi/swag v0.22.10 // indirect
 	github.com/go-openapi/swag/jsonname v0.25.5 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
