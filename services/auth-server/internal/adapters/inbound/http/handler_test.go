@@ -11,7 +11,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jedi-knights/go-platform/apperrors"
 
@@ -69,7 +71,7 @@ var _ ports.ClientAuthenticator = (*fakeClientAuth)(nil)
 func newTestHandler(t *testing.T, issuer *fakeIssuer, introspector *fakeIntrospector, revoker *fakeRevoker) *authhttp.Handler {
 	t.Helper()
 	logger := logging.New(logging.Config{Output: io.Discard})
-	return authhttp.NewHandler(issuer, introspector, revoker, &fakeClientAuth{}, logger, "")
+	return authhttp.NewHandler(issuer, introspector, revoker, &fakeClientAuth{}, logger, "", nil)
 }
 
 // postForm posts the given form values to the handler and returns the recorded response.
@@ -555,8 +557,531 @@ func TestRevoke_InfrastructureError_Returns500WithRFC6749Body(t *testing.T) {
 
 // --- Authorize endpoint ---
 
-func TestAuthorize_ReturnsNotImplemented(t *testing.T) {
+// fakeClientLookup satisfies ports.ClientLookup for /oauth/authorize tests.
+type fakeClientLookup struct {
+	clients map[string]*domain.Client
+}
+
+func (f *fakeClientLookup) Lookup(_ context.Context, clientID string) (*domain.Client, error) {
+	c, ok := f.clients[clientID]
+	if !ok {
+		return nil, apperrors.New(apperrors.ErrCodeNotFound, "client not found")
+	}
+	return c, nil
+}
+
+// fakeChallengeRepo records the last Save call so the Authorize tests can
+// inspect what got stored. Only Save is exercised here; the other methods
+// satisfy the interface so the type compiles.
+type fakeChallengeRepo struct {
+	mu        sync.Mutex
+	lastSaved *domain.LoginChallenge
+	saveErr   error
+}
+
+func (f *fakeChallengeRepo) Save(_ context.Context, c *domain.LoginChallenge) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+	f.lastSaved = c
+	return nil
+}
+
+func (f *fakeChallengeRepo) Get(_ context.Context, _ string) (*domain.LoginChallenge, error) {
+	return nil, domain.ErrLoginChallengeNotFound
+}
+
+func (f *fakeChallengeRepo) Update(_ context.Context, _ *domain.LoginChallenge) error {
+	return domain.ErrLoginChallengeNotFound
+}
+
+func (f *fakeChallengeRepo) Consume(_ context.Context, _ string) (*domain.LoginChallenge, error) {
+	return nil, domain.ErrLoginChallengeNotFound
+}
+
+var _ domain.LoginChallengeRepository = (*fakeChallengeRepo)(nil)
+
+// newAuthorizeTestHandler wires a Handler with a working AuthorizeConfig.
+// The default lookup has a public client registered with one redirect URI
+// and the openid+profile scopes; tests override the client map for negative
+// cases.
+func newAuthorizeTestHandler(t *testing.T, lookup *fakeClientLookup, repo *fakeChallengeRepo) *authhttp.Handler {
+	t.Helper()
+	logger := logging.New(logging.Config{Output: io.Discard})
+	return authhttp.NewHandler(
+		&fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{}, &fakeClientAuth{},
+		logger, "",
+		&authhttp.AuthorizeConfig{
+			ClientLookup:  lookup,
+			ChallengeRepo: repo,
+			LoginUIURL:    "https://login.example.com",
+			ChallengeTTL:  5 * time.Minute,
+		},
+	)
+}
+
+func newAuthorizeClient() *fakeClientLookup {
+	return &fakeClientLookup{
+		clients: map[string]*domain.Client{
+			"client-a": {
+				ID:           "client-a",
+				Type:         domain.ClientTypePublic,
+				RedirectURIs: []string{"https://rp.example.com/cb"},
+				Scopes:       []string{"openid", "profile"},
+				GrantTypes:   []domain.GrantType{domain.GrantTypeAuthorizationCode},
+			},
+		},
+	}
+}
+
+func validAuthorizeQuery() url.Values {
+	return url.Values{
+		"response_type":         {"code"},
+		"client_id":             {"client-a"},
+		"redirect_uri":          {"https://rp.example.com/cb"},
+		"scope":                 {"openid profile"},
+		"state":                 {"state-xyz"},
+		"code_challenge":        {"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"},
+		"code_challenge_method": {"S256"},
+		"nonce":                 {"nonce-abc"},
+	}
+}
+
+func TestAuthorize_HappyPath_RedirectsToLoginUIWithChallenge(t *testing.T) {
 	// Arrange
+	repo := &fakeChallengeRepo{}
+	h := newAuthorizeTestHandler(t, newAuthorizeClient(), repo)
+	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+validAuthorizeQuery().Encode(), nil)
+	w := httptest.NewRecorder()
+
+	// Act
+	h.Authorize(w, r)
+
+	// Assert
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusFound)
+	}
+	loc := w.Header().Get("Location")
+	const want = "https://login.example.com/sign-in?login_challenge="
+	if !strings.HasPrefix(loc, want) {
+		t.Fatalf("Location = %q, want prefix %q", loc, want)
+	}
+	if repo.lastSaved == nil {
+		t.Fatal("expected Save to be invoked")
+	}
+	saved := repo.lastSaved
+	if saved.ClientID != "client-a" {
+		t.Errorf("saved.ClientID = %q, want client-a", saved.ClientID)
+	}
+	if saved.RedirectURI != "https://rp.example.com/cb" {
+		t.Errorf("saved.RedirectURI = %q, want %q", saved.RedirectURI, "https://rp.example.com/cb")
+	}
+	if saved.State != "state-xyz" {
+		t.Errorf("saved.State = %q, want state-xyz", saved.State)
+	}
+	if saved.Nonce != "nonce-abc" {
+		t.Errorf("saved.Nonce = %q, want nonce-abc", saved.Nonce)
+	}
+	if saved.CodeChallengeMethod != "S256" {
+		t.Errorf("saved.CodeChallengeMethod = %q, want S256", saved.CodeChallengeMethod)
+	}
+	wantScopes := []string{"openid", "profile"}
+	if len(saved.Scopes) != len(wantScopes) {
+		t.Fatalf("saved.Scopes = %v, want %v", saved.Scopes, wantScopes)
+	}
+	for i, s := range wantScopes {
+		if saved.Scopes[i] != s {
+			t.Errorf("saved.Scopes[%d] = %q, want %q", i, saved.Scopes[i], s)
+		}
+	}
+	if saved.ExpiresAt.Before(time.Now().Add(4 * time.Minute)) {
+		t.Errorf("ExpiresAt = %v, want >= now+4m (TTL 5m)", saved.ExpiresAt)
+	}
+}
+
+func TestAuthorize_UnknownClient_RendersErrorAndDoesNotRedirect(t *testing.T) {
+	// Arrange — RFC 6749 §3.1.2.4 / §4.1.2.1: when the client_id is
+	// unknown, the auth-server must NOT redirect back to the request's
+	// redirect_uri (it could be attacker-controlled). Render the error.
+	repo := &fakeChallengeRepo{}
+	h := newAuthorizeTestHandler(t, &fakeClientLookup{clients: map[string]*domain.Client{}}, repo)
+	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+validAuthorizeQuery().Encode(), nil)
+	w := httptest.NewRecorder()
+
+	// Act
+	h.Authorize(w, r)
+
+	// Assert
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "" {
+		t.Errorf("Location = %q, want empty (must not redirect to attacker URI)", loc)
+	}
+	if repo.lastSaved != nil {
+		t.Error("Save was invoked despite unknown client_id")
+	}
+}
+
+func TestAuthorize_MismatchedRedirectURI_RendersErrorAndDoesNotRedirect(t *testing.T) {
+	// Arrange — exact-match policy (ADR-0009 §"Redirect URI matching").
+	// A mismatch means the request itself is suspect; render the error
+	// rather than redirecting to a URI we have not validated.
+	repo := &fakeChallengeRepo{}
+	q := validAuthorizeQuery()
+	q.Set("redirect_uri", "https://attacker.example.com/cb")
+	h := newAuthorizeTestHandler(t, newAuthorizeClient(), repo)
+	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil)
+	w := httptest.NewRecorder()
+
+	// Act
+	h.Authorize(w, r)
+
+	// Assert
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "" {
+		t.Errorf("Location = %q, want empty", loc)
+	}
+	if repo.lastSaved != nil {
+		t.Error("Save was invoked despite redirect_uri mismatch")
+	}
+}
+
+func TestAuthorize_UnsupportedResponseType_RedirectsToClientWithError(t *testing.T) {
+	// Arrange — RFC 6749 §4.1.2.1: once client_id + redirect_uri have
+	// been validated, parameter errors are reported by redirecting to
+	// the validated redirect_uri with ?error=&state=.
+	repo := &fakeChallengeRepo{}
+	q := validAuthorizeQuery()
+	q.Set("response_type", "token")
+	h := newAuthorizeTestHandler(t, newAuthorizeClient(), repo)
+	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil)
+	w := httptest.NewRecorder()
+
+	// Act
+	h.Authorize(w, r)
+
+	// Assert
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", w.Code)
+	}
+	loc := w.Header().Get("Location")
+	if !strings.HasPrefix(loc, "https://rp.example.com/cb?") {
+		t.Fatalf("Location = %q, want redirect back to client", loc)
+	}
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("parse Location: %v", err)
+	}
+	if got := u.Query().Get("error"); got != "unsupported_response_type" {
+		t.Errorf("error = %q, want unsupported_response_type", got)
+	}
+	if got := u.Query().Get("state"); got != "state-xyz" {
+		t.Errorf("state = %q, want state-xyz", got)
+	}
+	if repo.lastSaved != nil {
+		t.Error("Save was invoked despite invalid response_type")
+	}
+}
+
+func TestAuthorize_MissingPKCE_RedirectsToClientWithInvalidRequest(t *testing.T) {
+	// Arrange — OAuth 2.1 + ADR-0009 mandate PKCE-S256 for every client.
+	// A missing or non-S256 challenge must be rejected before a challenge
+	// record is saved.
+	repo := &fakeChallengeRepo{}
+	q := validAuthorizeQuery()
+	q.Del("code_challenge")
+	h := newAuthorizeTestHandler(t, newAuthorizeClient(), repo)
+	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil)
+	w := httptest.NewRecorder()
+
+	// Act
+	h.Authorize(w, r)
+
+	// Assert
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302 redirect-with-error", w.Code)
+	}
+	u, _ := url.Parse(w.Header().Get("Location"))
+	if got := u.Query().Get("error"); got != "invalid_request" {
+		t.Errorf("error = %q, want invalid_request", got)
+	}
+	if repo.lastSaved != nil {
+		t.Error("Save was invoked despite missing code_challenge")
+	}
+}
+
+func TestAuthorize_ScopeNotPermitted_RedirectsToClientWithInvalidScope(t *testing.T) {
+	// Arrange — client is registered for openid+profile; request asks
+	// for "email" too. Per RFC 6749 §5.2 the response code is
+	// "invalid_scope" (redirected through the validated URI).
+	repo := &fakeChallengeRepo{}
+	q := validAuthorizeQuery()
+	q.Set("scope", "openid profile email")
+	h := newAuthorizeTestHandler(t, newAuthorizeClient(), repo)
+	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil)
+	w := httptest.NewRecorder()
+
+	// Act
+	h.Authorize(w, r)
+
+	// Assert
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", w.Code)
+	}
+	u, _ := url.Parse(w.Header().Get("Location"))
+	if got := u.Query().Get("error"); got != "invalid_scope" {
+		t.Errorf("error = %q, want invalid_scope", got)
+	}
+	if repo.lastSaved != nil {
+		t.Error("Save was invoked despite over-broad scope")
+	}
+}
+
+// --- /internal/issue-code ---
+
+// fakeChallengeReader is a LoginChallengeRepository whose Consume returns a
+// pre-seeded challenge. Used by IssueCode tests to control which challenge
+// is redeemed.
+type fakeChallengeReader struct {
+	mu          sync.Mutex
+	seeded      *domain.LoginChallenge
+	consumeErr  error
+	consumedKey string
+}
+
+func (f *fakeChallengeReader) Save(_ context.Context, _ *domain.LoginChallenge) error { return nil }
+func (f *fakeChallengeReader) Get(_ context.Context, _ string) (*domain.LoginChallenge, error) {
+	return nil, domain.ErrLoginChallengeNotFound
+}
+func (f *fakeChallengeReader) Update(_ context.Context, _ *domain.LoginChallenge) error {
+	return domain.ErrLoginChallengeNotFound
+}
+func (f *fakeChallengeReader) Consume(_ context.Context, id string) (*domain.LoginChallenge, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.consumedKey = id
+	if f.consumeErr != nil {
+		return nil, f.consumeErr
+	}
+	if f.seeded == nil {
+		return nil, domain.ErrLoginChallengeNotFound
+	}
+	return f.seeded, nil
+}
+
+var _ domain.LoginChallengeRepository = (*fakeChallengeReader)(nil)
+
+// fakeAuthCodeIssuer satisfies ports.AuthorizationCodeIssuer for IssueCode
+// tests. Records the IssueCodeRequest so assertions can inspect what the
+// handler passed through.
+type fakeAuthCodeIssuer struct {
+	mu         sync.Mutex
+	lastReq    ports.IssueCodeRequest
+	codeToMint string
+	err        error
+}
+
+func (f *fakeAuthCodeIssuer) Issue(_ context.Context, req ports.IssueCodeRequest) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastReq = req
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.codeToMint, nil
+}
+
+var _ ports.AuthorizationCodeIssuer = (*fakeAuthCodeIssuer)(nil)
+
+func storedChallenge() *domain.LoginChallenge {
+	return &domain.LoginChallenge{
+		ID:                  "ch-1",
+		ClientID:            "client-a",
+		RedirectURI:         "https://rp.example.com/cb",
+		Scopes:              []string{"openid", "profile"},
+		State:               "state-xyz",
+		Nonce:               "nonce-abc",
+		CodeChallenge:       "code-chal-value",
+		CodeChallengeMethod: "S256",
+		CreatedAt:           time.Now(),
+		ExpiresAt:           time.Now().Add(5 * time.Minute),
+	}
+}
+
+func newIssueCodeHandler(t *testing.T, repo *fakeChallengeReader, issuer *fakeAuthCodeIssuer) *authhttp.Handler {
+	t.Helper()
+	logger := logging.New(logging.Config{Output: io.Discard})
+	return authhttp.NewHandler(
+		&fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{}, &fakeClientAuth{},
+		logger, "",
+		&authhttp.AuthorizeConfig{
+			ClientLookup:    newAuthorizeClient(),
+			ChallengeRepo:   repo,
+			LoginUIURL:      "https://login.example.com",
+			ChallengeTTL:    5 * time.Minute,
+			AuthCodeIssuer:  issuer,
+			IssueCodeBearer: "service-token-secret",
+		},
+	)
+}
+
+func postIssueCode(t *testing.T, h *authhttp.Handler, bearer string, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/internal/issue-code", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	if bearer != "" {
+		r.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	w := httptest.NewRecorder()
+	h.IssueCode(w, r)
+	return w
+}
+
+func TestIssueCode_HappyPath_Returns200WithCode(t *testing.T) {
+	// Arrange
+	repo := &fakeChallengeReader{seeded: storedChallenge()}
+	issuer := &fakeAuthCodeIssuer{codeToMint: "minted-code-abc"}
+	h := newIssueCodeHandler(t, repo, issuer)
+	body := `{"login_challenge":"ch-1","session_id":"user-42","consent_granted":["openid","profile"]}`
+
+	// Act
+	w := postIssueCode(t, h, "service-token-secret", body)
+
+	// Assert
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["code"] != "minted-code-abc" {
+		t.Errorf("code = %q, want minted-code-abc", resp["code"])
+	}
+	if resp["redirect_uri"] != "https://rp.example.com/cb" {
+		t.Errorf("redirect_uri = %q, want %q", resp["redirect_uri"], "https://rp.example.com/cb")
+	}
+	if resp["state"] != "state-xyz" {
+		t.Errorf("state = %q, want state-xyz", resp["state"])
+	}
+	if repo.consumedKey != "ch-1" {
+		t.Errorf("Consume key = %q, want ch-1", repo.consumedKey)
+	}
+	if issuer.lastReq.ClientID != "client-a" || issuer.lastReq.Subject != "user-42" {
+		t.Errorf("IssueCodeRequest = %+v", issuer.lastReq)
+	}
+	if issuer.lastReq.Nonce != "nonce-abc" {
+		t.Errorf("Nonce = %q, want nonce-abc (must propagate from challenge)", issuer.lastReq.Nonce)
+	}
+	if issuer.lastReq.CodeChallengeMethod != "S256" {
+		t.Errorf("CodeChallengeMethod = %q, want S256", issuer.lastReq.CodeChallengeMethod)
+	}
+}
+
+func TestIssueCode_MissingBearer_Returns401(t *testing.T) {
+	// Arrange
+	repo := &fakeChallengeReader{seeded: storedChallenge()}
+	h := newIssueCodeHandler(t, repo, &fakeAuthCodeIssuer{})
+
+	// Act
+	w := postIssueCode(t, h, "", `{"login_challenge":"ch-1","session_id":"user-42","consent_granted":["openid"]}`)
+
+	// Assert
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+	if repo.consumedKey != "" {
+		t.Error("Consume was called despite missing bearer")
+	}
+}
+
+func TestIssueCode_WrongBearer_Returns401(t *testing.T) {
+	// Arrange
+	repo := &fakeChallengeReader{seeded: storedChallenge()}
+	h := newIssueCodeHandler(t, repo, &fakeAuthCodeIssuer{})
+
+	// Act
+	w := postIssueCode(t, h, "wrong-secret", `{"login_challenge":"ch-1","session_id":"user-42","consent_granted":["openid"]}`)
+
+	// Assert
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+	if repo.consumedKey != "" {
+		t.Error("Consume was called despite wrong bearer")
+	}
+}
+
+func TestIssueCode_UnknownChallenge_Returns400(t *testing.T) {
+	// Arrange — Consume reports NotFound. /internal/issue-code maps this to
+	// 400 rather than 404 because the caller (login-ui) treats the error
+	// as "redirect failed" rather than "resource missing".
+	repo := &fakeChallengeReader{consumeErr: domain.ErrLoginChallengeNotFound}
+	h := newIssueCodeHandler(t, repo, &fakeAuthCodeIssuer{})
+
+	// Act
+	w := postIssueCode(t, h, "service-token-secret", `{"login_challenge":"missing","session_id":"u","consent_granted":["openid"]}`)
+
+	// Assert
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestIssueCode_ConsentNotSubsetOfScopes_Returns400(t *testing.T) {
+	// Arrange — challenge requested openid+profile; consent_granted has
+	// "email" too, which the user could not legitimately have granted.
+	repo := &fakeChallengeReader{seeded: storedChallenge()}
+	h := newIssueCodeHandler(t, repo, &fakeAuthCodeIssuer{codeToMint: "x"})
+
+	// Act
+	w := postIssueCode(t, h, "service-token-secret", `{"login_challenge":"ch-1","session_id":"u","consent_granted":["openid","profile","email"]}`)
+
+	// Assert
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestIssueCode_MalformedJSON_Returns400(t *testing.T) {
+	// Arrange
+	repo := &fakeChallengeReader{seeded: storedChallenge()}
+	h := newIssueCodeHandler(t, repo, &fakeAuthCodeIssuer{})
+
+	// Act
+	w := postIssueCode(t, h, "service-token-secret", `{not json}`)
+
+	// Assert
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+	if repo.consumedKey != "" {
+		t.Error("Consume was called despite invalid body")
+	}
+}
+
+func TestIssueCode_NilConfig_Returns404(t *testing.T) {
+	// Arrange — when AuthorizeConfig is nil, the endpoint is not advertised.
+	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
+	w := postIssueCode(t, h, "any", `{}`)
+
+	// Assert
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+func TestAuthorize_NilConfig_StillReturnsNotImplemented(t *testing.T) {
+	// Arrange — passing nil AuthorizeConfig preserves the original stub.
+	// Test seams (and the introspect-only handler tests) do not have to
+	// wire the authorize subsystem just to compile.
 	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
 	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize", nil)
 	w := httptest.NewRecorder()
@@ -575,7 +1100,7 @@ func TestAuthorize_ReturnsNotImplemented(t *testing.T) {
 func newTestHandlerWithSecret(t *testing.T, issuer *fakeIssuer, introspector *fakeIntrospector, revoker *fakeRevoker, secret string) *authhttp.Handler {
 	t.Helper()
 	logger := logging.New(logging.Config{Output: io.Discard})
-	return authhttp.NewHandler(issuer, introspector, revoker, &fakeClientAuth{}, logger, secret)
+	return authhttp.NewHandler(issuer, introspector, revoker, &fakeClientAuth{}, logger, secret, nil)
 }
 
 func TestIntrospect_WithSecret_CorrectSecret_Returns200(t *testing.T) {
