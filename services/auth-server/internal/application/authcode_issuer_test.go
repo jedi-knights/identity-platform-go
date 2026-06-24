@@ -93,13 +93,21 @@ func TestAuthorizationCodeIssuer_Issue_CodeIs64HexChars(t *testing.T) {
 	if len(raw) != 64 {
 		t.Errorf("code length = %d, want 64", len(raw))
 	}
-	for _, c := range raw {
-		isHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
-		if !isHex {
-			t.Errorf("code contains non-hex char %q", c)
-			break
+	if bad, ok := firstNonHex(raw); ok {
+		t.Errorf("code contains non-hex char %q", bad)
+	}
+}
+
+// firstNonHex returns the first non-lowercase-hex rune in s and ok=true
+// if one was found. Extracted from the round-trip test to keep that test's
+// cyclomatic complexity within the project cap.
+func firstNonHex(s string) (rune, bool) {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return c, true
 		}
 	}
+	return 0, false
 }
 
 func TestAuthorizationCodeIssuer_Issue_RejectsNonS256Method(t *testing.T) {
