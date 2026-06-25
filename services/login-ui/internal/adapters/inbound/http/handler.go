@@ -199,4 +199,3 @@ func (h *Handler) redeemAndRedirect(w http.ResponseWriter, r *http.Request, logi
 	target.RawQuery = q.Encode()
 	http.Redirect(w, r, target.String(), http.StatusFound)
 }
-

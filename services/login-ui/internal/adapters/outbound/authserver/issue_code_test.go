@@ -12,9 +12,12 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/ports"
 )
 
-func TestIssueCodeClient_HappyPath(t *testing.T) {
-	// Arrange
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// happyPathHandler asserts the inbound request shape and writes the
+// canonical success response. Extracted from TestIssueCodeClient_HappyPath
+// to keep its cyclomatic complexity within the project's cap of 7.
+func happyPathHandler(t *testing.T) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/internal/issue-code" {
 			t.Errorf("path = %q, want /internal/issue-code", r.URL.Path)
 		}
@@ -28,7 +31,12 @@ func TestIssueCodeClient_HappyPath(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"code":"code-xyz","redirect_uri":"https://rp.example.com/cb","state":"state-abc"}`)
-	}))
+	}
+}
+
+func TestIssueCodeClient_HappyPath(t *testing.T) {
+	// Arrange
+	srv := httptest.NewServer(happyPathHandler(t))
 	defer srv.Close()
 	client := authserver.NewIssueCodeClient(srv.URL, "svc-token", srv.Client())
 

@@ -22,7 +22,7 @@ import (
 // --- fakes ---
 
 type fakeUserAuth struct {
-	mu      sync.Mutex
+	mu       sync.Mutex
 	gotEmail string
 	gotPass  string
 	subject  string
@@ -41,10 +41,10 @@ func (f *fakeUserAuth) VerifyCredentials(_ context.Context, email, password stri
 }
 
 type fakeCodeIssuer struct {
-	mu      sync.Mutex
-	gotReq  ports.IssueCodeRequest
-	resp    *ports.IssueCodeResponse
-	err     error
+	mu     sync.Mutex
+	gotReq ports.IssueCodeRequest
+	resp   *ports.IssueCodeResponse
+	err    error
 }
 
 func (f *fakeCodeIssuer) IssueCode(_ context.Context, req ports.IssueCodeRequest) (*ports.IssueCodeResponse, error) {
@@ -185,6 +185,21 @@ func TestSignInPost_HappyPath_RedirectsToRPWithCodeAndState(t *testing.T) {
 	w := postSignIn(t, h, values)
 
 	// Assert
+	assertSignInHappyPath(t, w, ua, ci)
+}
+
+// assertSignInHappyPath verifies the happy-path SignInPost response.
+// Delegated to two helpers so each one stays within the project's
+// cyclomatic-complexity cap of 7.
+func assertSignInHappyPath(t *testing.T, w *httptest.ResponseRecorder, ua *fakeUserAuth, ci *fakeCodeIssuer) {
+	t.Helper()
+	assertSignInRedirect(t, w)
+	assertSignInPropagation(t, ua, ci)
+}
+
+// assertSignInRedirect checks the 302 Location and its query parameters.
+func assertSignInRedirect(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
 	if w.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302; body = %s", w.Code, w.Body.String())
 	}
@@ -202,6 +217,12 @@ func TestSignInPost_HappyPath_RedirectsToRPWithCodeAndState(t *testing.T) {
 	if got := parsed.Query().Get("state"); got != "state-abc" {
 		t.Errorf("state query = %q, want state-abc", got)
 	}
+}
+
+// assertSignInPropagation checks that the form input was forwarded to
+// VerifyCredentials and the resolved subject was forwarded to IssueCode.
+func assertSignInPropagation(t *testing.T, ua *fakeUserAuth, ci *fakeCodeIssuer) {
+	t.Helper()
 	if ua.gotEmail != "user@example.com" {
 		t.Errorf("VerifyCredentials email = %q", ua.gotEmail)
 	}
