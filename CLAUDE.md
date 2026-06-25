@@ -143,8 +143,12 @@ Services communicate via HTTP using outbound port adapters in `internal/adapters
 | `auth-server` | `identity-service` | `ports.UserAuthenticator` | `adapters/outbound/identityservice` | `AUTH_IDENTITY_SERVICE_URL` |
 | `example-resource-service` | `token-introspection-service` | `ports.TokenIntrospector` | `adapters/outbound/introspection` | `RESOURCE_INTROSPECTION_URL` |
 | `example-resource-service` | `authorization-policy-service` | `ports.PolicyChecker` | `adapters/outbound/policy` | `RESOURCE_POLICY_URL` |
+| `login-ui` | `identity-service` | `ports.UserAuthenticator` | `adapters/outbound/identityservice` | `LOGIN_UI_IDENTITY_SERVICE_URL` |
+| `login-ui` | `auth-server` | `ports.AuthCodeIssuer` | `adapters/outbound/authserver` | `LOGIN_UI_AUTH_SERVER_URL` + `LOGIN_UI_AUTH_SERVER_SERVICE_TOKEN` |
 
 **Fallback behavior**: when an env var is empty, the service falls back to an in-memory adapter (or local JWT validation/scope-only access control). This lets individual services run in isolation during development without the full stack.
+
+**ADR-0011 login challenge handoff**: `auth-server`'s `/oauth/authorize` validates the OAuth request, persists a `LoginChallenge` (memory or Redis adapter — selected by `AUTH_REDIS_URL`), and 302s to `<AUTH_LOGIN_UI_URL>/sign-in?login_challenge=<id>`. `login-ui` runs sign-in, then calls `auth-server`'s bearer-authed `POST /internal/issue-code` (shared `LOGIN_UI_SERVICE_TOKEN`). `auth-server` atomically Consumes the challenge, mints a code, and returns `{code, redirect_uri, state}` — `login-ui` 302s back to the RP. Both endpoints stay disabled (501 / 404) until the matching env vars are set, so deployments without `login-ui` are unaffected.
 
 **Two-layer authorization in `example-resource-service`**: scope validates token capability (can this token perform reads/writes?); policy validates subject permission (is this specific user/client allowed?). Scope check is local and free; policy check is an outbound HTTP call. When `RESOURCE_POLICY_URL` is unset, scope alone gates access — the policy layer is opt-in.
 
