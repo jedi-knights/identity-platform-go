@@ -23,6 +23,17 @@ type ClientAuthenticator interface {
 	Authenticate(ctx context.Context, clientID, clientSecret string) (*domain.Client, error)
 }
 
+// ClientLookup is the outbound port for fetching client metadata without
+// presenting a credential. /oauth/authorize uses it because the user-agent
+// holds no secret at that stage; the handler still needs RedirectURIs and
+// Scopes to validate the request before storing a LoginChallenge.
+//
+// Returns apperrors.ErrCodeNotFound when the client does not exist;
+// apperrors.ErrCodeInternal on infrastructure failure.
+type ClientLookup interface {
+	Lookup(ctx context.Context, clientID string) (*domain.Client, error)
+}
+
 // UserAuthenticator is the outbound port for verifying end-user credentials against
 // the identity-service. It is used by the authorization_code grant to authenticate
 // the resource owner before issuing an authorization code.

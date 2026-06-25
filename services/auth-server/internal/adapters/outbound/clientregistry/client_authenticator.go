@@ -59,6 +59,13 @@ func (a *ClientAuthenticator) Authenticate(ctx context.Context, clientID, client
 	return a.getClient(ctx, clientID)
 }
 
+// Lookup returns client metadata via GET /clients/{id} without presenting any
+// credential. Used by /oauth/authorize, where the request is initiated by the
+// user-agent and no client secret is available.
+func (a *ClientAuthenticator) Lookup(ctx context.Context, clientID string) (*domain.Client, error) {
+	return a.getClient(ctx, clientID)
+}
+
 func (a *ClientAuthenticator) validate(ctx context.Context, clientID, clientSecret string) (retErr error) {
 	body, err := json.Marshal(validateRequest{ClientID: clientID, ClientSecret: clientSecret})
 	if err != nil {

@@ -20,6 +20,7 @@ jobs:
           - services/client-registry-service
           - services/example-resource-service
           - services/identity-service
+          - services/login-ui
           - services/token-introspection-service
     steps:
       - name: Checkout

@@ -41,3 +41,15 @@ func (a *ClientAuthenticator) Authenticate(ctx context.Context, clientID, client
 	}
 	return client, nil
 }
+
+// Lookup returns the client's metadata without verifying any credential.
+// /oauth/authorize uses this to read RedirectURIs and Scopes before storing
+// a LoginChallenge — there is no secret available at that stage.
+// Returns apperrors.ErrCodeNotFound when the client does not exist.
+func (a *ClientAuthenticator) Lookup(ctx context.Context, clientID string) (*domain.Client, error) {
+	client, err := a.repo.FindByID(ctx, clientID)
+	if err != nil {
+		return nil, apperrors.New(apperrors.ErrCodeNotFound, "client not found")
+	}
+	return client, nil
+}

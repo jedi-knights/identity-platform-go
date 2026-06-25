@@ -24,6 +24,9 @@ func NewRouter(h *Handler, jwks *JWKSHandler, userInfo *UserInfoHandler, logger 
 	mux.HandleFunc("GET /oauth/authorize", h.Authorize)
 	mux.HandleFunc("POST /oauth/introspect", h.Introspect)
 	mux.HandleFunc("POST /oauth/revoke", h.Revoke)
+	// /internal/issue-code is service-only; the handler itself returns 404
+	// when the operator has not configured a service bearer token.
+	mux.HandleFunc("POST /internal/issue-code", h.IssueCode)
 	mux.HandleFunc("GET /health", h.Health)
 	mux.Handle("GET /swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),

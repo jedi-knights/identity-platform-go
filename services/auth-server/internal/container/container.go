@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
@@ -63,6 +64,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, tokenRepositoriesProvider)
 	platform.Register(c, authorizationCodeRepositoryProvider)
 	platform.Register(c, authorizationCodeIssuerProvider)
+	platform.Register(c, loginChallengeRepositoryProvider)
 	platform.Register(c, clientWiringProvider)
 	platform.Register(c, userAuthenticatorProvider)
 	platform.Register(c, userClaimsFetcherProvider)
@@ -148,6 +150,24 @@ func authorizationCodeRepositoryProvider(ctx context.Context, c *platform.Contai
 		return nil, fmt.Errorf("connecting to Redis for auth codes: %w", err)
 	}
 	return redisadapter.NewAuthorizationCodeRepository(client), nil
+}
+
+// loginChallengeRepositoryProvider wires the LoginChallenge store. Mirrors
+// the authorization-code repository: Redis when AUTH_REDIS_URL is set, the
+// in-memory adapter otherwise. ADR-0011.
+func loginChallengeRepositoryProvider(ctx context.Context, c *platform.Container) (domain.LoginChallengeRepository, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if cfg.Redis.URL == "" {
+		log.Info("using in-memory login-challenge store (AUTH_REDIS_URL not set)")
+		return memory.NewLoginChallengeRepository(), nil
+	}
+	log.Info("using Redis login-challenge store")
+	client, err := redisadapter.NewClient(cfg.Redis.URL)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to Redis for login challenges: %w", err)
+	}
+	return redisadapter.NewLoginChallengeRepository(client), nil
 }
 
 // authorizationCodeIssuerProvider wires the application-layer issuer that
@@ -397,11 +417,43 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	log := platform.MustResolve[logging.Logger](ctx, c)
 	grants := platform.MustResolve[*application.GrantStrategyRegistry](ctx, c)
 	tokens := platform.MustResolve[*application.TokenService](ctx, c)
+	challengeRepo := platform.MustResolve[domain.LoginChallengeRepository](ctx, c)
+	codeIssuer := platform.MustResolve[ports.AuthorizationCodeIssuer](ctx, c)
 
 	issuer := inboundhttp.NewTokenIssuerAdapter(grants)
 	introspector := inboundhttp.NewTokenIntrospectorAdapter(tokens)
 	revoker := inboundhttp.NewTokenRevokerAdapter(tokens)
-	return inboundhttp.NewHandler(issuer, introspector, revoker, cw.authenticator, log, cfg.Introspection.Secret), nil
+	authorizeCfg := authorizeConfigFor(cfg, cw, challengeRepo, codeIssuer)
+	return inboundhttp.NewHandler(issuer, introspector, revoker, cw.authenticator, log, cfg.Introspection.Secret, authorizeCfg), nil
+}
+
+// authorizeConfigFor returns the AuthorizeConfig for /oauth/authorize +
+// /internal/issue-code when LoginUI.URL is set, or nil — which makes the
+// handlers fall back to their stubs. Both adapters (memory + clientregistry)
+// satisfy ports.ClientLookup, so the authenticator is reused as the lookup
+// port. ServiceToken is passed through verbatim; the handler refuses to
+// serve /internal/issue-code when it is empty.
+func authorizeConfigFor(
+	cfg *config.Config,
+	cw *clientWiring,
+	repo domain.LoginChallengeRepository,
+	codeIssuer ports.AuthorizationCodeIssuer,
+) *inboundhttp.AuthorizeConfig {
+	if cfg.LoginUI.URL == "" {
+		return nil
+	}
+	lookup, ok := cw.authenticator.(ports.ClientLookup)
+	if !ok {
+		return nil
+	}
+	return &inboundhttp.AuthorizeConfig{
+		ClientLookup:    lookup,
+		ChallengeRepo:   repo,
+		LoginUIURL:      strings.TrimRight(cfg.LoginUI.URL, "/"),
+		ChallengeTTL:    time.Duration(cfg.LoginChallenge.TTLSeconds) * time.Second,
+		AuthCodeIssuer:  codeIssuer,
+		IssueCodeBearer: cfg.LoginUI.ServiceToken,
+	}
 }
 
 // userInfoHandlerProvider wires the OIDC /userinfo handler. Nil when OIDC

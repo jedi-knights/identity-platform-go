@@ -104,6 +104,12 @@ services:
       AUTH_CLIENT_REGISTRY_URL: "http://client-registry-service:8082"
       AUTH_IDENTITY_SERVICE_URL: "http://identity-service:8081"
       AUTH_REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
+      # ADR-0011: login-ui hosts the user-facing sign-in/consent surface.
+      # AUTH_LOGIN_UI_URL flips /oauth/authorize from 501 to a real 302;
+      # AUTH_LOGIN_UI_SERVICE_TOKEN unlocks /internal/issue-code. Both are
+      # required for the full authorize → login → code → token flow.
+      AUTH_LOGIN_UI_URL: "http://login-ui:8087"
+      AUTH_LOGIN_UI_SERVICE_TOKEN: ${LOGIN_UI_SERVICE_TOKEN}
     depends_on:
       client-registry-service:
         condition: service_healthy
@@ -113,6 +119,49 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # login-ui — user-facing sign-in / sign-up / consent screens (ADR-0011)
+  # Endpoints: GET/POST /sign-in
+  #
+  # Inter-service dependencies:
+  #   LOGIN_UI_AUTH_SERVER_URL — auth-server's /internal/issue-code endpoint
+  #     login-ui calls after a successful sign-in to redeem the login
+  #     challenge into an authorization code.
+  #   LOGIN_UI_AUTH_SERVER_SERVICE_TOKEN — bearer token shared with
+  #     auth-server's AUTH_LOGIN_UI_SERVICE_TOKEN.
+  #   LOGIN_UI_IDENTITY_SERVICE_URL — identity-service's /auth/login
+  #     endpoint login-ui uses to verify the user's credentials.
+  # ---------------------------------------------------------------------------
+  login-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: login-ui
+    image: identity-platform/login-ui:local
+    ports:
+      - "9087:8087"
+    environment:
+      LOGIN_UI_SERVER_HOST: "0.0.0.0"
+      LOGIN_UI_SERVER_PORT: "8087"
+      LOGIN_UI_LOG_LEVEL: "info"
+      LOGIN_UI_LOG_FORMAT: "json"
+      LOGIN_UI_LOG_ENVIRONMENT: "development"
+      LOGIN_UI_AUTH_SERVER_URL: "http://auth-server:8080"
+      LOGIN_UI_AUTH_SERVER_SERVICE_TOKEN: ${LOGIN_UI_SERVICE_TOKEN}
+      LOGIN_UI_IDENTITY_SERVICE_URL: "http://identity-service:8081"
+    depends_on:
+      auth-server:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8087/health"]
       interval: 15s
       timeout: 5s
       retries: 3

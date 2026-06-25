@@ -14,7 +14,17 @@ The OAuth 2.0 authorization server. Issues, introspects, and revokes tokens. Thi
 | `refresh_token` | Fully implemented | Rotates refresh token on use (old deleted, new issued) |
 | `authorization_code` | Fully implemented (ADR-0009) | Mandatory PKCE-S256 for every client; exact redirect-URI match; 60s default code TTL; atomic Consume detects replay |
 
-The authorization_code grant runs a 12-step validation pipeline at the token endpoint (see ADR-0009 §"Token-endpoint exchange — validation order"). Both public clients (no secret, PKCE-only) and confidential clients (secret + PKCE) work; the `domain.Client.Type` field controls which path the strategy follows. The `/oauth/authorize` endpoint is still a stub — the login/consent UI lands in ADR-0011.
+The authorization_code grant runs a 12-step validation pipeline at the token endpoint (see ADR-0009 §"Token-endpoint exchange — validation order"). Both public clients (no secret, PKCE-only) and confidential clients (secret + PKCE) work; the `domain.Client.Type` field controls which path the strategy follows.
+
+---
+
+## ADR-0011 endpoints — `/oauth/authorize` and `/internal/issue-code`
+
+`/oauth/authorize` (GET) validates the request, persists a `LoginChallenge` (memory or Redis, mirroring the auth-code adapter), and 302-redirects to `<AUTH_LOGIN_UI_URL>/sign-in?login_challenge=<id>`. Validation enforces: `response_type=code`, PKCE-S256 mandatory, redirect_uri exact-match against the client's registered list, requested-scope subset of the client's registered scopes. Error routing follows RFC 6749 §3.1.2.4 / §4.1.2.1 — bad `client_id` or `redirect_uri` render the error (do not redirect to an attacker URI); all other parameter errors 302 back to the validated `redirect_uri` with `?error=&state=`.
+
+`/internal/issue-code` (POST) is bearer-authenticated with `AUTH_LOGIN_UI_SERVICE_TOKEN` (constant-time compare). `login-ui` calls it after a successful sign-in. The handler atomically `Consume`s the challenge — replay is impossible — validates the granted-scope set is a subset of the request scopes, and calls `ports.AuthorizationCodeIssuer.Issue` with an `IssueCodeRequest` populated from the stored challenge (including its `Nonce`). Returns `{code, redirect_uri, state}` — `login-ui` 302s the user-agent to `<redirect_uri>?code=&state=`.
+
+Both endpoints stay disabled until the matching env vars are set: `/oauth/authorize` returns 501 when `AUTH_LOGIN_UI_URL` is empty, and `/internal/issue-code` returns 404 when `AUTH_LOGIN_UI_SERVICE_TOKEN` is empty. This lets deployments without `login-ui` keep the original stub behavior.
 
 ---
 

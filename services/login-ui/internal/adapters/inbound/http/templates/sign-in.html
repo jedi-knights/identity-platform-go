@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sign in</title>
+</head>
+<body>
+  <h1>Sign in</h1>
+  {{if .Error}}<p role="alert" data-testid="error">{{.Error}}</p>{{end}}
+  <form method="POST" action="/sign-in">
+    <input type="hidden" name="login_challenge" value="{{.LoginChallenge}}">
+    <label>Email <input type="email" name="email" required autocomplete="username"></label>
+    <label>Password <input type="password" name="password" required autocomplete="current-password"></label>
+    <button type="submit">Sign in</button>
+  </form>
+</body>
+</html>
