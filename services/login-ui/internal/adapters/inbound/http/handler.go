@@ -5,6 +5,7 @@
 package http
 
 import (
+	"context"
 	"embed"
 	"html/template"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	"github.com/jedi-knights/go-platform/apperrors"
+	"github.com/jedi-knights/go-platform/audit"
 	"github.com/jedi-knights/go-platform/httputil"
 
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/ports"
@@ -29,10 +31,17 @@ var signInTemplate = template.Must(template.ParseFS(templateFS, "templates/sign-
 // codeIssuer are nil the sign-in routes return 503 — letting /health remain
 // reachable in environments where the outbound dependencies are not yet
 // wired (compose smoke-tests, integration scaffolding).
+//
+// Audit is wired via [Handler.WithAudit]; when audit is not configured the
+// handler uses a no-op emitter so tests and callers that pre-date the
+// audit feature keep working.
 type Handler struct {
 	userAuth   ports.UserAuthenticator
 	codeIssuer ports.AuthCodeIssuer
 	logger     logging.Logger
+
+	auditEmitter audit.Emitter
+	auditService string
 }
 
 // NewHandler returns a Handler wired with the outbound dependencies the
@@ -40,7 +49,33 @@ type Handler struct {
 // during local-only development; in that case the sign-in routes serve a
 // stable 503 and /health continues to work.
 func NewHandler(userAuth ports.UserAuthenticator, codeIssuer ports.AuthCodeIssuer, logger logging.Logger) *Handler {
-	return &Handler{userAuth: userAuth, codeIssuer: codeIssuer, logger: logger}
+	return &Handler{
+		userAuth:     userAuth,
+		codeIssuer:   codeIssuer,
+		logger:       logger,
+		auditEmitter: audit.New(audit.NoopSink{}),
+		auditService: "login-ui",
+	}
+}
+
+// WithAudit configures the handler's audit emitter and service name.
+// Returns the receiver to allow chained construction at the composition
+// root. emitter must be non-nil. service is used as Event.Service on
+// every emitted signin_completed event.
+//
+// Per ADR-0019 signin_completed is a billable web-app event — a
+// durable-sink failure surfaces to the user as a generic
+// "could not complete sign-in" rather than a partial redirect so the
+// accounting cannot have gaps.
+func (h *Handler) WithAudit(emitter audit.Emitter, service string) *Handler {
+	if emitter == nil {
+		panic("http: WithAudit called with nil emitter")
+	}
+	h.auditEmitter = emitter
+	if service != "" {
+		h.auditService = service
+	}
+	return h
 }
 
 // Health serves GET /health with a stable 200 + tiny JSON body so the
@@ -191,6 +226,11 @@ func (h *Handler) redeemAndRedirect(w http.ResponseWriter, r *http.Request, logi
 		http.Error(w, "could not complete sign-in", http.StatusInternalServerError)
 		return
 	}
+	if err := h.emitSigninCompleted(r.Context(), subject, loginChallenge); err != nil {
+		h.logger.Error("sign-in: audit emit failed", "error", err)
+		h.renderSignIn(w, signInView{LoginChallenge: loginChallenge, Error: "could not complete sign-in"})
+		return
+	}
 	q := target.Query()
 	q.Set("code", resp.Code)
 	if resp.State != "" {
@@ -198,4 +238,31 @@ func (h *Handler) redeemAndRedirect(w http.ResponseWriter, r *http.Request, logi
 	}
 	target.RawQuery = q.Encode()
 	http.Redirect(w, r, target.String(), http.StatusFound)
+}
+
+// emitSigninCompleted emits a signin_completed audit event after the
+// authorization code has been minted but before the user-agent is
+// redirected to the relying party. resource_kind is application — the
+// login-ui itself is a web application whose billable unit is a
+// successful sign-in. Failed sign-ins (bad credentials, infrastructure
+// errors) intentionally do not emit on this stream; they belong on a
+// security-audit stream whose envelope is a separate concern.
+func (h *Handler) emitSigninCompleted(ctx context.Context, subject, loginChallenge string) error {
+	return h.auditEmitter.Emit(ctx, audit.Event{
+		EventType:      "signin_completed",
+		Service:        h.auditService,
+		ActorType:      audit.ActorTypeUser,
+		ActorID:        subject,
+		SubjectID:      subject,
+		Resource:       "application:signin",
+		ResourceKind:   audit.ResourceKindApplication,
+		ResourceID:     "signin",
+		ResourceParent: h.auditService,
+		ResourcePath:   h.auditService + "/application/signin",
+		Action:         "signin",
+		Decision:       audit.DecisionAllow,
+		Attrs: map[string]any{
+			"login_challenge": loginChallenge,
+		},
+	})
 }
