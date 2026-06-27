@@ -19,6 +19,29 @@ type Config struct {
 	AuthServer      AuthServerConfig      `mapstructure:"auth_server"`
 	IdentityService IdentityServiceConfig `mapstructure:"identity_service"`
 	Audit           AuditConfig           `mapstructure:"audit"`
+	Billing         BillingConfig         `mapstructure:"billing"`
+}
+
+// BillingConfig configures the Lago billing client and the Stripe
+// Checkout return URLs (ADR-0019). All fields are optional — when URL
+// is empty the billing routes degrade to 503 and sign-in continues to
+// work.
+type BillingConfig struct {
+	// LagoURL is the Lago API root (e.g. http://lago-api.internal).
+	// Sourced from LOGIN_UI_BILLING_LAGO_URL. Empty disables billing.
+	LagoURL string `mapstructure:"lago_url"`
+
+	// LagoAPIKey authenticates Lago API calls. Sourced from
+	// LOGIN_UI_BILLING_LAGO_API_KEY. Required when LagoURL is set.
+	LagoAPIKey string `mapstructure:"lago_api_key"`
+
+	// SuccessURL is where Stripe sends the user after Checkout completes.
+	// Sourced from LOGIN_UI_BILLING_SUCCESS_URL.
+	SuccessURL string `mapstructure:"success_url"`
+
+	// CancelURL is where Stripe sends the user when they abandon Checkout.
+	// Sourced from LOGIN_UI_BILLING_CANCEL_URL.
+	CancelURL string `mapstructure:"cancel_url"`
 }
 
 // AuditConfig configures the agent-audit emitter (ADR-0018 / ADR-0019).
@@ -80,6 +103,10 @@ func Load() (*Config, error) {
 	v.SetDefault("identity_service.url", "")
 	v.SetDefault("audit.durable_dsn", "")
 	v.SetDefault("audit.skip_migration", false)
+	v.SetDefault("billing.lago_url", "")
+	v.SetDefault("billing.lago_api_key", "")
+	v.SetDefault("billing.success_url", "")
+	v.SetDefault("billing.cancel_url", "")
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")

@@ -7,6 +7,7 @@ package http
 import (
 	"context"
 	"embed"
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -19,13 +20,17 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/ports"
 )
 
-//go:embed templates/sign-in.html
+//go:embed templates/*.html
 var templateFS embed.FS
 
 // signInTemplate is parsed once at package init so each request renders
 // without re-parsing. Failing at init keeps a malformed template from
 // reaching production silently.
 var signInTemplate = template.Must(template.ParseFS(templateFS, "templates/sign-in.html"))
+
+// plansTemplate renders the post-signin plan-selection page (ADR-0019).
+// Parsed once at init for the same reason as signInTemplate.
+var plansTemplate = template.Must(template.ParseFS(templateFS, "templates/plans.html"))
 
 // Handler bundles every HTTP handler login-ui owns. When userAuth and
 // codeIssuer are nil the sign-in routes return 503 — letting /health remain
@@ -38,10 +43,17 @@ var signInTemplate = template.Must(template.ParseFS(templateFS, "templates/sign-
 type Handler struct {
 	userAuth   ports.UserAuthenticator
 	codeIssuer ports.AuthCodeIssuer
+	billing    ports.BillingClient
 	logger     logging.Logger
 
 	auditEmitter audit.Emitter
 	auditService string
+
+	// billingSuccessURL and billingCancelURL are passed to Lago when
+	// creating a Stripe Checkout session — Stripe sends the user back to
+	// one of them after Checkout completes / is abandoned.
+	billingSuccessURL string
+	billingCancelURL  string
 }
 
 // NewHandler returns a Handler wired with the outbound dependencies the
@@ -56,6 +68,26 @@ func NewHandler(userAuth ports.UserAuthenticator, codeIssuer ports.AuthCodeIssue
 		auditEmitter: audit.New(audit.NoopSink{}),
 		auditService: "login-ui",
 	}
+}
+
+// WithBilling wires the [ports.BillingClient] and the Stripe Checkout
+// return URLs. Returns the receiver to allow chained construction at the
+// composition root.
+//
+// successURL is the public URL Stripe redirects the user to after
+// Checkout completes; cancelURL is where the user lands when they abandon
+// Checkout. Both may be relative paths on login-ui itself when the
+// gateway terminates TLS — Stripe accepts any absolute URL the operator
+// configures on the Lago plan.
+//
+// Passing nil billing disables the billing routes; they return 503 just
+// like sign-in does when its outbound deps are nil. This is the documented
+// degraded path for environments that haven't wired Lago yet.
+func (h *Handler) WithBilling(billing ports.BillingClient, successURL, cancelURL string) *Handler {
+	h.billing = billing
+	h.billingSuccessURL = successURL
+	h.billingCancelURL = cancelURL
+	return h
 }
 
 // WithAudit configures the handler's audit emitter and service name.
@@ -238,6 +270,179 @@ func (h *Handler) redeemAndRedirect(w http.ResponseWriter, r *http.Request, logi
 	}
 	target.RawQuery = q.Encode()
 	http.Redirect(w, r, target.String(), http.StatusFound)
+}
+
+// --- Billing flows (ADR-0019) ---
+
+// plansView is the template data for the plan-selection page.
+type plansView struct {
+	Subject string
+	Plans   []planRow
+	Error   string
+}
+
+// planRow is the per-plan render shape — pre-formatted price string so
+// the template stays presentation-only.
+type planRow struct {
+	Code         string
+	Name         string
+	Description  string
+	DisplayPrice string
+	Interval     string
+}
+
+// PlansGet renders the plan-selection page. The user's subject_id is
+// expected on the `subject` query parameter today; production deployments
+// will source it from a signed session cookie once login-ui owns one.
+//
+// Returns 503 when [Handler.WithBilling] was not called.
+//
+// @Summary      Render plan-selection page
+// @Description  Lists active plans from Lago and renders a chooser
+// @Tags         billing
+// @Produce      html
+// @Param        subject  query  string  true  "Authenticated subject id"
+// @Success      200  "HTML page"
+// @Failure      503  "Billing not configured"
+// @Router       /billing/plans [get]
+func (h *Handler) PlansGet(w http.ResponseWriter, r *http.Request) {
+	if h.billing == nil {
+		http.Error(w, "billing not configured", http.StatusServiceUnavailable)
+		return
+	}
+	subject := r.URL.Query().Get("subject")
+	view := plansView{Subject: subject}
+	plans, err := h.billing.ListPlans(r.Context())
+	if err != nil {
+		h.logger.Error("billing: list plans failed", "error", err)
+		view.Error = "Could not load plans. Please try again."
+		h.renderPlans(w, view)
+		return
+	}
+	view.Plans = toPlanRows(plans)
+	h.renderPlans(w, view)
+}
+
+// CheckoutPost handles plan submission. The form must carry `subject` and
+// `plan_code`; the handler creates a Stripe Checkout session via Lago
+// and redirects the user to Stripe's hosted page.
+//
+// Returns 503 when billing is not configured. 400 on missing fields, 500
+// on a Lago failure.
+//
+// @Summary      Start Stripe Checkout for the chosen plan
+// @Description  Creates a Stripe Checkout session via Lago and redirects
+// @Tags         billing
+// @Accept       application/x-www-form-urlencoded
+// @Param        subject     formData  string  true  "Authenticated subject id"
+// @Param        plan_code   formData  string  true  "Lago plan code"
+// @Success      302  "Redirect to Stripe Checkout"
+// @Failure      400  "Missing required field"
+// @Failure      503  "Billing not configured"
+// @Router       /billing/checkout [post]
+func (h *Handler) CheckoutPost(w http.ResponseWriter, r *http.Request) {
+	if h.billing == nil {
+		http.Error(w, "billing not configured", http.StatusServiceUnavailable)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	subject := r.PostForm.Get("subject")
+	planCode := r.PostForm.Get("plan_code")
+	if subject == "" || planCode == "" {
+		http.Error(w, "subject and plan_code are required", http.StatusBadRequest)
+		return
+	}
+	session, err := h.billing.CreateCheckoutSession(r.Context(), ports.CheckoutSessionRequest{
+		CustomerID: subject,
+		PlanCode:   planCode,
+		SuccessURL: h.billingSuccessURL,
+		CancelURL:  h.billingCancelURL,
+	})
+	if err != nil {
+		h.logger.Error("billing: create checkout session failed", "error", err)
+		http.Error(w, "could not start checkout", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, session.URL, http.StatusFound)
+}
+
+// PortalGet redirects the authenticated user to Stripe's hosted Customer
+// Portal so they can manage cards, download invoices, and cancel
+// subscriptions without login-ui needing to render any of that surface.
+//
+// Returns 503 when billing is not configured. 400 when subject is empty.
+// 500 on a Lago failure.
+//
+// @Summary      Redirect to Stripe Customer Portal
+// @Description  Creates a Stripe Customer Portal session via Lago and redirects
+// @Tags         billing
+// @Param        subject  query  string  true  "Authenticated subject id"
+// @Success      302  "Redirect to Stripe Customer Portal"
+// @Failure      400  "Missing subject"
+// @Failure      503  "Billing not configured"
+// @Router       /billing/portal [get]
+func (h *Handler) PortalGet(w http.ResponseWriter, r *http.Request) {
+	if h.billing == nil {
+		http.Error(w, "billing not configured", http.StatusServiceUnavailable)
+		return
+	}
+	subject := r.URL.Query().Get("subject")
+	if subject == "" {
+		http.Error(w, "subject is required", http.StatusBadRequest)
+		return
+	}
+	session, err := h.billing.CreatePortalSession(r.Context(), subject)
+	if err != nil {
+		h.logger.Error("billing: create portal session failed", "error", err)
+		http.Error(w, "could not open portal", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, session.URL, http.StatusFound)
+}
+
+func (h *Handler) renderPlans(w http.ResponseWriter, view plansView) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := plansTemplate.Execute(w, view); err != nil {
+		h.logger.Error("plans: template execution failed", "error", err)
+	}
+}
+
+// toPlanRows maps the port-level [ports.Plan] type into the
+// template-friendly [planRow] shape. Price formatting lives here so the
+// template stays presentation-only.
+func toPlanRows(plans []ports.Plan) []planRow {
+	rows := make([]planRow, 0, len(plans))
+	for _, p := range plans {
+		rows = append(rows, planRow{
+			Code:         p.Code,
+			Name:         p.Name,
+			Description:  p.Description,
+			DisplayPrice: formatPrice(p.AmountCents, p.Currency),
+			Interval:     p.Interval,
+		})
+	}
+	return rows
+}
+
+// formatPrice converts cents + currency code to a human-readable string.
+// Free plans show "Free"; other plans show "$N.NN" — currency code is
+// rendered as a suffix when it is not USD so the page works in tests and
+// staging without hard-coding the operator's currency.
+func formatPrice(cents int64, currency string) string {
+	if cents == 0 {
+		return "Free"
+	}
+	whole := cents / 100
+	fraction := cents % 100
+	if currency == "" || currency == "USD" || currency == "usd" {
+		return fmt.Sprintf("$%d.%02d", whole, fraction)
+	}
+	return fmt.Sprintf("%d.%02d %s", whole, fraction, currency)
 }
 
 // emitSigninCompleted emits a signin_completed audit event after the
