@@ -54,11 +54,45 @@ func (g *RS256TokenGenerator) Generate(_ context.Context, token *domain.Token) (
 		Permissions: token.Permissions,
 		ActorType:   string(token.ActorType),
 		AgentID:     token.AgentID,
+		Act:         actorToJWT(token.Act),
 		IssuedAt:    token.IssuedAt,
 		ExpiresAt:   token.ExpiresAt,
 	})
 	current := g.keys.Current()
 	return jwtutil.SignRS256(claims, current.Private, current.KID)
+}
+
+// actorToJWT converts the domain's actor-chain representation into the
+// jwtutil wire shape. The two types are kept separate so the domain
+// does not depend on the JWT encoder, but the conversion is mechanical.
+func actorToJWT(a *domain.Actor) *jwtutil.Actor {
+	if a == nil {
+		return nil
+	}
+	return &jwtutil.Actor{
+		Sub:       a.Sub,
+		ActorType: string(a.ActorType),
+		AgentID:   a.AgentID,
+		ClientID:  a.ClientID,
+		Act:       actorToJWT(a.Act),
+	}
+}
+
+// actorFromJWT inverts [actorToJWT] — used by the validator to lift a
+// decoded chain back into the domain layer (e.g., when a
+// token-exchange request presents a subject_token that already has an
+// act chain).
+func actorFromJWT(a *jwtutil.Actor) *domain.Actor {
+	if a == nil {
+		return nil
+	}
+	return &domain.Actor{
+		Sub:       a.Sub,
+		ActorType: domain.ActorType(a.ActorType),
+		AgentID:   a.AgentID,
+		ClientID:  a.ClientID,
+		Act:       actorFromJWT(a.Act),
+	}
 }
 
 // RS256TokenValidator verifies RS256-signed access tokens against the same
@@ -106,6 +140,7 @@ func (v *RS256TokenValidator) Validate(ctx context.Context, raw string) (*domain
 		Scopes:    strings.Fields(claims.Scope),
 		ActorType: domain.ActorType(claims.ActorType),
 		AgentID:   claims.AgentID,
+		Act:       actorFromJWT(claims.Act),
 		ExpiresAt: claims.ExpiresAt.Time,
 		IssuedAt:  claims.IssuedAt.Time,
 		TokenType: domain.TokenTypeBearer,
