@@ -297,6 +297,134 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/register/{client_id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registration"
+                ],
+                "summary": "RFC 7592 read registration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Client ID",
+                        "name": "client_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationError"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "registration"
+                ],
+                "summary": "RFC 7592 update registration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Client ID",
+                        "name": "client_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Replacement metadata",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "tags": [
+                    "registration"
+                ],
+                "summary": "RFC 7592 deregister",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Client ID",
+                        "name": "client_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationError"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
