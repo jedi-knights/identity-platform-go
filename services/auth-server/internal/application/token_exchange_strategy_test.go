@@ -417,4 +417,3 @@ func TestTokenExchange_Handle_AudiencePropagatesToToken(t *testing.T) {
 		t.Errorf("audience = %v", stored.Audience)
 	}
 }
-
