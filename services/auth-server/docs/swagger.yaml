@@ -1,11 +1,107 @@
 basePath: /
 definitions:
+  github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.AuthorizationServerMetadata:
+    properties:
+      authorization_endpoint:
+        type: string
+      claim_types_supported:
+        items:
+          type: string
+        type: array
+      claims_supported:
+        items:
+          type: string
+        type: array
+      code_challenge_methods_supported:
+        items:
+          type: string
+        type: array
+      end_session_endpoint:
+        type: string
+      grant_types_supported:
+        items:
+          type: string
+        type: array
+      id_token_signing_alg_values_supported:
+        items:
+          type: string
+        type: array
+      introspection_endpoint:
+        type: string
+      introspection_endpoint_auth_methods_supported:
+        items:
+          type: string
+        type: array
+      issuer:
+        type: string
+      jwks_uri:
+        type: string
+      registration_endpoint:
+        type: string
+      request_parameter_supported:
+        description: |-
+          RequestParameterSupported and friends are pointer-bool so the
+          "false" value is distinguishable from "omitted" — RFC 8414 §2 lets
+          us emit either, and emitting an explicit false is what every major
+          IdP does to telegraph that the feature is intentionally off.
+        type: boolean
+      request_uri_parameter_supported:
+        type: boolean
+      require_request_uri_registration:
+        type: boolean
+      response_modes_supported:
+        items:
+          type: string
+        type: array
+      response_types_supported:
+        items:
+          type: string
+        type: array
+      revocation_endpoint:
+        type: string
+      revocation_endpoint_auth_methods_supported:
+        items:
+          type: string
+        type: array
+      scopes_supported:
+        items:
+          type: string
+        type: array
+      service_documentation:
+        type: string
+      subject_types_supported:
+        items:
+          type: string
+        type: array
+      token_endpoint:
+        type: string
+      token_endpoint_auth_methods_supported:
+        items:
+          type: string
+        type: array
+      ui_locales_supported:
+        items:
+          type: string
+        type: array
+      userinfo_endpoint:
+        description: |-
+          OIDC Discovery 1.0 §3 additions. Emitted in the OIDC Discovery
+          document; RFC 8414 §2 tolerates the extras but they convey OIDC
+          semantics, so the RFC 8414 path omits them.
+        type: string
+    type: object
   github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.GrantResponse:
     properties:
       access_token:
         type: string
       expires_in:
         type: integer
+      id_token:
+        description: |-
+          IDToken is the OIDC ID token (OIDC Core §2) issued when the granted
+          scopes include "openid". Empty + omitempty when OIDC mode is not active,
+          matching the OAuth-only response shape clients see today.
+        type: string
       refresh_token:
         type: string
       scope:
@@ -17,12 +113,20 @@ definitions:
     properties:
       active:
         type: boolean
+      aud:
+        items:
+          type: string
+        type: array
       client_id:
         type: string
       exp:
         type: integer
       iat:
         type: integer
+      iss:
+        type: string
+      jti:
+        type: string
       scope:
         type: string
       sub:
@@ -44,6 +148,46 @@ info:
   title: Auth Server API
   version: "1.0"
 paths:
+  /.well-known/jwks.json:
+    get:
+      description: Public keys for verifying RS256-signed access tokens (RFC 7517).
+      produces:
+      - application/jwk-set+json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: JWKS endpoint
+      tags:
+      - oauth
+  /.well-known/oauth-authorization-server:
+    get:
+      description: Returns the OAuth 2.0 Authorization Server Metadata document
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.AuthorizationServerMetadata'
+      summary: RFC 8414 metadata document
+      tags:
+      - metadata
+  /.well-known/openid-configuration:
+    get:
+      description: Returns the OIDC discovery document
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.AuthorizationServerMetadata'
+      summary: OIDC Discovery 1.0 metadata document
+      tags:
+      - metadata
   /health:
     get:
       description: Returns service health status
@@ -61,16 +205,12 @@ paths:
       - health
   /oauth/authorize:
     get:
-      description: Authorization endpoint - not yet implemented
+      description: Starts an OAuth 2.1 + OIDC authorize flow (ADR-0011)
       produces:
-      - application/json
+      - text/html
       responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
+        "302":
+          description: Redirect to login-ui sign-in page
       summary: Authorization endpoint
       tags:
       - oauth
@@ -94,10 +234,6 @@ paths:
             $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.IntrospectResponse'
         "400":
           description: Bad Request
-          schema:
-            $ref: '#/definitions/httputil.ErrorResponse'
-        "500":
-          description: Internal Server Error
           schema:
             $ref: '#/definitions/httputil.ErrorResponse'
       summary: Introspect token
@@ -178,4 +314,26 @@ paths:
       summary: Issue access token
       tags:
       - oauth
+  /userinfo:
+    get:
+      description: Returns the OIDC claims permitted by the access token's scopes.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: OIDC UserInfo
+      tags:
+      - oidc
 swagger: "2.0"
