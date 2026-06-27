@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+	"github.com/jedi-knights/go-platform/audit"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 
@@ -62,6 +63,13 @@ type Handler struct {
 	introspectionSecret string
 	rateLimiter         *fixedWindowLimiter
 	authorize           *AuthorizeConfig
+
+	// auditEmitter is consulted on introspection and revocation per ADR-0018.
+	// Defaults to a no-op so tests and callers that pre-date the audit feature
+	// keep working. Wire a real emitter via [Handler.WithAudit] at the
+	// composition root.
+	auditEmitter audit.Emitter
+	auditService string
 }
 
 func NewHandler(
@@ -82,8 +90,37 @@ func NewHandler(
 		introspectionSecret: introspectionSecret,
 		rateLimiter:         newFixedWindowLimiter(20, time.Minute),
 		authorize:           authorize,
+		auditEmitter:        audit.New(audit.NoopSink{}),
+		auditService:        "auth-server",
 	}
 }
+
+// WithAudit configures the handler's audit emitter and service name.
+// Returns the receiver to allow chained construction at the composition
+// root. emitter must be non-nil. service is used as Event.Service on every
+// emitted token_introspected and token_revoked event.
+//
+// Per ADR-0019, introspect and revoke are billable / accounting-relevant
+// operations: an emit failure is surfaced to the caller and degrades to
+// the same safe behaviour each handler already implements when its
+// downstream call fails (introspect → {"active": false} per RFC 7662 §2.2;
+// revoke → 500). Both behaviours preserve token-confidentiality semantics.
+func (h *Handler) WithAudit(emitter audit.Emitter, service string) *Handler {
+	if emitter == nil {
+		panic("http: WithAudit called with nil emitter")
+	}
+	h.auditEmitter = emitter
+	if service != "" {
+		h.auditService = service
+	}
+	return h
+}
+
+// introspectionSecretActor is the sentinel actor identifier used when the
+// introspection endpoint authenticates with the pre-shared secret rather
+// than client credentials. Stable so downstream consumers can recognise
+// the introspection-service principal in audit aggregates.
+const introspectionSecretActor = "introspection-service"
 
 // oauthErrorCode is an RFC 6749 §5.2 error code sent in the "error" field.
 // A named type prevents silent transposition with the description parameter.
@@ -621,7 +658,8 @@ func (h *Handler) Introspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.authenticateIntrospectionCaller(w, r) {
+	actor, ok := h.authenticateIntrospectionCaller(w, r)
+	if !ok {
 		return
 	}
 
@@ -650,18 +688,66 @@ func (h *Handler) Introspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ADR-0018: every introspection emits a token_introspected event with
+	// the caller as actor, the introspected token's subject as subject_id,
+	// and the active/inactive outcome in attrs. ADR-0019: an emit failure
+	// surfaces as the same RFC 7662-safe inactive response — non-2xx from
+	// introspection is unsafe per §2.2.
+	if err := h.emitTokenIntrospected(r.Context(), actor, resp); err != nil {
+		logging.WithTraceFromContext(r.Context(), h.logger).Error("audit emit (token_introspected) failed", "error", err.Error())
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Pragma", "no-cache")
+		httputil.WriteJSON(w, http.StatusOK, domain.IntrospectResponse{Active: false})
+		return
+	}
+
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	httputil.WriteJSON(w, http.StatusOK, resp)
 }
 
+// emitTokenIntrospected emits a token_introspected audit event per
+// ADR-0018. The active/inactive outcome is carried in attrs because it is
+// the result of the operation, not the authorization decision — the caller
+// authenticated, so decision is always allow.
+func (h *Handler) emitTokenIntrospected(ctx context.Context, actor string, resp *domain.IntrospectResponse) error {
+	actorType := audit.ActorTypeService
+	if actor == introspectionSecretActor {
+		actorType = audit.ActorTypeService
+	}
+	return h.auditEmitter.Emit(ctx, audit.Event{
+		EventType:      "token_introspected",
+		Service:        h.auditService,
+		ActorType:      actorType,
+		ActorID:        actor,
+		SubjectID:      resp.Subject,
+		ClientID:       actor,
+		Resource:       "token:access",
+		ResourceKind:   audit.ResourceKindToken,
+		ResourceID:     "access",
+		ResourceParent: h.auditService,
+		ResourcePath:   h.auditService + "/token/access",
+		Action:         "introspect",
+		Decision:       audit.DecisionAllow,
+		Attrs: map[string]any{
+			"active":              resp.Active,
+			"introspected_jti":    resp.JTI,
+			"introspected_client": resp.ClientID,
+		},
+	})
+}
+
 // authenticateIntrospectionCaller enforces RFC 7662 §2.1 caller authentication.
 // When introspectionSecret is set: require Authorization: Bearer <secret>.
 // Otherwise: require client credentials (Basic Auth or form body).
-// Returns false and writes a 401 if authentication fails.
-func (h *Handler) authenticateIntrospectionCaller(w http.ResponseWriter, r *http.Request) bool {
+// Returns the authenticated actor identifier and true on success; an empty
+// actor and false on failure (with a 401 already written to w).
+func (h *Handler) authenticateIntrospectionCaller(w http.ResponseWriter, r *http.Request) (string, bool) {
 	if h.introspectionSecret != "" {
-		return authenticateWithSecret(w, r, h.introspectionSecret, h.logger)
+		if authenticateWithSecret(w, r, h.introspectionSecret, h.logger) {
+			return introspectionSecretActor, true
+		}
+		return "", false
 	}
 	return h.authenticateClientCredentials(w, r)
 }
@@ -680,8 +766,9 @@ func authenticateWithSecret(w http.ResponseWriter, r *http.Request, secret strin
 }
 
 // authenticateClientCredentials validates client credentials from Basic Auth or form body.
-// Returns false and writes a 401 WWW-Authenticate challenge if credentials are missing or invalid.
-func (h *Handler) authenticateClientCredentials(w http.ResponseWriter, r *http.Request) bool {
+// Returns the authenticated client_id and true on success; empty actor and false
+// on failure (with a 401 already written to w).
+func (h *Handler) authenticateClientCredentials(w http.ResponseWriter, r *http.Request) (string, bool) {
 	clientID, clientSecret, ok := r.BasicAuth()
 	if !ok {
 		clientID = r.FormValue("client_id")
@@ -690,14 +777,14 @@ func (h *Handler) authenticateClientCredentials(w http.ResponseWriter, r *http.R
 	if clientID == "" || clientSecret == "" {
 		w.Header().Set("WWW-Authenticate", `Basic realm="auth-server"`)
 		writeOAuthError(w, h.logger, "invalid_client", "client authentication required", http.StatusUnauthorized)
-		return false
+		return "", false
 	}
 	if _, err := h.clientAuth.Authenticate(r.Context(), clientID, clientSecret); err != nil {
 		w.Header().Set("WWW-Authenticate", `Basic realm="auth-server"`)
 		writeOAuthError(w, h.logger, "invalid_client", "client authentication failed", http.StatusUnauthorized)
-		return false
+		return "", false
 	}
-	return true
+	return clientID, true
 }
 
 // Revoke handles POST /oauth/revoke.
@@ -728,7 +815,8 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// RFC 7009 §2: the revocation endpoint requires client authentication.
-	if !h.authenticateClientCredentials(w, r) {
+	actor, ok := h.authenticateClientCredentials(w, r)
+	if !ok {
 		return
 	}
 
@@ -746,10 +834,44 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ADR-0018: emit token_revoked after successful revocation. Per
+	// ADR-0019's paid-event policy a durable-sink failure fails the
+	// request — the same shape as token issuance.
+	if err := h.emitTokenRevoked(r.Context(), actor, r.FormValue("token_type_hint")); err != nil {
+		h.logger.Error("audit emit (token_revoked) failed", "error", err.Error())
+		writeOAuthError(w, h.logger, "server_error", "revocation succeeded but audit emit failed", http.StatusInternalServerError)
+		return
+	}
+
 	// Success path: all error paths above return early.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(http.StatusOK)
+}
+
+// emitTokenRevoked emits a token_revoked audit event per ADR-0018. The
+// token's subject is not parsed from the presented token — the token may
+// already be invalid, and the revocation endpoint deliberately does not
+// validate token contents (RFC 7009 §2.2). The actor is the authenticated
+// client; that and the type hint are enough for an audit trail.
+func (h *Handler) emitTokenRevoked(ctx context.Context, actor, typeHint string) error {
+	return h.auditEmitter.Emit(ctx, audit.Event{
+		EventType:      "token_revoked",
+		Service:        h.auditService,
+		ActorType:      audit.ActorTypeService,
+		ActorID:        actor,
+		ClientID:       actor,
+		Resource:       "token:access",
+		ResourceKind:   audit.ResourceKindToken,
+		ResourceID:     "access",
+		ResourceParent: h.auditService,
+		ResourcePath:   h.auditService + "/token/access",
+		Action:         "revoke",
+		Decision:       audit.DecisionAllow,
+		Attrs: map[string]any{
+			"token_type_hint": typeHint,
+		},
+	})
 }
 
 // doRevoke calls the revoker and writes any necessary error response.

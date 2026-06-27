@@ -2,9 +2,12 @@ package application_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/jedi-knights/go-platform/audit"
 
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
@@ -446,6 +449,120 @@ func TestGrantStrategyRegistry_Handle_Routes(t *testing.T) {
 		t.Errorf("expected scope 'read' (client default), got %q", resp.Scope)
 	}
 }
+
+func TestGrantStrategyRegistry_Handle_EmitsTokenIssued(t *testing.T) {
+	auth := newMockClientAuthenticator()
+	tokenRepo := newMockTokenRepo()
+	refreshTokenRepo := newMockRefreshTokenRepo()
+	tokenGen := &mockTokenGen{}
+
+	auth.clients["c1"] = newTestClient(
+		"c1", "secret",
+		[]string{"read"},
+		[]domain.GrantType{domain.GrantTypeClientCredentials},
+	)
+
+	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	captured := &captureSink{}
+	registry := application.
+		NewGrantStrategyRegistry(ccStrategy).
+		WithAudit(audit.New(captured), "auth-server")
+
+	resp, err := registry.Handle(context.Background(), domain.GrantRequest{
+		GrantType:    domain.GrantTypeClientCredentials,
+		ClientID:     "c1",
+		ClientSecret: "secret",
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected response, got nil")
+	}
+
+	if len(captured.events) != 1 {
+		t.Fatalf("expected 1 emitted event, got %d", len(captured.events))
+	}
+	e := captured.events[0]
+	if e.EventType != "token_issued" {
+		t.Errorf("expected event_type=token_issued, got %q", e.EventType)
+	}
+	if e.Service != "auth-server" {
+		t.Errorf("expected service=auth-server, got %q", e.Service)
+	}
+	if e.ActorType != audit.ActorTypeService {
+		t.Errorf("expected actor_type=service for client_credentials, got %q", e.ActorType)
+	}
+	if e.ActorID != "c1" {
+		t.Errorf("expected actor_id=c1, got %q", e.ActorID)
+	}
+	if e.ResourceKind != audit.ResourceKindToken {
+		t.Errorf("expected resource_kind=token, got %q", e.ResourceKind)
+	}
+	if e.ResourcePath != "auth-server/token/access" {
+		t.Errorf("expected resource_path=auth-server/token/access, got %q", e.ResourcePath)
+	}
+	if e.Decision != audit.DecisionAllow {
+		t.Errorf("expected decision=allow, got %q", e.Decision)
+	}
+	if gt, _ := e.Attrs["grant_type"].(string); gt != "client_credentials" {
+		t.Errorf("expected attrs.grant_type=client_credentials, got %v", e.Attrs["grant_type"])
+	}
+}
+
+func TestGrantStrategyRegistry_Handle_FailsWhenAuditFails(t *testing.T) {
+	auth := newMockClientAuthenticator()
+	tokenRepo := newMockTokenRepo()
+	refreshTokenRepo := newMockRefreshTokenRepo()
+	tokenGen := &mockTokenGen{}
+
+	auth.clients["c1"] = newTestClient(
+		"c1", "secret",
+		[]string{"read"},
+		[]domain.GrantType{domain.GrantTypeClientCredentials},
+	)
+
+	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	registry := application.
+		NewGrantStrategyRegistry(ccStrategy).
+		WithAudit(audit.New(&captureSink{err: errAuditFailure}), "auth-server")
+
+	_, err := registry.Handle(context.Background(), domain.GrantRequest{
+		GrantType:    domain.GrantTypeClientCredentials,
+		ClientID:     "c1",
+		ClientSecret: "secret",
+	})
+	if err == nil {
+		t.Fatal("expected error when audit sink fails (ADR-0019 paid event policy)")
+	}
+	if !errors.Is(err, errAuditFailure) {
+		t.Errorf("expected wrapped audit error, got %v", err)
+	}
+}
+
+func TestGrantStrategyRegistry_WithAudit_NilEmitterPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	_ = application.NewGrantStrategyRegistry().WithAudit(nil, "auth-server")
+}
+
+// captureSink records every event passed to it and optionally returns a
+// preconfigured error. It satisfies audit.Sink so the registry can be
+// driven without a real transport.
+type captureSink struct {
+	events []audit.Event
+	err    error
+}
+
+func (c *captureSink) Sink(_ context.Context, e audit.Event) error {
+	c.events = append(c.events, e)
+	return c.err
+}
+
+var errAuditFailure = errors.New("simulated audit transport failure")
 
 func TestClientCredentialsStrategy_Supports(t *testing.T) {
 	auth := newMockClientAuthenticator()
