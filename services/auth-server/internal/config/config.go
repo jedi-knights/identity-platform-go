@@ -22,6 +22,7 @@ type Config struct {
 	Policy            PolicyConfig            `mapstructure:"policy"`
 	Introspection     IntrospectionConfig     `mapstructure:"introspection"`
 	LoginUI           LoginUIConfig           `mapstructure:"login_ui"`
+	Audit             AuditConfig             `mapstructure:"audit"`
 	DevSeedClients    bool                    `mapstructure:"dev_seed_clients"`
 	DevClientSecret   string                  `mapstructure:"dev_client_secret"` // AUTH_DEV_CLIENT_SECRET; only used when DevSeedClients=true
 }
@@ -145,6 +146,22 @@ type IdentityServiceConfig struct {
 	URL string `mapstructure:"url"` // AUTH_IDENTITY_SERVICE_URL
 }
 
+// AuditConfig configures the agent-audit emitter (ADR-0018 / ADR-0019).
+// The emitter is always wired with the best-effort stderr JSON sink;
+// the durable Postgres sink is added when DurableDSN is set.
+type AuditConfig struct {
+	// DurableDSN is the Postgres connection string for the
+	// at-least-once durable audit sink. When empty, audit emission
+	// is best-effort (stderr only) and accounting integrity cannot be
+	// guaranteed — never deploy a billable environment without this.
+	DurableDSN string `mapstructure:"durable_dsn"` // AUTH_AUDIT_DURABLE_DSN
+
+	// SkipMigration disables the CREATE TABLE IF NOT EXISTS call at
+	// startup. Default false. Set to true when a separate migration job
+	// owns the audit_events schema.
+	SkipMigration bool `mapstructure:"skip_migration"` // AUTH_AUDIT_SKIP_MIGRATION
+}
+
 // RedisConfig holds the connection details for the Redis token store.
 // When URL is empty, auth-server falls back to an in-memory token repository.
 // Note: the in-memory store is not safe for multi-replica deployments —
@@ -179,6 +196,8 @@ func Load() (*Config, error) {
 	v.SetDefault("redis.url", "")
 	v.SetDefault("jwt.audience", []string{})
 	v.SetDefault("introspection.secret", "")
+	v.SetDefault("audit.durable_dsn", "")
+	v.SetDefault("audit.skip_migration", false)
 	v.SetDefault("dev_seed_clients", false)
 	v.SetDefault("dev_client_secret", "")
 

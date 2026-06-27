@@ -15,6 +15,7 @@ import (
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	"github.com/jedi-knights/go-platform/apperrors"
+	"github.com/jedi-knights/go-platform/audit"
 	platform "github.com/jedi-knights/go-platform/container"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/inbound/http"
@@ -26,6 +27,7 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
+	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/observability"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/ports"
 )
 
@@ -61,6 +63,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 		return logger, nil
 	})
 	platform.Register(c, httpClientProvider)
+	platform.Register(c, auditEmitterProvider)
 	platform.Register(c, tokenRepositoriesProvider)
 	platform.Register(c, authorizationCodeRepositoryProvider)
 	platform.Register(c, authorizationCodeIssuerProvider)
@@ -90,6 +93,27 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 
 func httpClientProvider(context.Context, *platform.Container) (*http.Client, error) {
 	return &http.Client{Timeout: 5 * time.Second}, nil
+}
+
+// auditEmitterProvider builds the audit.Emitter per ADR-0018 + ADR-0019.
+// When AUTH_AUDIT_DURABLE_DSN is set the emitter writes through a Postgres
+// durable sink in addition to the best-effort stderr sink, and the
+// returned pool is registered as an OnClose hook for graceful shutdown.
+func auditEmitterProvider(ctx context.Context, c *platform.Container) (audit.Emitter, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	wiring, err := observability.NewAuditEmitter(ctx, cfg, log)
+	if err != nil {
+		return nil, fmt.Errorf("audit: %w", err)
+	}
+	if wiring.Pool != nil {
+		pool := wiring.Pool
+		c.OnClose("audit-durable", func(_ context.Context) error {
+			pool.Close()
+			return nil
+		})
+	}
+	return wiring.Emitter, nil
 }
 
 // tokenRepositories bundles the two token-related repos so they share a
@@ -399,7 +423,8 @@ func grantRegistryProvider(ctx context.Context, c *platform.Container) (*applica
 	cc := platform.MustResolve[*application.ClientCredentialsStrategy](ctx, c)
 	ac := platform.MustResolve[*application.AuthorizationCodeStrategy](ctx, c)
 	rt := platform.MustResolve[*application.RefreshTokenStrategy](ctx, c)
-	return application.NewGrantStrategyRegistry(cc, ac, rt), nil
+	emitter := platform.MustResolve[audit.Emitter](ctx, c)
+	return application.NewGrantStrategyRegistry(cc, ac, rt).WithAudit(emitter, "auth-server"), nil
 }
 
 func tokenServiceProvider(ctx context.Context, c *platform.Container) (*application.TokenService, error) {
