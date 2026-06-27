@@ -60,6 +60,8 @@ github.com/jedi-knights/go-platform v0.6.0 h1:Sv+hSpGgHZvUqcsWWVi8b9hEmyWcOa4Vmh
 github.com/jedi-knights/go-platform v0.6.0/go.mod h1:15YWwKnIJPUBZM+tGu3Bc9Q6hdGcc43fCp+JEBpcjaU=
 github.com/jedi-knights/go-platform v0.7.0 h1:2h36qsL1dSzwNsn55gSYM6X9b2udoXJkAX4jR/Eyim4=
 github.com/jedi-knights/go-platform v0.7.0/go.mod h1:/WGT1fhxMlxUD3RYttGmVY7T3m0NoTOCDkiVu4E3jGo=
+github.com/jedi-knights/go-platform v0.8.0 h1:ugAIRJueTBpinTLuZZex9r9x7XkWlt6sjsNrmzvjC+s=
+github.com/jedi-knights/go-platform v0.8.0/go.mod h1:/WGT1fhxMlxUD3RYttGmVY7T3m0NoTOCDkiVu4E3jGo=
 github.com/josharian/intern v1.0.0 h1:vlS4z54oSdjm0bgjRigI+G1HpF+tI+9rE5LLzOg8HmY=
 github.com/josharian/intern v1.0.0/go.mod h1:5DoeVV0s6jJacbCEi61lwdGj/aVlrQvzHFFd8Hwg//Y=
 github.com/klauspost/cpuid/v2 v2.0.9 h1:lgaqFMSdTdQYdZ04uHyN2d/eKdOMyi2YLSvlQIBFYa4=

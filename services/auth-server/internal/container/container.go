@@ -81,6 +81,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, clientCredentialsStrategyProvider)
 	platform.Register(c, authorizationCodeStrategyProvider)
 	platform.Register(c, refreshTokenStrategyProvider)
+	platform.Register(c, tokenExchangeStrategyProvider)
 	platform.Register(c, grantRegistryProvider)
 	platform.Register(c, tokenServiceProvider)
 	platform.Register(c, handlerProvider)
@@ -431,12 +432,37 @@ func refreshTokenStrategyProvider(ctx context.Context, c *platform.Container) (*
 	return application.NewRefreshTokenStrategy(cw.authenticator, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL), nil
 }
 
+// tokenExchangeStrategyProvider wires the RFC 8693 token-exchange
+// grant strategy (ADR-0016). The strategy validates a presented
+// subject_token using the same TokenValidator the introspection path
+// uses, so a token revoked via ADR-0014's refresh-token cascade is
+// already unmintable here without any token-exchange-specific work.
+func tokenExchangeStrategyProvider(ctx context.Context, c *platform.Container) (*application.TokenExchangeStrategy, error) {
+	cw, err := platform.Resolve[*clientWiring](ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	repos, err := platform.Resolve[*tokenRepositories](ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	validator := platform.MustResolve[application.TokenValidator](ctx, c)
+	gen := platform.MustResolve[application.TokenGenerator](ctx, c)
+	return application.NewTokenExchangeStrategy(application.TokenExchangeStrategyConfig{
+		ClientAuth:     cw.authenticator,
+		TokenValidator: validator,
+		TokenRepo:      repos.token,
+		TokenGen:       gen,
+	}), nil
+}
+
 func grantRegistryProvider(ctx context.Context, c *platform.Container) (*application.GrantStrategyRegistry, error) {
 	cc := platform.MustResolve[*application.ClientCredentialsStrategy](ctx, c)
 	ac := platform.MustResolve[*application.AuthorizationCodeStrategy](ctx, c)
 	rt := platform.MustResolve[*application.RefreshTokenStrategy](ctx, c)
+	te := platform.MustResolve[*application.TokenExchangeStrategy](ctx, c)
 	emitter := platform.MustResolve[audit.Emitter](ctx, c)
-	return application.NewGrantStrategyRegistry(cc, ac, rt).WithAudit(emitter, "auth-server"), nil
+	return application.NewGrantStrategyRegistry(cc, ac, rt, te).WithAudit(emitter, "auth-server"), nil
 }
 
 func tokenServiceProvider(ctx context.Context, c *platform.Container) (*application.TokenService, error) {

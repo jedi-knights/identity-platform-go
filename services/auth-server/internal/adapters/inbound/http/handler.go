@@ -217,7 +217,9 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request, logger logging.Lo
 		writeOAuthError(w, logger, "invalid_request", "client_id is required", http.StatusBadRequest)
 		return domain.GrantRequest{}, false
 	}
-	if clientSecret == "" {
+	// RFC 8693 token-exchange accepts public clients (no secret) per
+	// ADR-0016; every other grant type still requires the secret.
+	if clientSecret == "" && grantType != domain.GrantTypeTokenExchange {
 		writeOAuthError(w, logger, "invalid_request", "client_secret is required", http.StatusBadRequest)
 		return domain.GrantRequest{}, false
 	}
@@ -235,7 +237,31 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request, logger logging.Lo
 		Code:         r.FormValue("code"),
 		CodeVerifier: r.FormValue("code_verifier"),
 		RedirectURI:  r.FormValue("redirect_uri"),
+		// RFC 8693 §2.1 fields. Populated for every request but only
+		// consumed by the token-exchange strategy — empty for every
+		// other grant type by virtue of the wire being empty.
+		SubjectToken:       r.FormValue("subject_token"),
+		SubjectTokenType:   r.FormValue("subject_token_type"),
+		ActorToken:         r.FormValue("actor_token"),
+		ActorTokenType:     r.FormValue("actor_token_type"),
+		RequestedTokenType: r.FormValue("requested_token_type"),
+		Audience:           parseExchangeAudience(r),
 	}, true
+}
+
+// parseExchangeAudience extracts the optional RFC 8693 "audience"
+// form parameter. The spec allows multiple values (one per
+// resource server); we accept either repeated audience= entries or
+// a single space-delimited string for convenience.
+func parseExchangeAudience(r *http.Request) []string {
+	values := r.Form["audience"]
+	if len(values) == 0 {
+		return nil
+	}
+	if len(values) == 1 {
+		return strings.Fields(values[0])
+	}
+	return append([]string(nil), values...)
 }
 
 // writeTokenError maps an application error to an RFC 6749-compliant OAuth2 error response.
