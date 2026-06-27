@@ -20,6 +20,54 @@ type Config struct {
 	IdentityService IdentityServiceConfig `mapstructure:"identity_service"`
 	Audit           AuditConfig           `mapstructure:"audit"`
 	Billing         BillingConfig         `mapstructure:"billing"`
+	Tracing         TracingConfig         `mapstructure:"tracing"`
+}
+
+// TracingConfig configures the OpenTelemetry SDK bootstrap (ADR-0014 /
+// portfolio observability roadmap). Every field is optional; missing
+// values fall back to OTEL_* environment variables and ultimately to a
+// stdout exporter so traces are visible during local development without
+// a collector.
+//
+// Enabled controls whether the SDK is bootstrapped at all. When false
+// the global TracerProvider stays as the no-op default and outbound
+// otelhttp wrappers emit no spans — but the inbound otelhttp.NewHandler
+// wrapper and the outbound otelhttp.NewTransport wrappers stay in the
+// chain so flipping the flag at deploy time turns tracing on without
+// code changes.
+//
+// login-ui is the multi-target hop in the trace graph: every sign-in
+// fans out to identity-service and auth-server, and every billing call
+// fans out to Lago (which talks to Stripe). Wrapping the shared
+// http.Client transport with otelhttp.NewTransport is what makes the
+// W3C traceparent header propagate to all four downstreams.
+type TracingConfig struct {
+	// Enabled toggles OTel bootstrap. Sourced from LOGIN_UI_TRACING_ENABLED.
+	// Default false — opt-in until every dependent service ships the
+	// same bootstrap and a collector is available.
+	Enabled bool `mapstructure:"enabled"`
+
+	// ServiceVersion is reported as the service.version resource
+	// attribute. Sourced from LOGIN_UI_TRACING_SERVICE_VERSION; when empty
+	// OTEL_SERVICE_VERSION is consulted.
+	ServiceVersion string `mapstructure:"service_version"`
+
+	// ExporterEndpoint overrides the OTLP endpoint. Empty defers to
+	// OTEL_EXPORTER_OTLP_ENDPOINT; when that is also empty the SDK
+	// falls back to a stdout exporter.
+	ExporterEndpoint string `mapstructure:"exporter_endpoint"`
+
+	// ExporterProtocol selects the OTLP transport ("grpc" or "http").
+	// Empty defers to OTEL_EXPORTER_OTLP_PROTOCOL; default grpc.
+	ExporterProtocol string `mapstructure:"exporter_protocol"`
+
+	// ExporterInsecure disables TLS on the OTLP gRPC endpoint.
+	ExporterInsecure bool `mapstructure:"exporter_insecure"`
+
+	// SamplerRatio sets the head-based sampler ratio. Zero falls back
+	// to 1 (sample every root span) inside the SDK; 0.1 keeps 10% of
+	// traces.
+	SamplerRatio float64 `mapstructure:"sampler_ratio"`
 }
 
 // BillingConfig configures the Lago billing client and the Stripe
@@ -107,6 +155,12 @@ func Load() (*Config, error) {
 	v.SetDefault("billing.lago_api_key", "")
 	v.SetDefault("billing.success_url", "")
 	v.SetDefault("billing.cancel_url", "")
+	v.SetDefault("tracing.enabled", false)
+	v.SetDefault("tracing.service_version", "")
+	v.SetDefault("tracing.exporter_endpoint", "")
+	v.SetDefault("tracing.exporter_protocol", "")
+	v.SetDefault("tracing.exporter_insecure", false)
+	v.SetDefault("tracing.sampler_ratio", 0.0)
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
