@@ -87,23 +87,7 @@ func run(_ *cobra.Command, _ []string) error {
 		}
 	}()
 
-	handler := platform.MustResolve[*inboundhttp.Handler](startCtx, ctr)
-	// JWKSHandler is nil-resolved in HS256 mode; NewRouter skips the route in that case.
-	jwks := platform.MustResolve[*inboundhttp.JWKSHandler](startCtx, ctr)
-	// UserInfoHandler is nil-resolved when OIDC mode is disabled (no OIDC issuer URL).
-	userInfo := platform.MustResolve[*inboundhttp.UserInfoHandler](startCtx, ctr)
-	// MetadataHandler is nil-resolved when AUTH_METADATA_PUBLIC_BASE_URL is unset (ADR-0012).
-	metadata := platform.MustResolve[*inboundhttp.MetadataHandler](startCtx, ctr)
-	router := inboundhttp.NewRouter(handler, jwks, userInfo, metadata, logger)
-	// otelhttp wraps the router so every inbound request becomes a
-	// server span; traceparent headers from the client are honoured by
-	// the global W3C TraceContext propagator that go-platform/otel
-	// registers. The wrapper is a no-op when tracing is disabled.
-	router = otelhttp.NewHandler(router, "auth-server",
-		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
-			return r.Method + " " + r.URL.Path
-		}),
-	)
+	router := buildRouter(startCtx, ctr, logger)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
@@ -129,6 +113,32 @@ func run(_ *cobra.Command, _ []string) error {
 	defer cancel()
 
 	return srv.Shutdown(ctx)
+}
+
+// buildRouter resolves the handler graph from the container, wires the
+// HTTP routes, and wraps the result with otelhttp so every request
+// becomes a server span. Extracted from [run] so the entry point stays
+// under the gocyclo budget.
+func buildRouter(ctx context.Context, ctr *platform.Container, logger logging.Logger) http.Handler {
+	handler := platform.MustResolve[*inboundhttp.Handler](ctx, ctr)
+	// JWKSHandler is nil-resolved in HS256 mode; NewRouter skips the
+	// route in that case.
+	jwks := platform.MustResolve[*inboundhttp.JWKSHandler](ctx, ctr)
+	// UserInfoHandler is nil-resolved when OIDC mode is disabled.
+	userInfo := platform.MustResolve[*inboundhttp.UserInfoHandler](ctx, ctr)
+	// MetadataHandler is nil-resolved when AUTH_METADATA_PUBLIC_BASE_URL
+	// is unset (ADR-0012).
+	metadata := platform.MustResolve[*inboundhttp.MetadataHandler](ctx, ctr)
+	mux := inboundhttp.NewRouter(handler, jwks, userInfo, metadata, logger)
+	// otelhttp wraps the router so every inbound request becomes a
+	// server span; traceparent headers from the client are honoured by
+	// the W3C TraceContext propagator that go-platform/otel registers.
+	// The wrapper is a no-op when tracing is disabled.
+	return otelhttp.NewHandler(mux, "auth-server",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			return r.Method + " " + r.URL.Path
+		}),
+	)
 }
 
 // setupTracing bootstraps the OTel SDK when AUTH_TRACING_ENABLED is
