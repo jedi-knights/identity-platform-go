@@ -296,43 +296,45 @@ func validateAuthMethod(method string) error {
 
 func validateRedirectURIs(uris, grantTypes []string, allowLocalhost bool) error {
 	if slices.Contains(grantTypes, "authorization_code") && len(uris) == 0 {
-		return &domain.RegistrationError{
-			Code:        domain.RegistrationErrorInvalidRedirectURI,
-			Description: "redirect_uris is required for authorization_code grant",
-		}
+		return invalidRedirectURI("redirect_uris is required for authorization_code grant")
 	}
 	for i, raw := range uris {
-		u, err := url.Parse(raw)
-		if err != nil {
-			return &domain.RegistrationError{
-				Code:        domain.RegistrationErrorInvalidRedirectURI,
-				Description: fmt.Sprintf("redirect_uris[%d] is not a valid URI", i),
-			}
-		}
-		if u.Fragment != "" {
-			return &domain.RegistrationError{
-				Code:        domain.RegistrationErrorInvalidRedirectURI,
-				Description: fmt.Sprintf("redirect_uris[%d] must not contain a fragment", i),
-			}
-		}
-		if strings.Contains(raw, "*") {
-			return &domain.RegistrationError{
-				Code:        domain.RegistrationErrorInvalidRedirectURI,
-				Description: fmt.Sprintf("redirect_uris[%d] must not contain wildcards", i),
-			}
-		}
-		if u.Scheme == "https" {
-			continue
-		}
-		if allowLocalhost && u.Scheme == "http" && isLocalhostHost(u.Hostname()) {
-			continue
-		}
-		return &domain.RegistrationError{
-			Code:        domain.RegistrationErrorInvalidRedirectURI,
-			Description: fmt.Sprintf("redirect_uris[%d] must use https scheme", i),
+		if err := validateRedirectURI(i, raw, allowLocalhost); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func validateRedirectURI(index int, raw string, allowLocalhost bool) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return invalidRedirectURI(fmt.Sprintf("redirect_uris[%d] is not a valid URI", index))
+	}
+	if u.Fragment != "" {
+		return invalidRedirectURI(fmt.Sprintf("redirect_uris[%d] must not contain a fragment", index))
+	}
+	if strings.Contains(raw, "*") {
+		return invalidRedirectURI(fmt.Sprintf("redirect_uris[%d] must not contain wildcards", index))
+	}
+	if isAllowedRedirectScheme(u, allowLocalhost) {
+		return nil
+	}
+	return invalidRedirectURI(fmt.Sprintf("redirect_uris[%d] must use https scheme", index))
+}
+
+func isAllowedRedirectScheme(u *url.URL, allowLocalhost bool) bool {
+	if u.Scheme == "https" {
+		return true
+	}
+	return allowLocalhost && u.Scheme == "http" && isLocalhostHost(u.Hostname())
+}
+
+func invalidRedirectURI(desc string) *domain.RegistrationError {
+	return &domain.RegistrationError{
+		Code:        domain.RegistrationErrorInvalidRedirectURI,
+		Description: desc,
+	}
 }
 
 func isLocalhostHost(host string) bool {
