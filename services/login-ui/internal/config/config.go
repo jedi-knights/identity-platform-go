@@ -18,6 +18,21 @@ type Config struct {
 	Log             LogConfig             `mapstructure:"log"`
 	AuthServer      AuthServerConfig      `mapstructure:"auth_server"`
 	IdentityService IdentityServiceConfig `mapstructure:"identity_service"`
+	Audit           AuditConfig           `mapstructure:"audit"`
+}
+
+// AuditConfig configures the agent-audit emitter (ADR-0018 / ADR-0019).
+// The emitter is always wired with the best-effort stderr JSON sink;
+// the durable Postgres sink is added when DurableDSN is set.
+type AuditConfig struct {
+	// DurableDSN is the Postgres connection string for the
+	// at-least-once durable audit sink. When empty, audit emission
+	// is best-effort (stderr only).
+	DurableDSN string `mapstructure:"durable_dsn"` // LOGIN_UI_AUDIT_DURABLE_DSN
+
+	// SkipMigration disables the CREATE TABLE IF NOT EXISTS call at
+	// startup. Default false.
+	SkipMigration bool `mapstructure:"skip_migration"` // LOGIN_UI_AUDIT_SKIP_MIGRATION
 }
 
 // ServerConfig holds HTTP server binding configuration.
@@ -63,6 +78,8 @@ func Load() (*Config, error) {
 	v.SetDefault("auth_server.url", "")
 	v.SetDefault("auth_server.service_token", "")
 	v.SetDefault("identity_service.url", "")
+	v.SetDefault("audit.durable_dsn", "")
+	v.SetDefault("audit.skip_migration", false)
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
