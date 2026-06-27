@@ -102,6 +102,14 @@ definitions:
           scopes include "openid". Empty + omitempty when OIDC mode is not active,
           matching the OAuth-only response shape clients see today.
         type: string
+      issued_token_type:
+        description: |-
+          IssuedTokenType is the RFC 8693 §2.2.1 echo of the issued token
+          type URN. Omitted from non-token-exchange responses so the wire
+          shape for client_credentials / authorization_code / refresh_token
+          is unchanged — RFC 8693 requires the field only on the
+          token-exchange response.
+        type: string
       refresh_token:
         type: string
       scope:
