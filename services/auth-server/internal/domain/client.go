@@ -18,15 +18,62 @@ const (
 	ClientTypePublic       ClientType = "public"
 )
 
+// ActorType classifies the principal kind a client represents per
+// identity-platform-go ADR-0015. Orthogonal to [ClientType] — a confidential
+// client may be a service or an agent; a public client may be a user-driven
+// SPA or an agent. Empty / unrecognised values are treated as
+// [ActorTypeService] at the application boundary (see [Client.ResolvedActorType]).
+type ActorType string
+
+const (
+	ActorTypeUser    ActorType = "user"
+	ActorTypeService ActorType = "service"
+	ActorTypeAgent   ActorType = "agent"
+)
+
 // Client represents an OAuth2 client.
+//
+// ActorType (ADR-0015) classifies the principal kind. When ActorType is
+// "agent" the client's ID also serves as the agent_id claim on issued
+// tokens — agents are registered as OAuth clients in this portfolio, so
+// the two identifiers coincide.
 type Client struct {
 	ID           string
 	Secret       string
 	Name         string
 	Type         ClientType
+	ActorType    ActorType
 	Scopes       []string
 	RedirectURIs []string
 	GrantTypes   []GrantType
+}
+
+// ResolvedActorType returns the client's ActorType normalised against the
+// recognised enum, defaulting to [ActorTypeService] for empty or
+// unrecognised values per ADR-0015's fail-closed rule. Use this when
+// emitting tokens or audit events so persisted records that pre-date
+// ADR-0015 surface as service rather than as the empty string.
+func (c *Client) ResolvedActorType() ActorType {
+	if c == nil {
+		return ActorTypeService
+	}
+	switch c.ActorType {
+	case ActorTypeUser, ActorTypeAgent:
+		return c.ActorType
+	default:
+		return ActorTypeService
+	}
+}
+
+// AgentID returns the agent identifier when the client represents an
+// agent, and the empty string otherwise. Today this returns Client.ID
+// for agents; the indirection lets a future ADR introduce a distinct
+// agent_id without changing call sites.
+func (c *Client) AgentID() string {
+	if c == nil || c.ResolvedActorType() != ActorTypeAgent {
+		return ""
+	}
+	return c.ID
 }
 
 // IsPublic reports whether the client is a public client (no secret).
