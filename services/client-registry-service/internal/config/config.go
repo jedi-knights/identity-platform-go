@@ -10,10 +10,33 @@ import (
 
 // Config holds all client-registry-service configuration.
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	Log      LogConfig      `mapstructure:"log"`
-	Database DatabaseConfig `mapstructure:"database"`
-	Audit    AuditConfig    `mapstructure:"audit"`
+	Server       ServerConfig       `mapstructure:"server"`
+	Log          LogConfig          `mapstructure:"log"`
+	Database     DatabaseConfig     `mapstructure:"database"`
+	Audit        AuditConfig        `mapstructure:"audit"`
+	Registration RegistrationConfig `mapstructure:"registration"`
+}
+
+// RegistrationConfig configures the RFC 7591 dynamic client registration
+// endpoint (ADR-0013). When PublicBaseURL is empty the /register route
+// is not registered.
+type RegistrationConfig struct {
+	// PublicBaseURL is the absolute origin the registration endpoint
+	// is reachable at from clients. Used to build the response's
+	// registration_client_uri. Sourced from CLIENT_REGISTRATION_BASE_URL.
+	PublicBaseURL string `mapstructure:"base_url"`
+
+	// AllowedScopes is the comma-separated set of scopes a
+	// dynamically-registered client may request. Each requested scope
+	// must be in this set or registration fails with
+	// invalid_client_metadata. Empty allows any scope (dev only).
+	// Sourced from CLIENT_REGISTRATION_ALLOWED_SCOPES.
+	AllowedScopes []string `mapstructure:"allowed_scopes"`
+
+	// AllowLocalhost relaxes the redirect-URI / metadata URI scheme
+	// check so http://localhost is accepted alongside https. Defaults
+	// to false. Sourced from CLIENT_REGISTRATION_ALLOW_LOCALHOST.
+	AllowLocalhost bool `mapstructure:"allow_localhost"`
 }
 
 // AuditConfig configures the agent-audit emitter (ADR-0018 / ADR-0019).
@@ -64,6 +87,9 @@ func Load() (*Config, error) {
 	v.SetDefault("database.url", "")
 	v.SetDefault("audit.durable_dsn", "")
 	v.SetDefault("audit.skip_migration", false)
+	v.SetDefault("registration.base_url", "")
+	v.SetDefault("registration.allowed_scopes", []string{})
+	v.SetDefault("registration.allow_localhost", false)
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
