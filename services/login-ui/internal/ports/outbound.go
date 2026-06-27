@@ -44,3 +44,60 @@ type IssueCodeResponse struct {
 type AuthCodeIssuer interface {
 	IssueCode(ctx context.Context, req IssueCodeRequest) (*IssueCodeResponse, error)
 }
+
+// Plan describes one of the catalog entries Lago publishes via its plans
+// API. The shape is deliberately minimal — login-ui only needs enough to
+// render the selection page and start a checkout session; the canonical
+// representation lives in Lago.
+type Plan struct {
+	Code        string
+	Name        string
+	Description string
+	// AmountCents is the headline price in the smallest currency unit
+	// (cents). Zero is a valid value for free plans.
+	AmountCents int64
+	Currency    string
+	Interval    string // monthly | yearly | weekly | pay-as-you-go
+}
+
+// CheckoutSessionRequest captures the inputs to CreateCheckoutSession.
+type CheckoutSessionRequest struct {
+	CustomerID string // Lago external_customer_id; today equals the user's subject_id
+	PlanCode   string
+	SuccessURL string
+	CancelURL  string
+}
+
+// CheckoutSession is the result of asking Lago to start a Stripe Checkout
+// flow for the given customer + plan. URL is the redirect login-ui sends
+// the user to; the rest of the flow happens on Stripe's hosted page and
+// returns via the configured success URL.
+type CheckoutSession struct {
+	URL string
+}
+
+// PortalSession is the result of asking Lago for a Stripe Customer Portal
+// URL. The user manages cards, downloads invoices, and cancels subscriptions
+// on Stripe's hosted page; login-ui never sees card data.
+type PortalSession struct {
+	URL string
+}
+
+// BillingClient is the outbound port for plan listing, checkout, and
+// portal flows per identity-platform-go ADR-0019. The Lago HTTP adapter
+// satisfies it; tests use a recording double.
+type BillingClient interface {
+	// ListPlans returns the active plans the user can subscribe to.
+	// Implementations may cache responses at a short TTL so a Lago
+	// outage degrades the selection page rather than blocking sign-in.
+	ListPlans(ctx context.Context) ([]Plan, error)
+
+	// CreateCheckoutSession asks Lago to start a Stripe Checkout flow for
+	// the given subscription. successURL and cancelURL are the
+	// post-payment redirect targets — Stripe sends the user back to one
+	// of them; the handler then redeems the subscription state.
+	CreateCheckoutSession(ctx context.Context, req CheckoutSessionRequest) (*CheckoutSession, error)
+
+	// CreatePortalSession asks Lago for a Stripe Customer Portal URL.
+	CreatePortalSession(ctx context.Context, customerID string) (*PortalSession, error)
+}
