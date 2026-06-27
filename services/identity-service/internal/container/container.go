@@ -13,6 +13,7 @@ import (
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	"github.com/jedi-knights/go-platform/apperrors"
+	"github.com/jedi-knights/go-platform/audit"
 	platform "github.com/jedi-knights/go-platform/container"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/inbound/http"
@@ -22,6 +23,7 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/domain"
+	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/observability"
 )
 
 // New constructs and bootstraps a platform container wired with every
@@ -52,6 +54,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, repositoriesProvider)
 	platform.Register(c, emailSenderProvider)
 	platform.Register(c, hasherProvider)
+	platform.Register(c, auditEmitterProvider)
 	platform.Register(c, authServiceProvider)
 	platform.Register(c, emailVerificationServiceProvider)
 	platform.Register(c, handlerProvider)
@@ -123,13 +126,36 @@ func hasherProvider(context.Context, *platform.Container) (domain.PasswordHasher
 	return application.NewBCryptHasher(bcrypt.DefaultCost), nil
 }
 
+// auditEmitterProvider builds the audit.Emitter per ADR-0018 + ADR-0019.
+// When IDENTITY_AUDIT_DURABLE_DSN is set the emitter writes through a
+// Postgres durable sink in addition to the best-effort stderr sink, and
+// the returned pool is registered as an OnClose hook for graceful
+// shutdown.
+func auditEmitterProvider(ctx context.Context, c *platform.Container) (audit.Emitter, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	wiring, err := observability.NewAuditEmitter(ctx, cfg, log)
+	if err != nil {
+		return nil, fmt.Errorf("audit: %w", err)
+	}
+	if wiring.Pool != nil {
+		pool := wiring.Pool
+		c.OnClose("audit-durable", func(_ context.Context) error {
+			pool.Close()
+			return nil
+		})
+	}
+	return wiring.Emitter, nil
+}
+
 func authServiceProvider(ctx context.Context, c *platform.Container) (*application.AuthService, error) {
 	repos, err := platform.Resolve[*repositories](ctx, c)
 	if err != nil {
 		return nil, err
 	}
 	hasher := platform.MustResolve[domain.PasswordHasher](ctx, c)
-	return application.NewAuthService(repos.user, hasher), nil
+	emitter := platform.MustResolve[audit.Emitter](ctx, c)
+	return application.NewAuthService(repos.user, hasher).WithAudit(emitter, "identity-service"), nil
 }
 
 func emailVerificationServiceProvider(ctx context.Context, c *platform.Container) (*application.EmailVerificationService, error) {
