@@ -8,19 +8,56 @@ import (
 	"time"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+	"github.com/jedi-knights/go-platform/audit"
 
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/domain"
 )
 
 // AuthService handles user authentication and registration.
+//
+// The service is the chokepoint for user identity actions and therefore
+// the natural emission point for the user_authenticated and
+// user_registered audit events (ADR-0018 + ADR-0019). Audit is wired via
+// [AuthService.WithAudit]; when audit is not configured the service uses
+// a no-op emitter that always succeeds, preserving backwards
+// compatibility for tests and adapters that pre-date the audit feature.
 type AuthService struct {
 	userRepo domain.UserRepository
 	hasher   domain.PasswordHasher
+
+	emitter audit.Emitter
+	service string
 }
 
 // NewAuthService creates an AuthService with the given user repository and password hasher.
+// The returned service uses a no-op audit emitter; call [AuthService.WithAudit]
+// to wire a real emitter at composition time.
 func NewAuthService(userRepo domain.UserRepository, hasher domain.PasswordHasher) *AuthService {
-	return &AuthService{userRepo: userRepo, hasher: hasher}
+	return &AuthService{
+		userRepo: userRepo,
+		hasher:   hasher,
+		emitter:  audit.New(audit.NoopSink{}),
+		service:  "identity-service",
+	}
+}
+
+// WithAudit configures the service's audit emitter and service name.
+// Returns the receiver to allow chained construction at the composition
+// root. emitter must be non-nil. service is used as Event.Service on
+// every emitted user_authenticated and user_registered event.
+//
+// Per ADR-0019 these are paid events for accounting purposes — a
+// durable-sink failure surfaces to the caller and the request fails so
+// the meter cannot have gaps.
+func (s *AuthService) WithAudit(emitter audit.Emitter, service string) *AuthService {
+	if emitter == nil {
+		panic("application: WithAudit called with nil emitter")
+	}
+	s.emitter = emitter
+	if service != "" {
+		s.service = service
+	}
+	return s
 }
 
 // Login verifies credentials and returns the user's identity on success.
@@ -45,6 +82,27 @@ func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (*doma
 
 	if err := s.hasher.Compare(user.PasswordHash, req.Password); err != nil {
 		return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid credentials")
+	}
+
+	if err := s.emitter.Emit(ctx, audit.Event{
+		EventType:      "user_authenticated",
+		Service:        s.service,
+		ActorType:      audit.ActorTypeUser,
+		ActorID:        user.ID,
+		SubjectID:      user.ID,
+		Resource:       "endpoint:authenticate",
+		ResourceKind:   audit.ResourceKindEndpoint,
+		ResourceID:     "authenticate",
+		ResourceParent: s.service,
+		ResourcePath:   s.service + "/endpoint/authenticate",
+		Action:         "authenticate",
+		Decision:       audit.DecisionAllow,
+		Attrs: map[string]any{
+			"email":          user.Email,
+			"email_verified": user.IsEmailVerified(),
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("audit emit (user_authenticated): %w", err)
 	}
 
 	return &domain.LoginResponse{
@@ -73,6 +131,26 @@ func (s *AuthService) Register(ctx context.Context, req domain.RegisterRequest) 
 
 	if err := s.userRepo.Save(ctx, user); err != nil {
 		return nil, fmt.Errorf("saving user: %w", err)
+	}
+
+	if err := s.emitter.Emit(ctx, audit.Event{
+		EventType:      "user_registered",
+		Service:        s.service,
+		ActorType:      audit.ActorTypeUser,
+		ActorID:        user.ID,
+		SubjectID:      user.ID,
+		Resource:       "endpoint:register",
+		ResourceKind:   audit.ResourceKindEndpoint,
+		ResourceID:     "register",
+		ResourceParent: s.service,
+		ResourcePath:   s.service + "/endpoint/register",
+		Action:         "register",
+		Decision:       audit.DecisionAllow,
+		Attrs: map[string]any{
+			"email": user.Email,
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("audit emit (user_registered): %w", err)
 	}
 
 	return &domain.RegisterResponse{
