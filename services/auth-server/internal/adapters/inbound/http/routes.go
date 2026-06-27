@@ -17,7 +17,12 @@ import (
 // registered (HS256 mode does not publish a JWKS document). userInfo may
 // be nil — when nil, /userinfo is not registered (OIDC mode disabled when
 // AUTH_JWT_OIDC_ISSUER is unset).
-func NewRouter(h *Handler, jwks *JWKSHandler, userInfo *UserInfoHandler, logger logging.Logger) http.Handler {
+//
+// metadata may be nil — when nil, the RFC 8414 / OIDC Discovery
+// endpoints are not registered (ADR-0012 requires the operator to set
+// AUTH_METADATA_PUBLIC_BASE_URL so the metadata document can carry
+// absolute URLs).
+func NewRouter(h *Handler, jwks *JWKSHandler, userInfo *UserInfoHandler, metadata *MetadataHandler, logger logging.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /oauth/token", h.Token)
@@ -39,6 +44,14 @@ func NewRouter(h *Handler, jwks *JWKSHandler, userInfo *UserInfoHandler, logger 
 		// OIDC §5.3.1: both GET and POST are accepted.
 		mux.HandleFunc("GET /userinfo", userInfo.Get)
 		mux.HandleFunc("POST /userinfo", userInfo.Get)
+	}
+	if metadata != nil {
+		// RFC 8414 §3 — OAuth 2.0 Authorization Server Metadata.
+		mux.HandleFunc("GET /.well-known/oauth-authorization-server", metadata.OAuthMetadata)
+		// OIDC Discovery 1.0 §4. Registered alongside the RFC 8414
+		// endpoint; the builder produces an OIDC-flavoured document
+		// only when OIDC mode is active.
+		mux.HandleFunc("GET /.well-known/openid-configuration", metadata.OIDCMetadata)
 	}
 
 	// Apply middleware chain (Chain of Responsibility pattern).

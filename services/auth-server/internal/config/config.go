@@ -23,8 +23,35 @@ type Config struct {
 	Introspection     IntrospectionConfig     `mapstructure:"introspection"`
 	LoginUI           LoginUIConfig           `mapstructure:"login_ui"`
 	Audit             AuditConfig             `mapstructure:"audit"`
+	Metadata          MetadataConfig          `mapstructure:"metadata"`
 	DevSeedClients    bool                    `mapstructure:"dev_seed_clients"`
 	DevClientSecret   string                  `mapstructure:"dev_client_secret"` // AUTH_DEV_CLIENT_SECRET; only used when DevSeedClients=true
+}
+
+// MetadataConfig configures the RFC 8414 / OIDC Discovery 1.0 metadata
+// endpoints (ADR-0012). PublicBaseURL is the absolute origin the
+// auth-server is reachable at from clients — typically the
+// gateway-fronted URL — used to construct authorization, token,
+// introspection, revocation, JWKS, and userinfo URLs in the metadata
+// document.
+//
+// When PublicBaseURL is empty the metadata endpoints are not registered.
+// The JWKS endpoint continues to work because it does not need a
+// configured base URL.
+type MetadataConfig struct {
+	// PublicBaseURL is the absolute origin the auth-server is reachable
+	// at from clients. Defaults to "" — metadata endpoints disabled when
+	// unset. Sourced from AUTH_METADATA_PUBLIC_BASE_URL.
+	PublicBaseURL string `mapstructure:"public_base_url"`
+
+	// ServiceDocumentation is an optional URL surfaced in the metadata
+	// document so clients can discover human-readable docs.
+	ServiceDocumentation string `mapstructure:"service_documentation"`
+
+	// RegistrationEndpoint advertises the RFC 7591 dynamic-client-
+	// registration URL. Empty omits the field — set this once ADR-0013
+	// implementation lands in client-registry-service.
+	RegistrationEndpoint string `mapstructure:"registration_endpoint"`
 }
 
 type ServerConfig struct {
@@ -198,6 +225,9 @@ func Load() (*Config, error) {
 	v.SetDefault("introspection.secret", "")
 	v.SetDefault("audit.durable_dsn", "")
 	v.SetDefault("audit.skip_migration", false)
+	v.SetDefault("metadata.public_base_url", "")
+	v.SetDefault("metadata.service_documentation", "")
+	v.SetDefault("metadata.registration_endpoint", "")
 	v.SetDefault("dev_seed_clients", false)
 	v.SetDefault("dev_client_secret", "")
 
