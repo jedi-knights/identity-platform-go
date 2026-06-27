@@ -34,4 +34,13 @@ type GrantResponse struct {
 	ExpiresIn    int    `json:"expires_in"`
 	Scope        string `json:"scope,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
+
+	// ActorType, AgentID, and Subject are populated by the strategy for
+	// audit emission per ADR-0015. They are not serialised on the
+	// /oauth/token response — the access token itself carries the
+	// authoritative values. Marked json:"-" so they stay strictly
+	// server-internal.
+	ActorType ActorType `json:"-"`
+	AgentID   string    `json:"-"`
+	Subject   string    `json:"-"`
 }
