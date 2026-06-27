@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+	"github.com/jedi-knights/go-platform/audit"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 
@@ -554,6 +555,163 @@ func TestRevoke_InfrastructureError_Returns500WithRFC6749Body(t *testing.T) {
 		t.Errorf("Cache-Control = %q, want %q", cc, "no-store")
 	}
 }
+
+// --- Audit emission (ADR-0018) ---
+
+// captureSink records every audit event for verification.
+type captureSink struct {
+	events []audit.Event
+	err    error
+}
+
+func (c *captureSink) Sink(_ context.Context, e audit.Event) error {
+	c.events = append(c.events, e)
+	return c.err
+}
+
+func TestIntrospect_EmitsTokenIntrospected_Active(t *testing.T) {
+	introspector := &fakeIntrospector{resp: &domain.IntrospectResponse{
+		Active:   true,
+		ClientID: "rs-1",
+		Subject:  "user-99",
+		JTI:      "jti-xyz",
+	}}
+	sink := &captureSink{}
+	h := newTestHandler(t, &fakeIssuer{}, introspector, &fakeRevoker{}).
+		WithAudit(audit.New(sink), "auth-server")
+
+	_ = postForm(t, h.Introspect, url.Values{
+		"token":         {"some.jwt.token"},
+		"client_id":     {"caller-c1"},
+		"client_secret": {"s1"},
+	})
+
+	if len(sink.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
+	}
+	e := sink.events[0]
+	if e.EventType != "token_introspected" {
+		t.Errorf("event_type = %q, want token_introspected", e.EventType)
+	}
+	if e.ActorID != "caller-c1" {
+		t.Errorf("actor_id = %q, want caller-c1", e.ActorID)
+	}
+	if e.SubjectID != "user-99" {
+		t.Errorf("subject_id = %q, want user-99", e.SubjectID)
+	}
+	if e.ResourceKind != audit.ResourceKindToken {
+		t.Errorf("resource_kind = %q, want token", e.ResourceKind)
+	}
+	if e.ResourcePath != "auth-server/token/access" {
+		t.Errorf("resource_path = %q, want auth-server/token/access", e.ResourcePath)
+	}
+	if active, _ := e.Attrs["active"].(bool); !active {
+		t.Errorf("attrs.active = %v, want true", e.Attrs["active"])
+	}
+}
+
+func TestIntrospect_EmitsTokenIntrospected_Inactive(t *testing.T) {
+	introspector := &fakeIntrospector{resp: &domain.IntrospectResponse{Active: false}}
+	sink := &captureSink{}
+	h := newTestHandler(t, &fakeIssuer{}, introspector, &fakeRevoker{}).
+		WithAudit(audit.New(sink), "auth-server")
+
+	_ = postForm(t, h.Introspect, url.Values{
+		"token":         {"expired.jwt"},
+		"client_id":     {"caller-c1"},
+		"client_secret": {"s1"},
+	})
+
+	if len(sink.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
+	}
+	if active, _ := sink.events[0].Attrs["active"].(bool); active {
+		t.Errorf("attrs.active = %v, want false", sink.events[0].Attrs["active"])
+	}
+}
+
+func TestIntrospect_EmitFailure_ReturnsInactive(t *testing.T) {
+	// Per ADR-0019: introspect must degrade safely (RFC 7662 §2.2 forbids
+	// non-2xx) — audit-emit failure routes to the same active=false output.
+	introspector := &fakeIntrospector{resp: &domain.IntrospectResponse{Active: true, Subject: "u"}}
+	sink := &captureSink{err: errAuditTransport}
+	h := newTestHandler(t, &fakeIssuer{}, introspector, &fakeRevoker{}).
+		WithAudit(audit.New(sink), "auth-server")
+
+	w := postForm(t, h.Introspect, url.Values{
+		"token":         {"any.jwt"},
+		"client_id":     {"caller-c1"},
+		"client_secret": {"s1"},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (RFC 7662 safe degrade)", w.Code)
+	}
+	var resp domain.IntrospectResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Active {
+		t.Errorf("Active = true on audit failure; expected safe-deny inactive")
+	}
+}
+
+func TestRevoke_EmitsTokenRevoked(t *testing.T) {
+	sink := &captureSink{}
+	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{}).
+		WithAudit(audit.New(sink), "auth-server")
+
+	w := postForm(t, h.Revoke, url.Values{
+		"token":           {"tok.abc"},
+		"client_id":       {"caller-c1"},
+		"client_secret":   {"s1"},
+		"token_type_hint": {"access_token"},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if len(sink.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
+	}
+	e := sink.events[0]
+	if e.EventType != "token_revoked" {
+		t.Errorf("event_type = %q, want token_revoked", e.EventType)
+	}
+	if e.ActorID != "caller-c1" {
+		t.Errorf("actor_id = %q, want caller-c1", e.ActorID)
+	}
+	if hint, _ := e.Attrs["token_type_hint"].(string); hint != "access_token" {
+		t.Errorf("attrs.token_type_hint = %v, want access_token", e.Attrs["token_type_hint"])
+	}
+}
+
+func TestRevoke_AuditFailure_Returns500(t *testing.T) {
+	// Per ADR-0019: token_revoked is a paid event; an emit failure fails
+	// the request so accounting cannot have gaps.
+	sink := &captureSink{err: errAuditTransport}
+	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{}).
+		WithAudit(audit.New(sink), "auth-server")
+
+	w := postForm(t, h.Revoke, url.Values{
+		"token":         {"tok.abc"},
+		"client_id":     {"caller-c1"},
+		"client_secret": {"s1"},
+	})
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 (ADR-0019 paid-event policy)", w.Code)
+	}
+}
+
+func TestHandler_WithAudit_NilEmitterPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	_ = newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{}).
+		WithAudit(nil, "auth-server")
+}
+
+var errAuditTransport = errors.New("simulated audit transport failure")
 
 // --- Authorize endpoint ---
 
