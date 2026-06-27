@@ -77,30 +77,41 @@ func (s *IntrospectionService) Introspect(ctx context.Context, raw string) (*dom
 		return nil, err
 	}
 	if !result.Active {
-		if emitErr := s.emit(ctx, result); emitErr != nil {
-			return nil, fmt.Errorf("audit emit (token_introspected): %w", emitErr)
-		}
-		return result, nil
+		return s.emitAndReturn(ctx, result)
 	}
-	// If a revocation store is configured, confirm the token is still present in Redis.
-	// auth-server deletes the key on revocation, so a missing key means the token was revoked.
-	if s.revocation != nil {
-		active, err := s.revocation.IsActive(ctx, raw)
-		if err != nil {
-			// Propagate so the handler can log with trace ID context.
-			// The handler translates this to {active:false} per RFC 7662 §2.2 (fail closed).
-			return nil, fmt.Errorf("revocation check: %w", err)
-		}
-		if !active {
-			inactive := &domain.IntrospectionResult{Active: false}
-			if emitErr := s.emit(ctx, inactive); emitErr != nil {
-				return nil, fmt.Errorf("audit emit (token_introspected): %w", emitErr)
-			}
-			return inactive, nil
-		}
+	revoked, err := s.checkRevocation(ctx, raw)
+	if err != nil {
+		return nil, err
 	}
-	if emitErr := s.emit(ctx, result); emitErr != nil {
-		return nil, fmt.Errorf("audit emit (token_introspected): %w", emitErr)
+	if revoked {
+		return s.emitAndReturn(ctx, &domain.IntrospectionResult{Active: false})
+	}
+	return s.emitAndReturn(ctx, result)
+}
+
+// checkRevocation consults the optional revocation store. Returns
+// revoked=true when the store is configured and reports the token as
+// missing. A nil store always returns revoked=false.
+func (s *IntrospectionService) checkRevocation(ctx context.Context, raw string) (bool, error) {
+	if s.revocation == nil {
+		return false, nil
+	}
+	active, err := s.revocation.IsActive(ctx, raw)
+	if err != nil {
+		// Propagate so the handler can log with trace ID context.
+		// The handler translates this to {active:false} per RFC 7662 §2.2 (fail closed).
+		return false, fmt.Errorf("revocation check: %w", err)
+	}
+	return !active, nil
+}
+
+// emitAndReturn emits the token_introspected event for result and
+// returns (result, nil) on success or (nil, wrapped error) on emit
+// failure. Centralising the wrapping prevents the three success exit
+// points from each repeating the same fmt.Errorf shape.
+func (s *IntrospectionService) emitAndReturn(ctx context.Context, result *domain.IntrospectionResult) (*domain.IntrospectionResult, error) {
+	if err := s.emit(ctx, result); err != nil {
+		return nil, fmt.Errorf("audit emit (token_introspected): %w", err)
 	}
 	return result, nil
 }
