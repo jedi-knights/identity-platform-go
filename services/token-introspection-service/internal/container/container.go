@@ -7,12 +7,15 @@ package container
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	"github.com/jedi-knights/go-platform/audit"
 	platform "github.com/jedi-knights/go-platform/container"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/adapters/inbound/http"
 	jwksadapter "github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/adapters/outbound/jwks"
@@ -56,7 +59,20 @@ func tokenValidatorProvider(ctx context.Context, c *platform.Container) (domain.
 	if cfg.JWT.JWKSURL != "" {
 		ttl := parseJWKSCacheTTL(cfg.JWT.JWKSCacheTTL)
 		log.Info("using JWKS-backed RS256 validation", "url", cfg.JWT.JWKSURL, "cache_ttl", ttl)
-		fetcher := jwksadapter.NewFetcher(cfg.JWT.JWKSURL, jwksadapter.WithCacheTTL(ttl))
+		// otelhttp.NewTransport wraps the JWKS fetch so every outbound
+		// request becomes a client span and carries the W3C
+		// traceparent header. The wrapper is inert when tracing is
+		// disabled — no spans are emitted but header propagation still
+		// runs, which is the correct behaviour for a no-op
+		// TracerProvider.
+		httpClient := &http.Client{
+			Timeout:   5 * time.Second,
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+		}
+		fetcher := jwksadapter.NewFetcher(cfg.JWT.JWKSURL,
+			jwksadapter.WithCacheTTL(ttl),
+			jwksadapter.WithHTTPClient(httpClient),
+		)
 		return jwtadapter.NewRS256Validator(fetcher.KeyByID, cfg.JWT.Issuer), nil
 	}
 	log.Info("using HS256 signing-key validation (legacy path; set INTROSPECT_JWT_JWKS_URL for RS256)")
