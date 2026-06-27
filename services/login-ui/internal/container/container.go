@@ -18,6 +18,7 @@ import (
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/outbound/authserver"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/outbound/identityservice"
+	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/outbound/lago"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/observability"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/ports"
@@ -47,6 +48,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, auditEmitterProvider)
 	platform.Register(c, userAuthenticatorProvider)
 	platform.Register(c, authCodeIssuerProvider)
+	platform.Register(c, billingClientProvider)
 	platform.Register(c, handlerProvider)
 
 	if err := c.Bootstrap(ctx); err != nil {
@@ -60,7 +62,28 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	userAuth, _ := platform.Resolve[ports.UserAuthenticator](ctx, c)
 	codeIssuer, _ := platform.Resolve[ports.AuthCodeIssuer](ctx, c)
 	emitter := platform.MustResolve[audit.Emitter](ctx, c)
-	return inboundhttp.NewHandler(userAuth, codeIssuer, logger).WithAudit(emitter, "login-ui"), nil
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	billing, _ := platform.Resolve[ports.BillingClient](ctx, c)
+	h := inboundhttp.NewHandler(userAuth, codeIssuer, logger).WithAudit(emitter, "login-ui")
+	if billing != nil {
+		h = h.WithBilling(billing, cfg.Billing.SuccessURL, cfg.Billing.CancelURL)
+	}
+	return h, nil
+}
+
+// billingClientProvider wires the Lago billing client when
+// LOGIN_UI_BILLING_LAGO_URL is set. When unset (or when the API key is
+// missing) the provider returns (nil, nil) — the platform container
+// resolves the nil interface and the billing routes degrade to 503. This
+// is the documented degradation path for environments that have not yet
+// stood up Lago.
+func billingClientProvider(ctx context.Context, c *platform.Container) (ports.BillingClient, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	if cfg.Billing.LagoURL == "" || cfg.Billing.LagoAPIKey == "" {
+		return nil, nil //nolint:nilnil // documented degradation path
+	}
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	return lago.New(cfg.Billing.LagoURL, cfg.Billing.LagoAPIKey, httpClient), nil
 }
 
 // auditEmitterProvider builds the audit.Emitter per ADR-0018 + ADR-0019.
