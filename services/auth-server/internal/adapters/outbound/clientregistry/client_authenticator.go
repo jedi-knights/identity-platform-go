@@ -31,6 +31,7 @@ type getClientResponse struct {
 	ClientID     string   `json:"client_id"`
 	Name         string   `json:"name"`
 	ClientType   string   `json:"client_type"`
+	ActorType    string   `json:"actor_type"`
 	Scopes       []string `json:"scopes"`
 	RedirectURIs []string `json:"redirect_uris"`
 	GrantTypes   []string `json:"grant_types"`
@@ -167,6 +168,7 @@ func toClient(cr *getClientResponse) *domain.Client {
 		ID:           cr.ClientID,
 		Name:         cr.Name,
 		Type:         domain.ClientType(cr.ClientType),
+		ActorType:    domain.ActorType(cr.ActorType),
 		Scopes:       cr.Scopes,
 		RedirectURIs: cr.RedirectURIs,
 		GrantTypes:   grantTypes,

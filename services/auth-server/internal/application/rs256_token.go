@@ -52,6 +52,8 @@ func (g *RS256TokenGenerator) Generate(_ context.Context, token *domain.Token) (
 		Audience:    g.audience,
 		Roles:       token.Roles,
 		Permissions: token.Permissions,
+		ActorType:   string(token.ActorType),
+		AgentID:     token.AgentID,
 		IssuedAt:    token.IssuedAt,
 		ExpiresAt:   token.ExpiresAt,
 	})
@@ -102,6 +104,8 @@ func (v *RS256TokenValidator) Validate(ctx context.Context, raw string) (*domain
 		Issuer:    claims.Issuer,
 		Audience:  []string(claims.Audience),
 		Scopes:    strings.Fields(claims.Scope),
+		ActorType: domain.ActorType(claims.ActorType),
+		AgentID:   claims.AgentID,
 		ExpiresAt: claims.ExpiresAt.Time,
 		IssuedAt:  claims.IssuedAt.Time,
 		TokenType: domain.TokenTypeBearer,
