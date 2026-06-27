@@ -171,8 +171,16 @@ func (s *TokenExchangeStrategy) Handle(ctx context.Context, req domain.GrantRequ
 
 // validateExchangeShape enforces the RFC 8693 §2.1 required-field rules
 // at the wire boundary so the strategy proper never inspects empty
-// inputs. Each rule maps to invalid_request per §2.2.2.
+// inputs. Each rule maps to invalid_request per §2.2.2. Split into
+// subject and optional checks so each helper stays under gocyclo.
 func validateExchangeShape(req domain.GrantRequest) error {
+	if err := validateSubjectToken(req); err != nil {
+		return err
+	}
+	return validateOptionalTokenTypes(req)
+}
+
+func validateSubjectToken(req domain.GrantRequest) error {
 	if req.SubjectToken == "" {
 		return fmt.Errorf("%w: subject_token is required", ErrInvalidRequest)
 	}
@@ -182,6 +190,10 @@ func validateExchangeShape(req domain.GrantRequest) error {
 	if req.SubjectTokenType != domain.TokenTypeURNAccessToken {
 		return fmt.Errorf("%w: subject_token_type %q is not supported", ErrInvalidRequest, req.SubjectTokenType)
 	}
+	return nil
+}
+
+func validateOptionalTokenTypes(req domain.GrantRequest) error {
 	if req.ActorToken != "" && req.ActorTokenType != domain.TokenTypeURNAccessToken {
 		return fmt.Errorf("%w: actor_token_type %q is not supported", ErrInvalidRequest, req.ActorTokenType)
 	}
