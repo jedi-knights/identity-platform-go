@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
+	"github.com/jedi-knights/go-platform/audit"
 	platform "github.com/jedi-knights/go-platform/container"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/adapters/inbound/http"
@@ -20,7 +21,30 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/domain"
+	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/observability"
 )
+
+// auditEmitterProvider builds the audit.Emitter per ADR-0018 + ADR-0019.
+// When INTROSPECT_AUDIT_DURABLE_DSN is set the emitter writes through a
+// Postgres durable sink in addition to the best-effort stderr sink, and
+// the returned pool is registered as an OnClose hook for graceful
+// shutdown.
+func auditEmitterProvider(ctx context.Context, c *platform.Container) (audit.Emitter, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	wiring, err := observability.NewAuditEmitter(ctx, cfg, log)
+	if err != nil {
+		return nil, fmt.Errorf("audit: %w", err)
+	}
+	if wiring.Pool != nil {
+		pool := wiring.Pool
+		c.OnClose("audit-durable", func(_ context.Context) error {
+			pool.Close()
+			return nil
+		})
+	}
+	return wiring.Emitter, nil
+}
 
 // tokenValidatorProvider builds the right TokenValidator for the configured
 // path. JWKS-backed RS256 takes precedence over the legacy HS256 signing key;
@@ -102,6 +126,8 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 
 	platform.Register(c, tokenValidatorProvider)
 
+	platform.Register(c, auditEmitterProvider)
+
 	platform.Register(c, func(ctx context.Context, c *platform.Container) (*application.IntrospectionService, error) {
 		validator := platform.MustResolve[domain.TokenValidator](ctx, c)
 		// Revocation may be nil when Redis is unconfigured; IntrospectionService
@@ -110,7 +136,9 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 		if err != nil {
 			return nil, err
 		}
-		return application.NewIntrospectionService(validator, revocation), nil
+		emitter := platform.MustResolve[audit.Emitter](ctx, c)
+		return application.NewIntrospectionService(validator, revocation).
+			WithAudit(emitter, "token-introspection-service"), nil
 	})
 
 	platform.Register(c, func(ctx context.Context, c *platform.Container) (*inboundhttp.Handler, error) {
