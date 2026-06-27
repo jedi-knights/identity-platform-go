@@ -124,16 +124,41 @@ func (r *GrantStrategyRegistry) Handle(ctx context.Context, req domain.GrantRequ
 }
 
 // tokenIssuedEvent constructs the ADR-0018 envelope for a successful
-// token grant. ActorType is derived from the grant type as a placeholder
-// pending ADR-0015 implementation (which will source actor_type from the
-// authenticated client record); actor identification still respects the
-// human-vs-machine split the policy engine cares about today.
+// token grant. ActorType / actor_id are sourced from the grant's
+// authenticated principal via the server-internal fields the strategy
+// stamped onto [domain.GrantResponse] (ActorType, AgentID, Subject):
+//   - For client_credentials and refresh_token grants the actor is the
+//     OAuth client itself, classified by [domain.Client.ResolvedActorType].
+//   - For authorization_code the actor is the human resource owner; the
+//     client's classification is recorded as an attr but not as the
+//     envelope's actor_type, matching ADR-0015's "user owns the cost"
+//     default in identity-platform-go ADR-0019.
 func tokenIssuedEvent(service string, req domain.GrantRequest, resp *domain.GrantResponse) audit.Event {
+	actorType := audit.ActorType(resp.ActorType)
+	if actorType == "" {
+		actorType = audit.ActorTypeService
+	}
+	actorID := req.ClientID
+	if resp.ActorType == domain.ActorTypeUser {
+		actorID = resp.Subject
+	}
+	attrs := map[string]any{
+		"grant_type":  string(req.GrantType),
+		"scope":       resp.Scope,
+		"expires_in":  resp.ExpiresIn,
+		"id_token":    resp.IDToken != "",
+		"has_refresh": resp.RefreshToken != "",
+		"actor_type":  string(resp.ActorType),
+	}
+	if resp.AgentID != "" {
+		attrs["agent_id"] = resp.AgentID
+	}
 	return audit.Event{
 		EventType:      "token_issued",
 		Service:        service,
-		ActorType:      actorTypeForGrant(req.GrantType),
-		ActorID:        req.ClientID,
+		ActorType:      actorType,
+		ActorID:        actorID,
+		SubjectID:      resp.Subject,
 		ClientID:       req.ClientID,
 		Resource:       "token:access",
 		ResourceKind:   audit.ResourceKindToken,
@@ -142,30 +167,7 @@ func tokenIssuedEvent(service string, req domain.GrantRequest, resp *domain.Gran
 		ResourcePath:   service + "/token/access",
 		Action:         "issue",
 		Decision:       audit.DecisionAllow,
-		Attrs: map[string]any{
-			"grant_type":  string(req.GrantType),
-			"scope":       resp.Scope,
-			"expires_in":  resp.ExpiresIn,
-			"id_token":    resp.IDToken != "",
-			"has_refresh": resp.RefreshToken != "",
-		},
-	}
-}
-
-// actorTypeForGrant is a placeholder until ADR-0015 lands and the
-// authenticated client record carries an actor_type field. The mapping
-// matches the human-vs-machine split that the policy engine uses today:
-// client_credentials is service-to-service, authorization_code involves
-// a human resource owner, refresh_token preserves the original principal
-// kind (defaulting to service when ambiguous).
-func actorTypeForGrant(gt domain.GrantType) audit.ActorType {
-	switch gt {
-	case domain.GrantTypeAuthorizationCode:
-		return audit.ActorTypeUser
-	case domain.GrantTypeClientCredentials, domain.GrantTypeRefreshToken:
-		return audit.ActorTypeService
-	default:
-		return audit.ActorTypeService
+		Attrs:          attrs,
 	}
 }
 
@@ -261,18 +263,20 @@ func (s *ClientCredentialsStrategy) issueRefreshToken(ctx context.Context, clien
 // issueAccessToken generates a token ID, builds the domain.Token, signs it as a JWT,
 // and persists it. Extracted from Handle to keep Handle's cyclomatic complexity
 // within bounds.
-func (s *ClientCredentialsStrategy) issueAccessToken(ctx context.Context, clientID string, scopes, roles, permissions []string, now time.Time) (string, error) {
+func (s *ClientCredentialsStrategy) issueAccessToken(ctx context.Context, client *domain.Client, scopes, roles, permissions []string, now time.Time) (string, error) {
 	tokenID, err := generateID()
 	if err != nil {
 		return "", apperrors.Wrap(apperrors.ErrCodeInternal, "generating token id", err)
 	}
 	token := &domain.Token{
 		ID:          tokenID,
-		ClientID:    clientID,
-		Subject:     clientID,
+		ClientID:    client.ID,
+		Subject:     client.ID,
 		Scopes:      scopes,
 		Roles:       roles,
 		Permissions: permissions,
+		ActorType:   client.ResolvedActorType(),
+		AgentID:     client.AgentID(),
 		ExpiresAt:   now.Add(s.ttl),
 		IssuedAt:    now,
 		TokenType:   domain.TokenTypeBearer,
@@ -310,7 +314,7 @@ func (s *ClientCredentialsStrategy) Handle(ctx context.Context, req domain.Grant
 	}
 
 	now := time.Now()
-	raw, err := s.issueAccessToken(ctx, req.ClientID, scopes, roles, permissions, now)
+	raw, err := s.issueAccessToken(ctx, client, scopes, roles, permissions, now)
 	if err != nil {
 		return nil, err
 	}
@@ -326,6 +330,9 @@ func (s *ClientCredentialsStrategy) Handle(ctx context.Context, req domain.Grant
 		ExpiresIn:    int(s.ttl.Seconds()),
 		RefreshToken: refreshRaw,
 		Scope:        strings.Join(scopes, " "),
+		ActorType:    client.ResolvedActorType(),
+		AgentID:      client.AgentID(),
+		Subject:      client.ID,
 	}, nil
 }
 
@@ -384,29 +391,50 @@ func (s *RefreshTokenStrategy) checkExpiry(ctx context.Context, raw string, rt *
 }
 
 // validateRefreshToken authenticates the client, looks up the refresh token, and
-// validates ownership and expiry. Extracted from Handle to keep complexity bounded.
-func (s *RefreshTokenStrategy) validateRefreshToken(ctx context.Context, req domain.GrantRequest) (*domain.RefreshToken, error) {
-	if _, err := s.clientAuth.Authenticate(ctx, req.ClientID, req.ClientSecret); err != nil {
-		return nil, fmt.Errorf("authenticating client: %w", err)
+// validates ownership and expiry. Returns the authenticated client alongside
+// the refresh token so the caller can propagate ActorType / AgentID claims
+// (ADR-0015) onto the rotated access token. Extracted from Handle to keep
+// complexity bounded.
+func (s *RefreshTokenStrategy) validateRefreshToken(ctx context.Context, req domain.GrantRequest) (*domain.RefreshToken, *domain.Client, error) {
+	client, err := s.clientAuth.Authenticate(ctx, req.ClientID, req.ClientSecret)
+	if err != nil {
+		return nil, nil, fmt.Errorf("authenticating client: %w", err)
 	}
 
 	existing, err := s.refreshTokenRepo.FindByRaw(ctx, req.RefreshToken)
 	if err != nil {
 		if errors.Is(err, domain.ErrRefreshTokenNotFound) {
-			return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid refresh token")
+			return nil, nil, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid refresh token")
 		}
-		return nil, fmt.Errorf("finding refresh token: %w", err)
+		return nil, nil, fmt.Errorf("finding refresh token: %w", err)
 	}
 
 	if existing.ClientID != req.ClientID {
-		return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "refresh token was not issued to this client")
+		return nil, nil, apperrors.New(apperrors.ErrCodeUnauthorized, "refresh token was not issued to this client")
 	}
 
 	if err := s.checkExpiry(ctx, req.RefreshToken, existing); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return existing, nil
+	return existing, client, nil
+}
+
+// refreshActorClassification derives ActorType + AgentID for a rotated
+// access token. The original refresh token does not carry actor_type
+// directly, but its Subject vs ClientID relationship tells us which grant
+// originally produced it:
+//   - Subject == ClientID → originally minted via client_credentials, so
+//     the token represents the client itself. ActorType comes from the
+//     client record (service or agent per ADR-0015).
+//   - Subject != ClientID → originally minted via authorization_code, so
+//     the token represents the human resource owner. ActorType is "user"
+//     regardless of the refreshing client's classification.
+func refreshActorClassification(rt *domain.RefreshToken, client *domain.Client) (domain.ActorType, string) {
+	if rt.Subject == rt.ClientID {
+		return client.ResolvedActorType(), client.AgentID()
+	}
+	return domain.ActorTypeUser, ""
 }
 
 // rotateRefreshToken deletes the old refresh token and issues a new one.
@@ -443,7 +471,7 @@ func (s *RefreshTokenStrategy) rotateRefreshToken(ctx context.Context, oldRaw st
 // Validates the client and refresh token, issues a new access token with updated
 // RBAC claims, and rotates the refresh token.
 func (s *RefreshTokenStrategy) Handle(ctx context.Context, req domain.GrantRequest) (*domain.GrantResponse, error) {
-	existing, err := s.validateRefreshToken(ctx, req)
+	existing, client, err := s.validateRefreshToken(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -460,6 +488,7 @@ func (s *RefreshTokenStrategy) Handle(ctx context.Context, req domain.GrantReque
 	if err != nil {
 		return nil, apperrors.Wrap(apperrors.ErrCodeInternal, "generating token id", err)
 	}
+	actorType, agentID := refreshActorClassification(existing, client)
 	token := &domain.Token{
 		ID:          id,
 		ClientID:    existing.ClientID,
@@ -467,6 +496,8 @@ func (s *RefreshTokenStrategy) Handle(ctx context.Context, req domain.GrantReque
 		Scopes:      existing.Scopes,
 		Roles:       roles,
 		Permissions: permissions,
+		ActorType:   actorType,
+		AgentID:     agentID,
 		ExpiresAt:   now.Add(s.ttl),
 		IssuedAt:    now,
 		TokenType:   domain.TokenTypeBearer,
@@ -491,6 +522,9 @@ func (s *RefreshTokenStrategy) Handle(ctx context.Context, req domain.GrantReque
 		ExpiresIn:    int(s.ttl.Seconds()),
 		RefreshToken: newRefreshRaw,
 		Scope:        strings.Join(existing.Scopes, " "),
+		ActorType:    actorType,
+		AgentID:      agentID,
+		Subject:      existing.Subject,
 	}, nil
 }
 
@@ -656,9 +690,14 @@ func (s *AuthorizationCodeStrategy) issueTokens(ctx context.Context, client *dom
 		Scopes:      code.Scopes,
 		Roles:       roles,
 		Permissions: permissions,
-		ExpiresAt:   now.Add(s.ttl),
-		IssuedAt:    now,
-		TokenType:   domain.TokenTypeBearer,
+		// ADR-0015: authorization_code tokens represent the human resource
+		// owner regardless of the client's own ActorType. The client may be
+		// an agent acting on the user's behalf, but the access token still
+		// carries the user's identity.
+		ActorType: domain.ActorTypeUser,
+		ExpiresAt: now.Add(s.ttl),
+		IssuedAt:  now,
+		TokenType: domain.TokenTypeBearer,
 	}
 	raw, err := s.tokenGen.Generate(ctx, token)
 	if err != nil {
@@ -683,6 +722,8 @@ func (s *AuthorizationCodeStrategy) issueTokens(ctx context.Context, client *dom
 		ExpiresIn:    int(s.ttl.Seconds()),
 		RefreshToken: refreshRaw,
 		Scope:        strings.Join(code.Scopes, " "),
+		ActorType:    domain.ActorTypeUser,
+		Subject:      code.Subject,
 	}, nil
 }
 

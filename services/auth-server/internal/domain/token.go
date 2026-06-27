@@ -23,6 +23,12 @@ const (
 )
 
 // Token represents an issued OAuth token.
+//
+// ActorType + AgentID (ADR-0015) classify the principal kind on the
+// issued token. ActorType is "user" | "service" | "agent" matching the
+// audit envelope and the jwtutil.Claims field of the same name; AgentID
+// is set when ActorType is "agent" and equals the OAuth client_id today.
+// Both are empty for tokens minted before ADR-0015 implementation.
 type Token struct {
 	ID          string
 	ClientID    string
@@ -32,6 +38,8 @@ type Token struct {
 	Scopes      []string
 	Roles       []string // RBAC roles embedded in JWT; resolved at issuance
 	Permissions []string // resolved permissions ("resource:action"); resolved at issuance
+	ActorType   ActorType
+	AgentID     string
 	ExpiresAt   time.Time
 	IssuedAt    time.Time
 	TokenType   TokenType

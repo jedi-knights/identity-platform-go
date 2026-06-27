@@ -540,6 +540,90 @@ func TestGrantStrategyRegistry_Handle_FailsWhenAuditFails(t *testing.T) {
 	}
 }
 
+func TestGrantStrategyRegistry_Handle_EmitsAgentActorType(t *testing.T) {
+	// ADR-0015: when the authenticated client is classified as an agent,
+	// the issued token and the token_issued event must carry actor_type=agent
+	// and agent_id from the client record.
+	auth := newMockClientAuthenticator()
+	tokenRepo := newMockTokenRepo()
+	refreshTokenRepo := newMockRefreshTokenRepo()
+	tokenGen := &mockTokenGen{}
+
+	agentClient := newTestClient(
+		"agent-claude", "secret",
+		[]string{"read"},
+		[]domain.GrantType{domain.GrantTypeClientCredentials},
+	)
+	agentClient.ActorType = domain.ActorTypeAgent
+	auth.clients["agent-claude"] = agentClient
+
+	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	captured := &captureSink{}
+	registry := application.
+		NewGrantStrategyRegistry(ccStrategy).
+		WithAudit(audit.New(captured), "auth-server")
+
+	if _, err := registry.Handle(context.Background(), domain.GrantRequest{
+		GrantType:    domain.GrantTypeClientCredentials,
+		ClientID:     "agent-claude",
+		ClientSecret: "secret",
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(captured.events) != 1 {
+		t.Fatalf("expected 1 emitted event, got %d", len(captured.events))
+	}
+	e := captured.events[0]
+	if e.ActorType != audit.ActorTypeAgent {
+		t.Errorf("actor_type = %q, want agent", e.ActorType)
+	}
+	if at, _ := e.Attrs["actor_type"].(string); at != "agent" {
+		t.Errorf("attrs.actor_type = %v, want agent", e.Attrs["actor_type"])
+	}
+	if aid, _ := e.Attrs["agent_id"].(string); aid != "agent-claude" {
+		t.Errorf("attrs.agent_id = %v, want agent-claude", e.Attrs["agent_id"])
+	}
+}
+
+func TestGrantStrategyRegistry_Handle_LegacyEmptyActorTypeFailsClosed(t *testing.T) {
+	// ADR-0015 fail-closed: a client with empty ActorType (pre-ADR-0015
+	// record) must surface as service, not as empty.
+	auth := newMockClientAuthenticator()
+	tokenRepo := newMockTokenRepo()
+	refreshTokenRepo := newMockRefreshTokenRepo()
+	tokenGen := &mockTokenGen{}
+
+	legacy := newTestClient(
+		"legacy-c1", "secret",
+		[]string{"read"},
+		[]domain.GrantType{domain.GrantTypeClientCredentials},
+	)
+	// ActorType deliberately not set (pre-ADR-0015 record).
+	auth.clients["legacy-c1"] = legacy
+
+	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	captured := &captureSink{}
+	registry := application.
+		NewGrantStrategyRegistry(ccStrategy).
+		WithAudit(audit.New(captured), "auth-server")
+
+	if _, err := registry.Handle(context.Background(), domain.GrantRequest{
+		GrantType:    domain.GrantTypeClientCredentials,
+		ClientID:     "legacy-c1",
+		ClientSecret: "secret",
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(captured.events) != 1 {
+		t.Fatalf("expected 1 emitted event, got %d", len(captured.events))
+	}
+	if captured.events[0].ActorType != audit.ActorTypeService {
+		t.Errorf("actor_type = %q, want service (fail-closed)", captured.events[0].ActorType)
+	}
+}
+
 func TestGrantStrategyRegistry_WithAudit_NilEmitterPanics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
