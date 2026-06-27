@@ -77,7 +77,9 @@ func run(_ *cobra.Command, _ []string) error {
 	jwks := platform.MustResolve[*inboundhttp.JWKSHandler](startCtx, ctr)
 	// UserInfoHandler is nil-resolved when OIDC mode is disabled (no OIDC issuer URL).
 	userInfo := platform.MustResolve[*inboundhttp.UserInfoHandler](startCtx, ctr)
-	router := inboundhttp.NewRouter(handler, jwks, userInfo, logger)
+	// MetadataHandler is nil-resolved when AUTH_METADATA_PUBLIC_BASE_URL is unset (ADR-0012).
+	metadata := platform.MustResolve[*inboundhttp.MetadataHandler](startCtx, ctr)
+	router := inboundhttp.NewRouter(handler, jwks, userInfo, metadata, logger)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{

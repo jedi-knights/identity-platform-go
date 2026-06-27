@@ -9,6 +9,67 @@
     "host": "localhost:8080",
     "basePath": "/",
     "paths": {
+        "/.well-known/jwks.json": {
+            "get": {
+                "description": "Public keys for verifying RS256-signed access tokens (RFC 7517).",
+                "produces": [
+                    "application/jwk-set+json"
+                ],
+                "tags": [
+                    "oauth"
+                ],
+                "summary": "JWKS endpoint",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/.well-known/oauth-authorization-server": {
+            "get": {
+                "description": "Returns the OAuth 2.0 Authorization Server Metadata document",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "metadata"
+                ],
+                "summary": "RFC 8414 metadata document",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.AuthorizationServerMetadata"
+                        }
+                    }
+                }
+            }
+        },
+        "/.well-known/openid-configuration": {
+            "get": {
+                "description": "Returns the OIDC discovery document",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "metadata"
+                ],
+                "summary": "OIDC Discovery 1.0 metadata document",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.AuthorizationServerMetadata"
+                        }
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Returns service health status",
@@ -34,23 +95,17 @@
         },
         "/oauth/authorize": {
             "get": {
-                "description": "Authorization endpoint - not yet implemented",
+                "description": "Starts an OAuth 2.1 + OIDC authorize flow (ADR-0011)",
                 "produces": [
-                    "application/json"
+                    "text/html"
                 ],
                 "tags": [
                     "oauth"
                 ],
                 "summary": "Authorization endpoint",
                 "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
+                    "302": {
+                        "description": "Redirect to login-ui sign-in page"
                     }
                 }
             }
@@ -86,12 +141,6 @@
                     },
                     "400": {
                         "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/httputil.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/httputil.ErrorResponse"
                         }
@@ -209,9 +258,166 @@
                     }
                 }
             }
+        },
+        "/userinfo": {
+            "get": {
+                "description": "Returns the OIDC claims permitted by the access token's scopes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "oidc"
+                ],
+                "summary": "OIDC UserInfo",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/httputil.ErrorResponse"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
+        "github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.AuthorizationServerMetadata": {
+            "type": "object",
+            "properties": {
+                "authorization_endpoint": {
+                    "type": "string"
+                },
+                "claim_types_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "claims_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "code_challenge_methods_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "end_session_endpoint": {
+                    "type": "string"
+                },
+                "grant_types_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "id_token_signing_alg_values_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "introspection_endpoint": {
+                    "type": "string"
+                },
+                "introspection_endpoint_auth_methods_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "issuer": {
+                    "type": "string"
+                },
+                "jwks_uri": {
+                    "type": "string"
+                },
+                "registration_endpoint": {
+                    "type": "string"
+                },
+                "request_parameter_supported": {
+                    "description": "RequestParameterSupported and friends are pointer-bool so the\n\"false\" value is distinguishable from \"omitted\" — RFC 8414 §2 lets\nus emit either, and emitting an explicit false is what every major\nIdP does to telegraph that the feature is intentionally off.",
+                    "type": "boolean"
+                },
+                "request_uri_parameter_supported": {
+                    "type": "boolean"
+                },
+                "require_request_uri_registration": {
+                    "type": "boolean"
+                },
+                "response_modes_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "response_types_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "revocation_endpoint": {
+                    "type": "string"
+                },
+                "revocation_endpoint_auth_methods_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "scopes_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "service_documentation": {
+                    "type": "string"
+                },
+                "subject_types_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "token_endpoint": {
+                    "type": "string"
+                },
+                "token_endpoint_auth_methods_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "ui_locales_supported": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "userinfo_endpoint": {
+                    "description": "OIDC Discovery 1.0 §3 additions. Emitted in the OIDC Discovery\ndocument; RFC 8414 §2 tolerates the extras but they convey OIDC\nsemantics, so the RFC 8414 path omits them.",
+                    "type": "string"
+                }
+            }
+        },
         "github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.GrantResponse": {
             "type": "object",
             "properties": {
@@ -220,6 +426,10 @@
                 },
                 "expires_in": {
                     "type": "integer"
+                },
+                "id_token": {
+                    "description": "IDToken is the OIDC ID token (OIDC Core §2) issued when the granted\nscopes include \"openid\". Empty + omitempty when OIDC mode is not active,\nmatching the OAuth-only response shape clients see today.",
+                    "type": "string"
                 },
                 "refresh_token": {
                     "type": "string"
@@ -238,6 +448,12 @@
                 "active": {
                     "type": "boolean"
                 },
+                "aud": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "client_id": {
                     "type": "string"
                 },
@@ -246,6 +462,12 @@
                 },
                 "iat": {
                     "type": "integer"
+                },
+                "iss": {
+                    "type": "string"
+                },
+                "jti": {
+                    "type": "string"
                 },
                 "scope": {
                     "type": "string"
