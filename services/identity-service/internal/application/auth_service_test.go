@@ -280,27 +280,33 @@ func TestLogin_EmitsUserAuthenticated(t *testing.T) {
 	if len(sink.events) != 1 {
 		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
 	}
-	e := sink.events[0]
-	if e.EventType != "user_authenticated" {
-		t.Errorf("event_type = %q, want user_authenticated", e.EventType)
+	assertUserAuthenticatedEvent(t, sink.events[0])
+}
+
+// assertUserAuthenticatedEvent verifies every field on a
+// user_authenticated event. Extracted from
+// TestLogin_EmitsUserAuthenticated so the flat list of independent
+// assertions does not push the test's cyclomatic complexity past the
+// gocyclo budget.
+func assertUserAuthenticatedEvent(t *testing.T, e audit.Event) {
+	t.Helper()
+	checks := []struct {
+		field string
+		got   any
+		want  any
+	}{
+		{"EventType", e.EventType, "user_authenticated"},
+		{"Service", e.Service, "identity-service"},
+		{"ActorType", string(e.ActorType), string(audit.ActorTypeUser)},
+		{"ActorID", e.ActorID, "u-1"},
+		{"SubjectID", e.SubjectID, "u-1"},
+		{"ResourceKind", string(e.ResourceKind), string(audit.ResourceKindEndpoint)},
+		{"ResourcePath", e.ResourcePath, "identity-service/endpoint/authenticate"},
 	}
-	if e.Service != "identity-service" {
-		t.Errorf("service = %q, want identity-service", e.Service)
-	}
-	if e.ActorType != audit.ActorTypeUser {
-		t.Errorf("actor_type = %q, want user", e.ActorType)
-	}
-	if e.ActorID != "u-1" {
-		t.Errorf("actor_id = %q, want u-1", e.ActorID)
-	}
-	if e.SubjectID != "u-1" {
-		t.Errorf("subject_id = %q, want u-1", e.SubjectID)
-	}
-	if e.ResourceKind != audit.ResourceKindEndpoint {
-		t.Errorf("resource_kind = %q, want endpoint", e.ResourceKind)
-	}
-	if e.ResourcePath != "identity-service/endpoint/authenticate" {
-		t.Errorf("resource_path = %q, want identity-service/endpoint/authenticate", e.ResourcePath)
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("event.%s = %v, want %v", c.field, c.got, c.want)
+		}
 	}
 	if email, _ := e.Attrs["email"].(string); email != "test@example.com" {
 		t.Errorf("attrs.email = %v, want test@example.com", e.Attrs["email"])
