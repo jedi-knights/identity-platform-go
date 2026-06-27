@@ -449,7 +449,9 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	introspector := inboundhttp.NewTokenIntrospectorAdapter(tokens)
 	revoker := inboundhttp.NewTokenRevokerAdapter(tokens)
 	authorizeCfg := authorizeConfigFor(cfg, cw, challengeRepo, codeIssuer)
-	return inboundhttp.NewHandler(issuer, introspector, revoker, cw.authenticator, log, cfg.Introspection.Secret, authorizeCfg), nil
+	emitter := platform.MustResolve[audit.Emitter](ctx, c)
+	return inboundhttp.NewHandler(issuer, introspector, revoker, cw.authenticator, log, cfg.Introspection.Secret, authorizeCfg).
+		WithAudit(emitter, "auth-server"), nil
 }
 
 // authorizeConfigFor returns the AuthorizeConfig for /oauth/authorize +
