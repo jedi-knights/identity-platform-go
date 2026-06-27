@@ -15,6 +15,8 @@ import (
 	"github.com/jedi-knights/go-platform/audit"
 	platform "github.com/jedi-knights/go-platform/container"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/outbound/authserver"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/outbound/identityservice"
@@ -112,8 +114,20 @@ func auditEmitterProvider(ctx context.Context, c *platform.Container) (audit.Emi
 // adapter. 10s timeout matches every other service in the platform — long
 // enough for an upstream cold start, short enough that a stuck dependency
 // surfaces as a sign-in failure rather than a hung request.
+//
+// The transport is wrapped with otelhttp.NewTransport so every outbound
+// request becomes a client span and carries the W3C traceparent header.
+// login-ui fans out to identity-service (sign-in verification), auth-server
+// (/internal/issue-code), and Lago (which in turn drives Stripe Checkout /
+// Customer Portal) — wrapping the shared transport propagates traceparent
+// to all three downstreams in one shot. The wrapper is inert when tracing
+// is disabled (no spans emitted) but header propagation still runs, which
+// is the correct behaviour for a no-op TracerProvider.
 func httpClientProvider(context.Context, *platform.Container) (*http.Client, error) {
-	return &http.Client{Timeout: 10 * time.Second}, nil
+	return &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}, nil
 }
 
 // userAuthenticatorProvider wires the identity-service adapter when
