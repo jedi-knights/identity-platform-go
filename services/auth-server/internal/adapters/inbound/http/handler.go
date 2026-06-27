@@ -827,39 +827,13 @@ func (h *Handler) authenticateClientCredentials(w http.ResponseWriter, r *http.R
 // @Failure      400  {object}  httputil.ErrorResponse
 // @Router       /oauth/revoke [post]
 func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
-	// Per RFC 6819 §4.3.2: rate-limit revocation endpoint same as token endpoint.
-	if !h.rateLimiter.Allow(clientIP(r)) {
-		w.Header().Set("Retry-After", "60")
-		writeOAuthError(w, h.logger, "server_error", "too many requests", http.StatusTooManyRequests)
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	if err := r.ParseForm(); err != nil {
-		writeOAuthError(w, h.logger, "invalid_request", "invalid form data", http.StatusBadRequest)
-		return
-	}
-
-	// RFC 7009 §2: the revocation endpoint requires client authentication.
-	actor, ok := h.authenticateClientCredentials(w, r)
+	actor, token, ok := h.revokePreflight(w, r)
 	if !ok {
 		return
 	}
-
-	if !h.validateTokenTypeHint(w, r) {
-		return
-	}
-
-	token := r.FormValue("token")
-	if token == "" {
-		writeOAuthError(w, h.logger, "invalid_request", "token is required", http.StatusBadRequest)
-		return
-	}
-
 	if !h.doRevoke(w, r, token) {
 		return
 	}
-
 	// ADR-0018: emit token_revoked after successful revocation. Per
 	// ADR-0019's paid-event policy a durable-sink failure fails the
 	// request — the same shape as token issuance.
@@ -868,11 +842,43 @@ func (h *Handler) Revoke(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, h.logger, "server_error", "revocation succeeded but audit emit failed", http.StatusInternalServerError)
 		return
 	}
-
 	// Success path: all error paths above return early.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(http.StatusOK)
+}
+
+// revokePreflight runs the RFC 7009 §2.1 boilerplate (rate limit, body
+// parse, client authentication, token_type_hint validation, token
+// presence). Returns the authenticated actor, the token to revoke, and
+// ok=true on success; on any failure it has already written the
+// response and the caller must return.
+func (h *Handler) revokePreflight(w http.ResponseWriter, r *http.Request) (actor, token string, ok bool) {
+	// Per RFC 6819 §4.3.2: rate-limit revocation endpoint same as token endpoint.
+	if !h.rateLimiter.Allow(clientIP(r)) {
+		w.Header().Set("Retry-After", "60")
+		writeOAuthError(w, h.logger, "server_error", "too many requests", http.StatusTooManyRequests)
+		return "", "", false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := r.ParseForm(); err != nil {
+		writeOAuthError(w, h.logger, "invalid_request", "invalid form data", http.StatusBadRequest)
+		return "", "", false
+	}
+	// RFC 7009 §2: the revocation endpoint requires client authentication.
+	actor, ok = h.authenticateClientCredentials(w, r)
+	if !ok {
+		return "", "", false
+	}
+	if !h.validateTokenTypeHint(w, r) {
+		return "", "", false
+	}
+	token = r.FormValue("token")
+	if token == "" {
+		writeOAuthError(w, h.logger, "invalid_request", "token is required", http.StatusBadRequest)
+		return "", "", false
+	}
+	return actor, token, true
 }
 
 // emitTokenRevoked emits a token_revoked audit event per ADR-0018. The
