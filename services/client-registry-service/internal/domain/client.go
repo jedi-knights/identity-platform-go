@@ -53,9 +53,24 @@ type OAuthClient struct {
 	Scopes       []string
 	RedirectURIs []string
 	GrantTypes   []string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	Active       bool
+
+	// TokenEndpointAuthMethod records the RFC 7591 auth method the
+	// client uses at the token endpoint. One of "client_secret_basic",
+	// "client_secret_post", "none". Empty / unrecognised values default
+	// to "client_secret_basic" at the application boundary so records
+	// persisted before ADR-0013 remain well-formed.
+	TokenEndpointAuthMethod string
+
+	// RegistrationAccessTokenHash is the bcrypt hash of the RFC 7592
+	// registration access token. Empty for clients created via the
+	// admin POST /clients route — those clients cannot be managed via
+	// the RFC 7592 endpoints. Dynamically-registered clients always
+	// carry a non-empty hash.
+	RegistrationAccessTokenHash string
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	Active    bool
 }
 
 // ClientRepository defines persistence for OAuth clients.
