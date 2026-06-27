@@ -2,12 +2,14 @@ package application_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+	"github.com/jedi-knights/go-platform/audit"
 
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/domain"
@@ -455,4 +457,133 @@ func TestClientService_ValidateClient_RepoError_PropagatesError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error to propagate from repo, got nil")
 	}
+}
+
+// --- Audit emission (ADR-0018 / ADR-0019) ---
+
+type captureSink struct {
+	events []audit.Event
+	err    error
+}
+
+func (c *captureSink) Sink(_ context.Context, e audit.Event) error {
+	c.events = append(c.events, e)
+	return c.err
+}
+
+var errAuditFailure = errors.New("simulated audit transport failure")
+
+func TestCreateClient_EmitsClientRegistered(t *testing.T) {
+	sink := &captureSink{}
+	svc := newSvc(t, newFakeClientRepo()).
+		WithAudit(audit.New(sink), "client-registry-service")
+
+	resp, err := svc.CreateClient(context.Background(), domain.CreateClientRequest{
+		Name:       "test-client",
+		ClientType: "confidential",
+		GrantTypes: []string{"client_credentials"},
+		Scopes:     []string{"read"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sink.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
+	}
+	e := sink.events[0]
+	if e.EventType != "client_registered" {
+		t.Errorf("event_type = %q, want client_registered", e.EventType)
+	}
+	if e.ActorID != resp.ClientID {
+		t.Errorf("actor_id = %q, want %q", e.ActorID, resp.ClientID)
+	}
+	if e.SubjectID != resp.ClientID {
+		t.Errorf("subject_id = %q, want %q", e.SubjectID, resp.ClientID)
+	}
+	if e.ResourceKind != audit.ResourceKindEndpoint {
+		t.Errorf("resource_kind = %q, want endpoint", e.ResourceKind)
+	}
+	if e.ResourcePath != "client-registry-service/endpoint/register" {
+		t.Errorf("resource_path = %q, want client-registry-service/endpoint/register", e.ResourcePath)
+	}
+	if name, _ := e.Attrs["name"].(string); name != "test-client" {
+		t.Errorf("attrs.name = %v, want test-client", e.Attrs["name"])
+	}
+	if ct, _ := e.Attrs["client_type"].(string); ct != "confidential" {
+		t.Errorf("attrs.client_type = %v, want confidential", e.Attrs["client_type"])
+	}
+}
+
+func TestCreateClient_AuditFailureSurfaces(t *testing.T) {
+	sink := &captureSink{err: errAuditFailure}
+	svc := newSvc(t, newFakeClientRepo()).
+		WithAudit(audit.New(sink), "client-registry-service")
+
+	_, err := svc.CreateClient(context.Background(), domain.CreateClientRequest{
+		Name:       "test-client",
+		GrantTypes: []string{"client_credentials"},
+	})
+	if err == nil {
+		t.Fatal("expected error when audit emit fails")
+	}
+	if !errors.Is(err, errAuditFailure) {
+		t.Errorf("expected wrapped audit error, got %v", err)
+	}
+}
+
+func TestDeleteClient_EmitsClientDeleted(t *testing.T) {
+	repo := newFakeClientRepo()
+	repo.clients["c-1"] = &domain.OAuthClient{
+		ID:        "c-1",
+		Name:      "to-delete",
+		CreatedAt: time.Now(),
+		Active:    true,
+	}
+	sink := &captureSink{}
+	svc := newSvc(t, repo).
+		WithAudit(audit.New(sink), "client-registry-service")
+
+	if err := svc.DeleteClient(context.Background(), "c-1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sink.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
+	}
+	e := sink.events[0]
+	if e.EventType != "client_deleted" {
+		t.Errorf("event_type = %q, want client_deleted", e.EventType)
+	}
+	if e.ActorID != "c-1" {
+		t.Errorf("actor_id = %q, want c-1", e.ActorID)
+	}
+	if e.ResourcePath != "client-registry-service/endpoint/delete" {
+		t.Errorf("resource_path = %q, want client-registry-service/endpoint/delete", e.ResourcePath)
+	}
+}
+
+func TestDeleteClient_AuditFailureSurfaces(t *testing.T) {
+	repo := newFakeClientRepo()
+	repo.clients["c-1"] = &domain.OAuthClient{ID: "c-1", Active: true}
+	sink := &captureSink{err: errAuditFailure}
+	svc := newSvc(t, repo).
+		WithAudit(audit.New(sink), "client-registry-service")
+
+	err := svc.DeleteClient(context.Background(), "c-1")
+	if err == nil {
+		t.Fatal("expected error when audit emit fails")
+	}
+	if !errors.Is(err, errAuditFailure) {
+		t.Errorf("expected wrapped audit error, got %v", err)
+	}
+}
+
+func TestClientService_WithAudit_NilEmitterPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	_ = newSvc(t, newFakeClientRepo()).WithAudit(nil, "client-registry-service")
 }
