@@ -323,18 +323,29 @@ func TestEvaluate_EmitsPolicyEvaluated_Allow(t *testing.T) {
 	if len(sink.events) != 1 {
 		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
 	}
-	e := sink.events[0]
-	if e.EventType != "policy_evaluated" {
-		t.Errorf("event_type = %q, want policy_evaluated", e.EventType)
+	assertPolicyAllowEvent(t, sink.events[0])
+}
+
+// assertPolicyAllowEvent verifies every field on a policy_evaluated /
+// allow event. Extracted from TestEvaluate_EmitsPolicyEvaluated_Allow
+// so the flat list of independent assertions does not push the test's
+// cyclomatic complexity past the gocyclo budget.
+func assertPolicyAllowEvent(t *testing.T, e audit.Event) {
+	t.Helper()
+	checks := []struct {
+		field string
+		got   any
+		want  any
+	}{
+		{"EventType", e.EventType, "policy_evaluated"},
+		{"Decision", string(e.Decision), string(audit.DecisionAllow)},
+		{"SubjectID", e.SubjectID, "u-1"},
+		{"ResourcePath", e.ResourcePath, "authorization-policy-service/endpoint/evaluate"},
 	}
-	if e.Decision != audit.DecisionAllow {
-		t.Errorf("decision = %q, want allow", e.Decision)
-	}
-	if e.SubjectID != "u-1" {
-		t.Errorf("subject_id = %q, want u-1", e.SubjectID)
-	}
-	if e.ResourcePath != "authorization-policy-service/endpoint/evaluate" {
-		t.Errorf("resource_path = %q, want authorization-policy-service/endpoint/evaluate", e.ResourcePath)
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("event.%s = %v, want %v", c.field, c.got, c.want)
+		}
 	}
 	if r, _ := e.Attrs["requested_resource"].(string); r != "articles" {
 		t.Errorf("attrs.requested_resource = %v, want articles", e.Attrs["requested_resource"])
