@@ -84,6 +84,8 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, handlerProvider)
 	platform.Register(c, jwksHandlerProvider)
 	platform.Register(c, userInfoHandlerProvider)
+	platform.Register(c, metadataBuilderProvider)
+	platform.Register(c, metadataHandlerProvider)
 
 	if err := c.Bootstrap(ctx); err != nil {
 		return nil, fmt.Errorf("bootstrapping container: %w", err)
@@ -507,6 +509,47 @@ func jwksHandlerProvider(ctx context.Context, c *platform.Container) (*inboundht
 	}
 	keys := platform.MustResolve[*domain.KeySet](ctx, c)
 	return inboundhttp.NewJWKSHandler(keys), nil
+}
+
+// metadataBuilderProvider constructs the RFC 8414 / OIDC Discovery 1.0
+// metadata builder (ADR-0012). The builder is a pure function of running
+// config — composed from the same wiring signals used by the routes
+// (signing alg → JWKS, identity-service URL → /userinfo, login-ui URL →
+// authorization_code grant). Returns nil when no public base URL is
+// configured; the handler provider treats nil as "metadata disabled".
+func metadataBuilderProvider(ctx context.Context, c *platform.Container) (*application.MetadataBuilder, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	if cfg.Metadata.PublicBaseURL == "" {
+		return nil, nil
+	}
+	signingAlg := resolvedSigningAlg(cfg)
+	endSession := ""
+	if cfg.LoginUI.URL != "" {
+		endSession = strings.TrimRight(cfg.LoginUI.URL, "/") + "/sign-out"
+	}
+	return application.NewMetadataBuilder(application.MetadataBuilderConfig{
+		PublicBaseURL:        cfg.Metadata.PublicBaseURL,
+		Issuer:               cfg.JWT.Issuer,
+		OIDCIssuer:           cfg.JWT.OIDCIssuer,
+		SigningAlg:           signingAlg,
+		HasJWKS:              signingAlg == config.SigningAlgRS256,
+		HasUserInfo:          cfg.JWT.OIDCIssuer != "" && cfg.IdentityService.URL != "",
+		HasLoginUI:           cfg.LoginUI.URL != "",
+		RegistrationEndpoint: cfg.Metadata.RegistrationEndpoint,
+		ServiceDocumentation: cfg.Metadata.ServiceDocumentation,
+		EndSessionEndpoint:   endSession,
+	}), nil
+}
+
+// metadataHandlerProvider wires the RFC 8414 / OIDC Discovery handler.
+// Returns nil when [metadataBuilderProvider] returned nil — the router
+// uses nil-resolution to skip registering the well-known endpoints.
+func metadataHandlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.MetadataHandler, error) {
+	builder, _ := platform.Resolve[*application.MetadataBuilder](ctx, c)
+	if builder == nil {
+		return nil, nil
+	}
+	return inboundhttp.NewMetadataHandler(builder), nil
 }
 
 func tokenTTLs(cfg *config.Config) (time.Duration, time.Duration) {
