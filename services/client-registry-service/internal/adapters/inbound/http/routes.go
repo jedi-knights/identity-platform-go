@@ -13,7 +13,10 @@ import (
 )
 
 // NewRouter sets up the HTTP routes and applies the middleware chain.
-func NewRouter(h *Handler, logger logging.Logger) http.Handler {
+// registration may be nil — when nil, the RFC 7591 /register endpoint is
+// not registered (used in tests that exercise only the admin /clients
+// surface).
+func NewRouter(h *Handler, registration *RegistrationHandler, logger logging.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /clients", h.CreateClient)
@@ -22,6 +25,10 @@ func NewRouter(h *Handler, logger logging.Logger) http.Handler {
 	mux.HandleFunc("POST /clients/validate", h.ValidateClient)
 	mux.HandleFunc("GET /clients/{id}", h.GetClient)
 	mux.HandleFunc("DELETE /clients/{id}", h.DeleteClient)
+	if registration != nil {
+		// RFC 7591 §3 — Dynamic Client Registration.
+		mux.HandleFunc("POST /register", registration.Register)
+	}
 	mux.HandleFunc("GET /health", h.Health)
 	mux.Handle("GET /swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),

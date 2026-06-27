@@ -26,3 +26,12 @@ type ClientValidator interface {
 type ClientDeleter interface {
 	DeleteClient(ctx context.Context, id string) error
 }
+
+// ClientRegistrar is the inbound port for RFC 7591 dynamic client
+// registration. Separate from [ClientCreator] because the request /
+// response shapes and the error vocabulary differ — RFC 7591 owns its
+// own codes (invalid_redirect_uri, invalid_client_metadata,
+// invalid_software_statement) and they do not pass through apperrors.
+type ClientRegistrar interface {
+	Register(ctx context.Context, req domain.RegistrationRequest) (*domain.RegistrationResponse, error)
+}

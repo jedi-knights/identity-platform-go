@@ -49,7 +49,9 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, clientRepositoryProvider)
 	platform.Register(c, auditEmitterProvider)
 	platform.Register(c, clientServiceProvider)
+	platform.Register(c, registrationServiceProvider)
 	platform.Register(c, handlerProvider)
+	platform.Register(c, registrationHandlerProvider)
 
 	if err := c.Bootstrap(ctx); err != nil {
 		return nil, fmt.Errorf("bootstrapping container: %w", err)
@@ -116,4 +118,37 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	svc := platform.MustResolve[*application.ClientService](ctx, c)
 	log := platform.MustResolve[logging.Logger](ctx, c)
 	return inboundhttp.NewHandler(svc, svc, svc, svc, log), nil
+}
+
+// registrationServiceProvider wires the RFC 7591 dynamic-client
+// registration service (ADR-0013). Returns nil when
+// CLIENT_REGISTRATION_BASE_URL is unset — the handler provider treats a
+// nil service as "DCR disabled".
+func registrationServiceProvider(ctx context.Context, c *platform.Container) (*application.RegistrationService, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	if cfg.Registration.PublicBaseURL == "" {
+		return nil, nil
+	}
+	repo, err := platform.Resolve[domain.ClientRepository](ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	emitter := platform.MustResolve[audit.Emitter](ctx, c)
+	return application.NewRegistrationService(repo, application.RegistrationServiceConfig{
+		PublicBaseURL:  cfg.Registration.PublicBaseURL,
+		AllowedScopes:  cfg.Registration.AllowedScopes,
+		AllowLocalhost: cfg.Registration.AllowLocalhost,
+	}).WithAudit(emitter, "client-registry-service"), nil
+}
+
+// registrationHandlerProvider wires the RFC 7591 HTTP handler. Returns
+// nil when DCR is disabled (see [registrationServiceProvider]); the
+// router uses nil-resolution to skip /register.
+func registrationHandlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.RegistrationHandler, error) {
+	svc, _ := platform.Resolve[*application.RegistrationService](ctx, c)
+	if svc == nil {
+		return nil, nil
+	}
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	return inboundhttp.NewRegistrationHandler(svc, log), nil
 }
