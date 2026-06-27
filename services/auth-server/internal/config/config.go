@@ -24,8 +24,47 @@ type Config struct {
 	LoginUI           LoginUIConfig           `mapstructure:"login_ui"`
 	Audit             AuditConfig             `mapstructure:"audit"`
 	Metadata          MetadataConfig          `mapstructure:"metadata"`
+	Tracing           TracingConfig           `mapstructure:"tracing"`
 	DevSeedClients    bool                    `mapstructure:"dev_seed_clients"`
 	DevClientSecret   string                  `mapstructure:"dev_client_secret"` // AUTH_DEV_CLIENT_SECRET; only used when DevSeedClients=true
+}
+
+// TracingConfig configures the OpenTelemetry SDK bootstrap (ADR-0014 /
+// portfolio observability roadmap). Every field is optional; missing
+// values fall back to OTEL_* environment variables and ultimately to a
+// stdout exporter so traces are visible during local development without
+// a collector.
+//
+// Enabled controls whether the SDK is bootstrapped at all. When false
+// the global TracerProvider stays as the no-op default and outbound
+// otelhttp wrappers emit no spans.
+type TracingConfig struct {
+	// Enabled toggles OTel bootstrap. Sourced from AUTH_TRACING_ENABLED.
+	// Default false — opt-in until every dependent service ships the
+	// same bootstrap and a collector is available.
+	Enabled bool `mapstructure:"enabled"`
+
+	// ServiceVersion is reported as the service.version resource
+	// attribute. Sourced from AUTH_TRACING_SERVICE_VERSION; when empty
+	// OTEL_SERVICE_VERSION is consulted.
+	ServiceVersion string `mapstructure:"service_version"`
+
+	// ExporterEndpoint overrides the OTLP endpoint. Empty defers to
+	// OTEL_EXPORTER_OTLP_ENDPOINT; when that is also empty the SDK
+	// falls back to a stdout exporter.
+	ExporterEndpoint string `mapstructure:"exporter_endpoint"`
+
+	// ExporterProtocol selects the OTLP transport ("grpc" or "http").
+	// Empty defers to OTEL_EXPORTER_OTLP_PROTOCOL; default grpc.
+	ExporterProtocol string `mapstructure:"exporter_protocol"`
+
+	// ExporterInsecure disables TLS on the OTLP gRPC endpoint.
+	ExporterInsecure bool `mapstructure:"exporter_insecure"`
+
+	// SamplerRatio sets the head-based sampler ratio. Zero falls back
+	// to 1 (sample every root span) inside the SDK; 0.1 keeps 10% of
+	// traces.
+	SamplerRatio float64 `mapstructure:"sampler_ratio"`
 }
 
 // MetadataConfig configures the RFC 8414 / OIDC Discovery 1.0 metadata
@@ -228,6 +267,12 @@ func Load() (*Config, error) {
 	v.SetDefault("metadata.public_base_url", "")
 	v.SetDefault("metadata.service_documentation", "")
 	v.SetDefault("metadata.registration_endpoint", "")
+	v.SetDefault("tracing.enabled", false)
+	v.SetDefault("tracing.service_version", "")
+	v.SetDefault("tracing.exporter_endpoint", "")
+	v.SetDefault("tracing.exporter_protocol", "")
+	v.SetDefault("tracing.exporter_insecure", false)
+	v.SetDefault("tracing.sampler_ratio", 0.0)
 	v.SetDefault("dev_seed_clients", false)
 	v.SetDefault("dev_client_secret", "")
 
