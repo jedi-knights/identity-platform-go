@@ -133,19 +133,34 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 		return nil, fmt.Errorf("failed to save client: %w", err)
 	}
 
-	eventType := "client_registered"
-	auditActorType := audit.ActorTypeService
-	if client.ActorType == domain.ActorTypeAgent {
-		// ADR-0015: agents register through the same DCR endpoint as
-		// services. The event type and actor classification on the
-		// envelope follow ADR-0018's registry so downstream consumers
-		// (audit dashboards, Lago billable metrics) can route on
-		// agent-specific signals.
-		eventType = "agent_registered"
-		auditActorType = audit.ActorTypeAgent
-	} else if client.ActorType == domain.ActorTypeUser {
-		auditActorType = audit.ActorTypeUser
+	if err := s.emitClientRegistered(ctx, client); err != nil {
+		return nil, err
 	}
+
+	// Return the plain-text secret once — it will not be recoverable from
+	// storage. Public clients receive an empty ClientSecret (omitempty in
+	// the response struct strips it from the JSON).
+	return &domain.CreateClientResponse{
+		ClientID:     client.ID,
+		ClientSecret: plainSecret,
+		Name:         client.Name,
+		ClientType:   string(client.Type),
+		ActorType:    string(client.ActorType),
+		Scopes:       client.Scopes,
+		RedirectURIs: client.RedirectURIs,
+		GrantTypes:   client.GrantTypes,
+	}, nil
+}
+
+// emitClientRegistered emits the ADR-0018 client_registered event for
+// a newly created client. ADR-0015: agents register through the same
+// DCR endpoint as services; the event type and actor classification on
+// the envelope follow ADR-0018's registry so downstream consumers
+// (audit dashboards, Lago billable metrics) can route on agent-specific
+// signals. Per ADR-0019 a durable-sink failure fails the request — the
+// caller surfaces it as a 500 and the meter cannot have gaps.
+func (s *ClientService) emitClientRegistered(ctx context.Context, client *domain.OAuthClient) error {
+	eventType, auditActorType := resolveAuditActor(client.ActorType)
 	if err := s.emitter.Emit(ctx, audit.Event{
 		EventType:      eventType,
 		Service:        s.service,
@@ -168,22 +183,26 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 			"scopes":      client.Scopes,
 		},
 	}); err != nil {
-		return nil, fmt.Errorf("audit emit (%s): %w", eventType, err)
+		return fmt.Errorf("audit emit (%s): %w", eventType, err)
 	}
+	return nil
+}
 
-	// Return the plain-text secret once — it will not be recoverable from
-	// storage. Public clients receive an empty ClientSecret (omitempty in
-	// the response struct strips it from the JSON).
-	return &domain.CreateClientResponse{
-		ClientID:     client.ID,
-		ClientSecret: plainSecret,
-		Name:         client.Name,
-		ClientType:   string(client.Type),
-		ActorType:    string(client.ActorType),
-		Scopes:       client.Scopes,
-		RedirectURIs: client.RedirectURIs,
-		GrantTypes:   client.GrantTypes,
-	}, nil
+// resolveAuditActor maps a client's domain ActorType to the audit
+// envelope's event_type / actor_type pair. Tagged switch chosen over a
+// chain of if/else so the staticcheck QF1003 hint is satisfied and the
+// "unknown defaults to service" fail-closed rule is explicit.
+func resolveAuditActor(at domain.ActorType) (string, audit.ActorType) {
+	switch at {
+	case domain.ActorTypeAgent:
+		return "agent_registered", audit.ActorTypeAgent
+	case domain.ActorTypeUser:
+		return "client_registered", audit.ActorTypeUser
+	case domain.ActorTypeService:
+		return "client_registered", audit.ActorTypeService
+	default:
+		return "client_registered", audit.ActorTypeService
+	}
 }
 
 // GetClient returns the metadata for the client with the given ID.

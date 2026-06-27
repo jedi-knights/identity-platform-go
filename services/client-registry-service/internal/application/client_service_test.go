@@ -491,21 +491,30 @@ func TestCreateClient_EmitsClientRegistered(t *testing.T) {
 	if len(sink.events) != 1 {
 		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
 	}
-	e := sink.events[0]
-	if e.EventType != "client_registered" {
-		t.Errorf("event_type = %q, want client_registered", e.EventType)
+	assertClientRegisteredEvent(t, sink.events[0], resp.ClientID)
+}
+
+// assertClientRegisteredEvent verifies every field on a
+// client_registered event. Extracted from the test body so the flat
+// list of independent assertions does not push the test's cyclomatic
+// complexity past the gocyclo budget.
+func assertClientRegisteredEvent(t *testing.T, e audit.Event, wantClientID string) {
+	t.Helper()
+	checks := []struct {
+		field string
+		got   any
+		want  any
+	}{
+		{"EventType", e.EventType, "client_registered"},
+		{"ActorID", e.ActorID, wantClientID},
+		{"SubjectID", e.SubjectID, wantClientID},
+		{"ResourceKind", string(e.ResourceKind), string(audit.ResourceKindEndpoint)},
+		{"ResourcePath", e.ResourcePath, "client-registry-service/endpoint/register"},
 	}
-	if e.ActorID != resp.ClientID {
-		t.Errorf("actor_id = %q, want %q", e.ActorID, resp.ClientID)
-	}
-	if e.SubjectID != resp.ClientID {
-		t.Errorf("subject_id = %q, want %q", e.SubjectID, resp.ClientID)
-	}
-	if e.ResourceKind != audit.ResourceKindEndpoint {
-		t.Errorf("resource_kind = %q, want endpoint", e.ResourceKind)
-	}
-	if e.ResourcePath != "client-registry-service/endpoint/register" {
-		t.Errorf("resource_path = %q, want client-registry-service/endpoint/register", e.ResourcePath)
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("event.%s = %v, want %v", c.field, c.got, c.want)
+		}
 	}
 	if name, _ := e.Attrs["name"].(string); name != "test-client" {
 		t.Errorf("attrs.name = %v, want test-client", e.Attrs["name"])
