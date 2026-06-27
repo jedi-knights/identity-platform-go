@@ -372,27 +372,33 @@ func TestSignInPost_EmitsSigninCompleted(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("expected 1 audit event, got %d", len(events))
 	}
-	e := events[0]
-	if e.EventType != "signin_completed" {
-		t.Errorf("event_type = %q, want signin_completed", e.EventType)
+	assertSigninCompletedEvent(t, events[0])
+}
+
+// assertSigninCompletedEvent verifies every field on a
+// signin_completed event. Extracted from
+// TestSignInPost_EmitsSigninCompleted so the flat list of independent
+// assertions does not push the test's cyclomatic complexity past the
+// gocyclo budget.
+func assertSigninCompletedEvent(t *testing.T, e audit.Event) {
+	t.Helper()
+	checks := []struct {
+		field string
+		got   any
+		want  any
+	}{
+		{"EventType", e.EventType, "signin_completed"},
+		{"Service", e.Service, "login-ui"},
+		{"ActorType", string(e.ActorType), string(audit.ActorTypeUser)},
+		{"ActorID", e.ActorID, "user-42"},
+		{"SubjectID", e.SubjectID, "user-42"},
+		{"ResourceKind", string(e.ResourceKind), string(audit.ResourceKindApplication)},
+		{"ResourcePath", e.ResourcePath, "login-ui/application/signin"},
 	}
-	if e.Service != "login-ui" {
-		t.Errorf("service = %q, want login-ui", e.Service)
-	}
-	if e.ActorType != audit.ActorTypeUser {
-		t.Errorf("actor_type = %q, want user", e.ActorType)
-	}
-	if e.ActorID != "user-42" {
-		t.Errorf("actor_id = %q, want user-42", e.ActorID)
-	}
-	if e.SubjectID != "user-42" {
-		t.Errorf("subject_id = %q, want user-42", e.SubjectID)
-	}
-	if e.ResourceKind != audit.ResourceKindApplication {
-		t.Errorf("resource_kind = %q, want application", e.ResourceKind)
-	}
-	if e.ResourcePath != "login-ui/application/signin" {
-		t.Errorf("resource_path = %q, want login-ui/application/signin", e.ResourcePath)
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("event.%s = %v, want %v", c.field, c.got, c.want)
+		}
 	}
 	if ch, _ := e.Attrs["login_challenge"].(string); ch != "ch-1" {
 		t.Errorf("attrs.login_challenge = %v, want ch-1", e.Attrs["login_challenge"])

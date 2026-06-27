@@ -49,12 +49,7 @@ func TestListPlans_FiltersInactiveAndMapsShape(t *testing.T) {
 func TestCreateCheckoutSession_PostsCorrectBody(t *testing.T) {
 	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %q, want POST", r.Method)
-		}
-		if r.URL.Path != "/api/v1/checkout_sessions" {
-			t.Errorf("path = %q", r.URL.Path)
-		}
+		assertCheckoutRequest(t, r)
 		gotBody, _ = io.ReadAll(r.Body)
 		_, _ = w.Write([]byte(`{"checkout_session":{"url":"https://checkout.stripe.test/abc"}}`))
 	}))
@@ -73,6 +68,25 @@ func TestCreateCheckoutSession_PostsCorrectBody(t *testing.T) {
 	if session.URL != "https://checkout.stripe.test/abc" {
 		t.Errorf("session url = %q", session.URL)
 	}
+	assertCheckoutBody(t, gotBody)
+}
+
+// assertCheckoutRequest verifies the inbound request shape. Extracted
+// so the calling test stays under the gocyclo budget.
+func assertCheckoutRequest(t *testing.T, r *http.Request) {
+	t.Helper()
+	if r.Method != http.MethodPost {
+		t.Errorf("method = %q, want POST", r.Method)
+	}
+	if r.URL.Path != "/api/v1/checkout_sessions" {
+		t.Errorf("path = %q", r.URL.Path)
+	}
+}
+
+// assertCheckoutBody decodes the wire body and verifies every field.
+// Extracted so the calling test stays under the gocyclo budget.
+func assertCheckoutBody(t *testing.T, gotBody []byte) {
+	t.Helper()
 	var wire struct {
 		CheckoutSession struct {
 			ExternalCustomerID string `json:"external_customer_id"`
