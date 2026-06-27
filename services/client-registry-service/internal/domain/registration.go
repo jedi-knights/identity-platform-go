@@ -54,13 +54,25 @@ type RegistrationResponse struct {
 
 // RFC 7591 §3.2.2 closed error code set. Internal failures are mapped
 // to RegistrationErrorServerError; everything client-facing is one of
-// the codes below.
+// the codes below. RegistrationErrorInvalidToken is RFC 7592-specific —
+// returned when the bearer token is missing or fails the bcrypt
+// comparison; the HTTP layer maps it to a 401.
 const (
 	RegistrationErrorInvalidRedirectURI       = "invalid_redirect_uri"
 	RegistrationErrorInvalidClientMetadata    = "invalid_client_metadata"
 	RegistrationErrorInvalidSoftwareStatement = "invalid_software_statement"
+	RegistrationErrorInvalidToken             = "invalid_token"
 	RegistrationErrorServerError              = "server_error"
 )
+
+// ErrRegistrationNotFound signals that no client matches the requested
+// client_id, or that the supplied registration access token does not
+// authorise access to it. Per ADR-0013 the two cases collapse to a
+// single 404 so existence cannot be probed.
+var ErrRegistrationNotFound = &RegistrationError{
+	Code:        "not_found",
+	Description: "registration not found",
+}
 
 // RegistrationError carries a typed RFC 7591 error. The application
 // layer returns this directly; the HTTP layer marshals it as JSON with

@@ -52,6 +52,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, registrationServiceProvider)
 	platform.Register(c, handlerProvider)
 	platform.Register(c, registrationHandlerProvider)
+	platform.Register(c, registrationManagementHandlerProvider)
 
 	if err := c.Bootstrap(ctx); err != nil {
 		return nil, fmt.Errorf("bootstrapping container: %w", err)
@@ -151,4 +152,19 @@ func registrationHandlerProvider(ctx context.Context, c *platform.Container) (*i
 	}
 	log := platform.MustResolve[logging.Logger](ctx, c)
 	return inboundhttp.NewRegistrationHandler(svc, log), nil
+}
+
+// registrationManagementHandlerProvider wires the RFC 7592 management
+// HTTP handler. Returns nil when DCR is disabled — the router uses
+// nil-resolution to skip the GET/PUT/DELETE /register/{client_id}
+// routes. Shares the underlying RegistrationService with the RFC 7591
+// handler so the bearer token's bcrypt-compared hash is the same one
+// the register response handed out.
+func registrationManagementHandlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.RegistrationManagementHandler, error) {
+	svc, _ := platform.Resolve[*application.RegistrationService](ctx, c)
+	if svc == nil {
+		return nil, nil
+	}
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	return inboundhttp.NewRegistrationManagementHandler(svc, log), nil
 }
