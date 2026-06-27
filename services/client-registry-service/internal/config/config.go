@@ -15,6 +15,22 @@ type Config struct {
 	Database     DatabaseConfig     `mapstructure:"database"`
 	Audit        AuditConfig        `mapstructure:"audit"`
 	Registration RegistrationConfig `mapstructure:"registration"`
+	Tracing      TracingConfig      `mapstructure:"tracing"`
+}
+
+// TracingConfig configures the OpenTelemetry SDK bootstrap. Every
+// field is optional; missing values fall back to OTEL_* environment
+// variables and ultimately to a stdout exporter so traces are visible
+// during local development without a collector. Enabled gates the
+// bootstrap itself — when false the global TracerProvider stays as the
+// no-op and the otelhttp wrapper on the router emits no spans.
+type TracingConfig struct {
+	Enabled          bool    `mapstructure:"enabled"`           // CLIENT_TRACING_ENABLED
+	ServiceVersion   string  `mapstructure:"service_version"`   // CLIENT_TRACING_SERVICE_VERSION
+	ExporterEndpoint string  `mapstructure:"exporter_endpoint"` // CLIENT_TRACING_EXPORTER_ENDPOINT
+	ExporterProtocol string  `mapstructure:"exporter_protocol"` // CLIENT_TRACING_EXPORTER_PROTOCOL
+	ExporterInsecure bool    `mapstructure:"exporter_insecure"` // CLIENT_TRACING_EXPORTER_INSECURE
+	SamplerRatio     float64 `mapstructure:"sampler_ratio"`     // CLIENT_TRACING_SAMPLER_RATIO
 }
 
 // RegistrationConfig configures the RFC 7591 dynamic client registration
@@ -90,6 +106,12 @@ func Load() (*Config, error) {
 	v.SetDefault("registration.base_url", "")
 	v.SetDefault("registration.allowed_scopes", []string{})
 	v.SetDefault("registration.allow_localhost", false)
+	v.SetDefault("tracing.enabled", false)
+	v.SetDefault("tracing.service_version", "")
+	v.SetDefault("tracing.exporter_endpoint", "")
+	v.SetDefault("tracing.exporter_protocol", "")
+	v.SetDefault("tracing.exporter_insecure", false)
+	v.SetDefault("tracing.sampler_ratio", 0.0)
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
