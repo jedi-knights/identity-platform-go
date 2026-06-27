@@ -479,34 +479,38 @@ func TestGrantStrategyRegistry_Handle_EmitsTokenIssued(t *testing.T) {
 	if resp == nil {
 		t.Fatal("expected response, got nil")
 	}
-
 	if len(captured.events) != 1 {
 		t.Fatalf("expected 1 emitted event, got %d", len(captured.events))
 	}
-	e := captured.events[0]
-	if e.EventType != "token_issued" {
-		t.Errorf("expected event_type=token_issued, got %q", e.EventType)
+	assertTokenIssuedEvent(t, captured.events[0])
+}
+
+// assertTokenIssuedEvent verifies every field on the emitted
+// token_issued event. Extracted from the test body so the flat list of
+// independent assertions does not push the test's cyclomatic
+// complexity past the gocyclo budget.
+func assertTokenIssuedEvent(t *testing.T, e audit.Event) {
+	t.Helper()
+	checks := []struct {
+		field string
+		got   any
+		want  any
+	}{
+		{"EventType", e.EventType, "token_issued"},
+		{"Service", e.Service, "auth-server"},
+		{"ActorType", string(e.ActorType), string(audit.ActorTypeService)},
+		{"ActorID", e.ActorID, "c1"},
+		{"ResourceKind", string(e.ResourceKind), string(audit.ResourceKindToken)},
+		{"ResourcePath", e.ResourcePath, "auth-server/token/access"},
+		{"Decision", string(e.Decision), string(audit.DecisionAllow)},
 	}
-	if e.Service != "auth-server" {
-		t.Errorf("expected service=auth-server, got %q", e.Service)
-	}
-	if e.ActorType != audit.ActorTypeService {
-		t.Errorf("expected actor_type=service for client_credentials, got %q", e.ActorType)
-	}
-	if e.ActorID != "c1" {
-		t.Errorf("expected actor_id=c1, got %q", e.ActorID)
-	}
-	if e.ResourceKind != audit.ResourceKindToken {
-		t.Errorf("expected resource_kind=token, got %q", e.ResourceKind)
-	}
-	if e.ResourcePath != "auth-server/token/access" {
-		t.Errorf("expected resource_path=auth-server/token/access, got %q", e.ResourcePath)
-	}
-	if e.Decision != audit.DecisionAllow {
-		t.Errorf("expected decision=allow, got %q", e.Decision)
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("event.%s = %v, want %v", c.field, c.got, c.want)
+		}
 	}
 	if gt, _ := e.Attrs["grant_type"].(string); gt != "client_credentials" {
-		t.Errorf("expected attrs.grant_type=client_credentials, got %v", e.Attrs["grant_type"])
+		t.Errorf("attrs.grant_type = %v, want client_credentials", e.Attrs["grant_type"])
 	}
 }
 
