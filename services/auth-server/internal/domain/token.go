@@ -40,10 +40,39 @@ type Token struct {
 	Permissions []string // resolved permissions ("resource:action"); resolved at issuance
 	ActorType   ActorType
 	AgentID     string
-	ExpiresAt   time.Time
-	IssuedAt    time.Time
-	TokenType   TokenType
-	Raw         string // JWT string or opaque token
+
+	// Act is the RFC 8693 §4.1 delegation chain. Populated by the
+	// token-exchange strategy by prepending the current actor to the
+	// subject_token's chain; nil for every other grant type. Stored on
+	// the domain Token so the audit emitter can record chain depth and
+	// the token generator can lift it into the issued JWT.
+	Act *Actor
+
+	ExpiresAt time.Time
+	IssuedAt  time.Time
+	TokenType TokenType
+	Raw       string // JWT string or opaque token
+}
+
+// Actor is one hop of the RFC 8693 §4.1 actor chain (ADR-0016).
+// Mirrors jwtutil.Actor; kept separate so the domain layer does not
+// take a hard dependency on the jwt encoder.
+type Actor struct {
+	Sub       string
+	ActorType ActorType
+	AgentID   string
+	ClientID  string
+	Act       *Actor
+}
+
+// Depth reports the length of the actor chain rooted at a. A nil
+// receiver returns 0.
+func (a *Actor) Depth() int {
+	d := 0
+	for cursor := a; cursor != nil; cursor = cursor.Act {
+		d++
+	}
+	return d
 }
 
 // IsExpired reports whether the token is expired relative to the current wall clock.

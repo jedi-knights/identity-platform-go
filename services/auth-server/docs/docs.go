@@ -437,6 +437,10 @@ const docTemplate = `{
                     "description": "IDToken is the OIDC ID token (OIDC Core §2) issued when the granted\nscopes include \"openid\". Empty + omitempty when OIDC mode is not active,\nmatching the OAuth-only response shape clients see today.",
                     "type": "string"
                 },
+                "issued_token_type": {
+                    "description": "IssuedTokenType is the RFC 8693 §2.2.1 echo of the issued token\ntype URN. Omitted from non-token-exchange responses so the wire\nshape for client_credentials / authorization_code / refresh_token\nis unchanged — RFC 8693 requires the field only on the\ntoken-exchange response.",
+                    "type": "string"
+                },
                 "refresh_token": {
                     "type": "string"
                 },
