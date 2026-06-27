@@ -67,25 +67,13 @@ func run(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if serr := shutdownTracing(shutdownCtx); serr != nil {
-			logger.Error("tracing shutdown error", "err", serr)
-		}
-	}()
+	defer shutdownWithTimeout(logger, "tracing", 5*time.Second, shutdownTracing)
 
 	ctr, err := container.New(startCtx, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
-	defer func() {
-		closeCtx, closeCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer closeCancel()
-		if cerr := ctr.Close(closeCtx); cerr != nil {
-			logger.Error("container close error", "err", cerr)
-		}
-	}()
+	defer shutdownWithTimeout(logger, "container", 30*time.Second, ctr.Close)
 
 	router := buildRouter(startCtx, ctr, logger)
 
@@ -113,6 +101,18 @@ func run(_ *cobra.Command, _ []string) error {
 	defer cancel()
 
 	return srv.Shutdown(ctx)
+}
+
+// shutdownWithTimeout runs fn with its own bounded context and logs any
+// error against the supplied name. Inlined as a defer in [run] it
+// pushed the entry point over the gocyclo budget; a named helper lifts
+// each deferred branch out of [run]'s tally.
+func shutdownWithTimeout(logger logging.Logger, name string, timeout time.Duration, fn func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := fn(ctx); err != nil {
+		logger.Error(name+" shutdown error", "err", err)
+	}
 }
 
 // buildRouter resolves the handler graph from the container, wires the
