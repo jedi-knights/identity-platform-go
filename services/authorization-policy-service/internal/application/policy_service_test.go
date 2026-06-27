@@ -2,9 +2,11 @@ package application_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+	"github.com/jedi-knights/go-platform/audit"
 
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/domain"
@@ -274,4 +276,169 @@ func TestPolicyService_Evaluate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- Audit emission (ADR-0018 / ADR-0019) ---
+
+type captureSink struct {
+	events []audit.Event
+	err    error
+}
+
+func (c *captureSink) Sink(_ context.Context, e audit.Event) error {
+	c.events = append(c.events, e)
+	return c.err
+}
+
+var errAuditFailure = errors.New("simulated audit transport failure")
+
+func TestEvaluate_EmitsPolicyEvaluated_Allow(t *testing.T) {
+	policyRepo := newFakePolicyRepo()
+	roleRepo := newFakeRoleRepo()
+	roleRepo.roles["editor"] = &domain.Role{
+		Name: "editor",
+		Permissions: []domain.Permission{
+			{Resource: "articles", Action: "write"},
+		},
+	}
+	policyRepo.policies["u-1"] = &domain.Policy{
+		SubjectID: "u-1",
+		Roles:     []string{"editor"},
+	}
+	sink := &captureSink{}
+	svc := application.NewPolicyService(policyRepo, roleRepo).
+		WithAudit(audit.New(sink), "authorization-policy-service")
+
+	resp, err := svc.Evaluate(context.Background(), domain.EvaluationRequest{
+		SubjectID: "u-1",
+		Resource:  "articles",
+		Action:    "write",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !resp.Allowed {
+		t.Fatalf("expected allowed=true, got %v (reason: %q)", resp.Allowed, resp.Reason)
+	}
+	if len(sink.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
+	}
+	e := sink.events[0]
+	if e.EventType != "policy_evaluated" {
+		t.Errorf("event_type = %q, want policy_evaluated", e.EventType)
+	}
+	if e.Decision != audit.DecisionAllow {
+		t.Errorf("decision = %q, want allow", e.Decision)
+	}
+	if e.SubjectID != "u-1" {
+		t.Errorf("subject_id = %q, want u-1", e.SubjectID)
+	}
+	if e.ResourcePath != "authorization-policy-service/endpoint/evaluate" {
+		t.Errorf("resource_path = %q, want authorization-policy-service/endpoint/evaluate", e.ResourcePath)
+	}
+	if r, _ := e.Attrs["requested_resource"].(string); r != "articles" {
+		t.Errorf("attrs.requested_resource = %v, want articles", e.Attrs["requested_resource"])
+	}
+	if a, _ := e.Attrs["requested_action"].(string); a != "write" {
+		t.Errorf("attrs.requested_action = %v, want write", e.Attrs["requested_action"])
+	}
+}
+
+func TestEvaluate_EmitsPolicyEvaluated_Deny_InsufficientPermissions(t *testing.T) {
+	policyRepo := newFakePolicyRepo()
+	roleRepo := newFakeRoleRepo()
+	roleRepo.roles["reader"] = &domain.Role{
+		Name: "reader",
+		Permissions: []domain.Permission{
+			{Resource: "articles", Action: "read"},
+		},
+	}
+	policyRepo.policies["u-1"] = &domain.Policy{
+		SubjectID: "u-1",
+		Roles:     []string{"reader"},
+	}
+	sink := &captureSink{}
+	svc := application.NewPolicyService(policyRepo, roleRepo).
+		WithAudit(audit.New(sink), "authorization-policy-service")
+
+	resp, err := svc.Evaluate(context.Background(), domain.EvaluationRequest{
+		SubjectID: "u-1",
+		Resource:  "articles",
+		Action:    "write",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Allowed {
+		t.Fatal("expected deny")
+	}
+	if len(sink.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
+	}
+	e := sink.events[0]
+	if e.Decision != audit.DecisionDeny {
+		t.Errorf("decision = %q, want deny", e.Decision)
+	}
+	if e.Reason != "insufficient permissions" {
+		t.Errorf("reason = %q, want insufficient permissions", e.Reason)
+	}
+}
+
+func TestEvaluate_EmitsPolicyEvaluated_Deny_NoPolicy(t *testing.T) {
+	policyRepo := newFakePolicyRepo()
+	roleRepo := newFakeRoleRepo()
+	sink := &captureSink{}
+	svc := application.NewPolicyService(policyRepo, roleRepo).
+		WithAudit(audit.New(sink), "authorization-policy-service")
+
+	resp, err := svc.Evaluate(context.Background(), domain.EvaluationRequest{
+		SubjectID: "unknown-subject",
+		Resource:  "articles",
+		Action:    "read",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Allowed {
+		t.Fatal("expected deny on missing policy")
+	}
+	if len(sink.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
+	}
+	if sink.events[0].Decision != audit.DecisionDeny {
+		t.Errorf("decision = %q, want deny", sink.events[0].Decision)
+	}
+	if sink.events[0].Reason != "no policy found for subject" {
+		t.Errorf("reason = %q, want no policy found for subject", sink.events[0].Reason)
+	}
+}
+
+func TestEvaluate_AuditFailureSurfaces(t *testing.T) {
+	policyRepo := newFakePolicyRepo()
+	roleRepo := newFakeRoleRepo()
+	sink := &captureSink{err: errAuditFailure}
+	svc := application.NewPolicyService(policyRepo, roleRepo).
+		WithAudit(audit.New(sink), "authorization-policy-service")
+
+	_, err := svc.Evaluate(context.Background(), domain.EvaluationRequest{
+		SubjectID: "u-1",
+		Resource:  "articles",
+		Action:    "read",
+	})
+	if err == nil {
+		t.Fatal("expected error when audit emit fails")
+	}
+	if !errors.Is(err, errAuditFailure) {
+		t.Errorf("expected wrapped audit error, got %v", err)
+	}
+}
+
+func TestPolicyService_WithAudit_NilEmitterPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	_ = application.NewPolicyService(newFakePolicyRepo(), newFakeRoleRepo()).
+		WithAudit(nil, "authorization-policy-service")
 }
