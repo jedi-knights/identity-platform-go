@@ -14,6 +14,7 @@ import (
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	"github.com/jedi-knights/go-platform/apperrors"
+	"github.com/jedi-knights/go-platform/audit"
 
 	authhttp "github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/ports"
@@ -322,4 +323,147 @@ func TestSignInPost_Degraded_Returns503(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", w.Code)
 	}
+}
+
+// --- Audit emission (ADR-0018 / ADR-0019) ---
+
+type captureSink struct {
+	mu     sync.Mutex
+	events []audit.Event
+	err    error
+}
+
+func (c *captureSink) Sink(_ context.Context, e audit.Event) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, e)
+	return c.err
+}
+
+func (c *captureSink) snapshot() []audit.Event {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]audit.Event, len(c.events))
+	copy(out, c.events)
+	return out
+}
+
+var errAuditFailure = errors.New("simulated audit transport failure")
+
+func TestSignInPost_EmitsSigninCompleted(t *testing.T) {
+	ua := &fakeUserAuth{subject: "user-42"}
+	ci := &fakeCodeIssuer{resp: &ports.IssueCodeResponse{
+		Code:        "auth-code-xyz",
+		RedirectURI: "https://rp.example.com/callback",
+		State:       "rp-state",
+	}}
+	sink := &captureSink{}
+	h := newSignInHandler(t, ua, ci).WithAudit(audit.New(sink), "login-ui")
+
+	w := postSignIn(t, h, url.Values{
+		"login_challenge": {"ch-1"},
+		"email":           {"user@example.com"},
+		"password":        {"hunter2"},
+	})
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", w.Code)
+	}
+	events := sink.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(events))
+	}
+	e := events[0]
+	if e.EventType != "signin_completed" {
+		t.Errorf("event_type = %q, want signin_completed", e.EventType)
+	}
+	if e.Service != "login-ui" {
+		t.Errorf("service = %q, want login-ui", e.Service)
+	}
+	if e.ActorType != audit.ActorTypeUser {
+		t.Errorf("actor_type = %q, want user", e.ActorType)
+	}
+	if e.ActorID != "user-42" {
+		t.Errorf("actor_id = %q, want user-42", e.ActorID)
+	}
+	if e.SubjectID != "user-42" {
+		t.Errorf("subject_id = %q, want user-42", e.SubjectID)
+	}
+	if e.ResourceKind != audit.ResourceKindApplication {
+		t.Errorf("resource_kind = %q, want application", e.ResourceKind)
+	}
+	if e.ResourcePath != "login-ui/application/signin" {
+		t.Errorf("resource_path = %q, want login-ui/application/signin", e.ResourcePath)
+	}
+	if ch, _ := e.Attrs["login_challenge"].(string); ch != "ch-1" {
+		t.Errorf("attrs.login_challenge = %v, want ch-1", e.Attrs["login_challenge"])
+	}
+}
+
+func TestSignInPost_BadCredentialsDoesNotEmit(t *testing.T) {
+	// Failed sign-ins belong on a security-audit stream — not on the
+	// billing stream emitted here.
+	ua := &fakeUserAuth{err: apperrors.New(apperrors.ErrCodeUnauthorized, "bad password")}
+	ci := &fakeCodeIssuer{}
+	sink := &captureSink{}
+	h := newSignInHandler(t, ua, ci).WithAudit(audit.New(sink), "login-ui")
+
+	_ = postSignIn(t, h, url.Values{
+		"login_challenge": {"ch-1"},
+		"email":           {"user@example.com"},
+		"password":        {"wrong"},
+	})
+	if len(sink.snapshot()) != 0 {
+		t.Errorf("expected no audit event on failed sign-in, got %d", len(sink.snapshot()))
+	}
+}
+
+func TestSignInPost_IssueCodeFailureDoesNotEmit(t *testing.T) {
+	ua := &fakeUserAuth{subject: "user-42"}
+	ci := &fakeCodeIssuer{err: errors.New("auth-server unreachable")}
+	sink := &captureSink{}
+	h := newSignInHandler(t, ua, ci).WithAudit(audit.New(sink), "login-ui")
+
+	_ = postSignIn(t, h, url.Values{
+		"login_challenge": {"ch-1"},
+		"email":           {"user@example.com"},
+		"password":        {"hunter2"},
+	})
+	if len(sink.snapshot()) != 0 {
+		t.Errorf("expected no audit event when issue-code fails, got %d", len(sink.snapshot()))
+	}
+}
+
+func TestSignInPost_AuditFailureDegradesGracefully(t *testing.T) {
+	// Per ADR-0019: a durable-sink failure must not leave the user with a
+	// half-completed sign-in. The handler re-renders the form with a
+	// generic error rather than emitting the redirect.
+	ua := &fakeUserAuth{subject: "user-42"}
+	ci := &fakeCodeIssuer{resp: &ports.IssueCodeResponse{
+		Code:        "auth-code-xyz",
+		RedirectURI: "https://rp.example.com/callback",
+		State:       "rp-state",
+	}}
+	sink := &captureSink{err: errAuditFailure}
+	h := newSignInHandler(t, ua, ci).WithAudit(audit.New(sink), "login-ui")
+
+	w := postSignIn(t, h, url.Values{
+		"login_challenge": {"ch-1"},
+		"email":           {"user@example.com"},
+		"password":        {"hunter2"},
+	})
+	if w.Code == http.StatusFound {
+		t.Errorf("expected no redirect when audit emit fails, got 302")
+	}
+	if !strings.Contains(w.Body.String(), "could not complete sign-in") {
+		t.Errorf("expected generic error in body, got: %s", w.Body.String())
+	}
+}
+
+func TestHandler_WithAudit_NilEmitterPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	_ = newSignInHandler(t, &fakeUserAuth{}, &fakeCodeIssuer{}).WithAudit(nil, "login-ui")
 }

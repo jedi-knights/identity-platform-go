@@ -12,12 +12,14 @@ import (
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	"github.com/jedi-knights/go-platform/apperrors"
+	"github.com/jedi-knights/go-platform/audit"
 	platform "github.com/jedi-knights/go-platform/container"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/outbound/authserver"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/outbound/identityservice"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/config"
+	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/observability"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/ports"
 )
 
@@ -42,6 +44,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 		return logger, nil
 	})
 	platform.Register(c, httpClientProvider)
+	platform.Register(c, auditEmitterProvider)
 	platform.Register(c, userAuthenticatorProvider)
 	platform.Register(c, authCodeIssuerProvider)
 	platform.Register(c, handlerProvider)
@@ -56,7 +59,30 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	logger := platform.MustResolve[logging.Logger](ctx, c)
 	userAuth, _ := platform.Resolve[ports.UserAuthenticator](ctx, c)
 	codeIssuer, _ := platform.Resolve[ports.AuthCodeIssuer](ctx, c)
-	return inboundhttp.NewHandler(userAuth, codeIssuer, logger), nil
+	emitter := platform.MustResolve[audit.Emitter](ctx, c)
+	return inboundhttp.NewHandler(userAuth, codeIssuer, logger).WithAudit(emitter, "login-ui"), nil
+}
+
+// auditEmitterProvider builds the audit.Emitter per ADR-0018 + ADR-0019.
+// When LOGIN_UI_AUDIT_DURABLE_DSN is set the emitter writes through a
+// Postgres durable sink in addition to the best-effort stderr sink, and
+// the returned pool is registered as an OnClose hook for graceful
+// shutdown.
+func auditEmitterProvider(ctx context.Context, c *platform.Container) (audit.Emitter, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	wiring, err := observability.NewAuditEmitter(ctx, cfg, log)
+	if err != nil {
+		return nil, fmt.Errorf("audit: %w", err)
+	}
+	if wiring.Pool != nil {
+		pool := wiring.Pool
+		c.OnClose("audit-durable", func(_ context.Context) error {
+			pool.Close()
+			return nil
+		})
+	}
+	return wiring.Emitter, nil
 }
 
 // httpClientProvider returns a single *http.Client shared by every outbound
