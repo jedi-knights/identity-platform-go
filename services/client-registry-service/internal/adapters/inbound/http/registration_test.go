@@ -192,7 +192,7 @@ func TestNewRouter_RegisterRoute_RegisteredWhenHandlerNonNil(t *testing.T) {
 	reg := &fakeRegistrar{resp: &domain.RegistrationResponse{ClientID: "abc"}}
 	regHandler := newRegHandler(t, reg)
 	h := newHandler(t, &fakeCreator{}, &fakeReader{}, &fakeValidator{}, &fakeDeleter{})
-	router := inboundhttp.NewRouter(h, regHandler, quietLog())
+	router := inboundhttp.NewRouter(h, regHandler, nil, quietLog())
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 
@@ -208,7 +208,7 @@ func TestNewRouter_RegisterRoute_RegisteredWhenHandlerNonNil(t *testing.T) {
 
 func TestNewRouter_RegisterRoute_404WhenHandlerNil(t *testing.T) {
 	h := newHandler(t, &fakeCreator{}, &fakeReader{}, &fakeValidator{}, &fakeDeleter{})
-	router := inboundhttp.NewRouter(h, nil, quietLog())
+	router := inboundhttp.NewRouter(h, nil, nil, quietLog())
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 

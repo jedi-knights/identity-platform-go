@@ -431,3 +431,257 @@ func (s *RegistrationService) generateRegistrationToken() (plain, hash string, e
 	}
 	return plain, string(h), nil
 }
+
+// authorize resolves the client by ID and verifies the bearer token
+// against its stored registration-token hash. A missing token returns
+// invalid_token (401). A bad-token or absent client both surface as
+// [domain.ErrRegistrationNotFound] (404) so existence cannot be probed —
+// per ADR-0013 the two cases collapse to a single response.
+func (s *RegistrationService) authorize(ctx context.Context, clientID, token string) (*domain.OAuthClient, error) {
+	if token == "" {
+		return nil, &domain.RegistrationError{
+			Code:        domain.RegistrationErrorInvalidToken,
+			Description: "Authorization header must carry a bearer token",
+		}
+	}
+	client, err := s.repo.FindByID(ctx, clientID)
+	if err != nil {
+		// Treat every lookup failure — not-found, transient, anything —
+		// as not-found at the wire so we do not signal client_id
+		// existence to a caller with the wrong token.
+		return nil, domain.ErrRegistrationNotFound
+	}
+	if client.RegistrationAccessTokenHash == "" {
+		return nil, domain.ErrRegistrationNotFound
+	}
+	if err := bcrypt.CompareHashAndPassword(
+		[]byte(client.RegistrationAccessTokenHash),
+		[]byte(token),
+	); err != nil {
+		return nil, domain.ErrRegistrationNotFound
+	}
+	return client, nil
+}
+
+// ReadRegistration returns the client's metadata per RFC 7592 §2.1.
+// The response carries the registration_client_uri but not the
+// registration_access_token (the spec is explicit: tokens are issued
+// once at registration and never re-emitted).
+func (s *RegistrationService) ReadRegistration(ctx context.Context, clientID, token string) (*domain.RegistrationResponse, error) {
+	client, err := s.authorize(ctx, clientID, token)
+	if err != nil {
+		return nil, err
+	}
+	return s.toResponse(client, "", ""), nil
+}
+
+// validatedUpdate carries the normalised, validated representation of
+// an RFC 7592 update request — the output of [validateUpdate].
+type validatedUpdate struct {
+	grantTypes []string
+	authMethod string
+	scopes     []string
+	redirects  []string
+	name       string
+}
+
+// validateUpdate runs every RFC 7591 rule against an update request and
+// returns the normalised values the caller writes back to storage.
+// Extracted from [UpdateRegistration] so the writer stays under the
+// gocyclo budget.
+func (s *RegistrationService) validateUpdate(req domain.RegistrationRequest) (*validatedUpdate, error) {
+	if req.SoftwareStatement != "" {
+		return nil, &domain.RegistrationError{
+			Code:        domain.RegistrationErrorInvalidSoftwareStatement,
+			Description: "software_statement is not supported",
+		}
+	}
+	grantTypes := defaultGrantTypes(req.GrantTypes)
+	if err := validateGrantTypes(grantTypes); err != nil {
+		return nil, err
+	}
+	responseTypes := defaultResponseTypes(req.ResponseTypes)
+	if err := validateResponseTypes(responseTypes); err != nil {
+		return nil, err
+	}
+	if err := validateGrantResponseConsistency(grantTypes, responseTypes); err != nil {
+		return nil, err
+	}
+	authMethod := defaultAuthMethod(req.TokenEndpointAuthMethod)
+	if err := validateAuthMethod(authMethod); err != nil {
+		return nil, err
+	}
+	if err := validateRedirectURIs(req.RedirectURIs, grantTypes, s.allowLocalhost); err != nil {
+		return nil, err
+	}
+	scopes := parseScopes(req.Scope)
+	if err := s.validateScopes(scopes); err != nil {
+		return nil, err
+	}
+	if err := validateMetadataURIs(req, s.allowLocalhost); err != nil {
+		return nil, err
+	}
+	if err := validateContacts(req.Contacts); err != nil {
+		return nil, err
+	}
+	if err := validateClientName(req.ClientName); err != nil {
+		return nil, err
+	}
+	return &validatedUpdate{
+		grantTypes: grantTypes,
+		authMethod: authMethod,
+		scopes:     scopes,
+		redirects:  req.RedirectURIs,
+		name:       req.ClientName,
+	}, nil
+}
+
+// validateMetadataURIs enforces the https-only constraint on every
+// optional metadata URI (client_uri, logo_uri, tos_uri, policy_uri).
+// Extracted as a helper because the four-URI loop drove the parent
+// function past gocyclo's threshold.
+func validateMetadataURIs(req domain.RegistrationRequest, allowLocalhost bool) error {
+	for _, candidate := range []struct {
+		name, value string
+	}{
+		{"client_uri", req.ClientURI},
+		{"logo_uri", req.LogoURI},
+		{"tos_uri", req.TosURI},
+		{"policy_uri", req.PolicyURI},
+	} {
+		if candidate.value == "" {
+			continue
+		}
+		if err := validateHTTPSURL(candidate.value, allowLocalhost); err != nil {
+			return invalidClientMetadata(fmt.Sprintf("%s must use https scheme", candidate.name))
+		}
+	}
+	return nil
+}
+
+// applyUpdate produces the new OAuthClient and (when a secret rotation
+// is required) the plain-text secret to return to the caller. The
+// rotation rules:
+//   - downgrade to public ("none"): clear the secret
+//   - upgrade to confidential from public, or confidential without a
+//     stored hash: mint a fresh secret
+//   - confidential → confidential with an existing hash: leave it alone
+func (s *RegistrationService) applyUpdate(client *domain.OAuthClient, v *validatedUpdate) (*domain.OAuthClient, string, error) {
+	newType := domain.ClientTypeConfidential
+	if v.authMethod == domain.TokenEndpointAuthMethodNone {
+		newType = domain.ClientTypePublic
+	}
+	name := v.name
+	if name == "" {
+		name = client.Name
+	}
+	updated := *client
+	updated.Name = name
+	updated.Type = newType
+	updated.Scopes = v.scopes
+	updated.RedirectURIs = v.redirects
+	updated.GrantTypes = v.grantTypes
+	updated.TokenEndpointAuthMethod = v.authMethod
+	updated.UpdatedAt = time.Now()
+	newSecret, err := s.rotateSecretIfNeeded(&updated, client)
+	if err != nil {
+		return nil, "", err
+	}
+	return &updated, newSecret, nil
+}
+
+func (s *RegistrationService) rotateSecretIfNeeded(updated, prev *domain.OAuthClient) (string, error) {
+	if updated.Type == domain.ClientTypePublic {
+		updated.Secret = ""
+		return "", nil
+	}
+	if prev.Type == domain.ClientTypeConfidential && prev.Secret != "" {
+		return "", nil
+	}
+	plain, hash, err := s.generateSecretFor(domain.ClientTypeConfidential)
+	if err != nil {
+		return "", err
+	}
+	updated.Secret = hash
+	return plain, nil
+}
+
+// UpdateRegistration replaces the client's metadata wholesale per
+// RFC 7592 §2.2 — fields the client wants to keep must be re-submitted.
+// Validation re-runs every RFC 7591 rule; on success the persisted
+// record is overwritten and the new representation is returned.
+func (s *RegistrationService) UpdateRegistration(ctx context.Context, clientID, token string, req domain.RegistrationRequest) (*domain.RegistrationResponse, error) {
+	client, err := s.authorize(ctx, clientID, token)
+	if err != nil {
+		return nil, err
+	}
+	v, err := s.validateUpdate(req)
+	if err != nil {
+		return nil, err
+	}
+	updated, newSecret, err := s.applyUpdate(client, v)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.Update(ctx, updated); err != nil {
+		return nil, fmt.Errorf("update client: %w", err)
+	}
+	return s.toResponse(updated, newSecret, ""), nil
+}
+
+// DeleteRegistration removes the client per RFC 7592 §2.3. The deletion
+// is permanent and does not revoke outstanding tokens — those continue
+// to validate until they expire on their own.
+func (s *RegistrationService) DeleteRegistration(ctx context.Context, clientID, token string) error {
+	client, err := s.authorize(ctx, clientID, token)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.Delete(ctx, client.ID); err != nil {
+		return fmt.Errorf("delete client: %w", err)
+	}
+	if err := s.emitter.Emit(ctx, audit.Event{
+		EventType:      "client_deleted",
+		Service:        s.service,
+		ActorType:      audit.ActorTypeService,
+		ActorID:        client.ID,
+		SubjectID:      client.ID,
+		ClientID:       client.ID,
+		Resource:       "endpoint:deregister",
+		ResourceKind:   audit.ResourceKindEndpoint,
+		ResourceID:     "deregister",
+		ResourceParent: s.service,
+		ResourcePath:   s.service + "/endpoint/deregister",
+		Action:         "deregister",
+		Decision:       audit.DecisionAllow,
+		Attrs: map[string]any{
+			"dynamic": true,
+		},
+	}); err != nil {
+		return fmt.Errorf("audit emit (client_deleted): %w", err)
+	}
+	return nil
+}
+
+// toResponse projects a stored OAuthClient into the RFC 7591 response
+// shape. clientSecret is set only when the caller just rotated it;
+// regToken is set only by Register (RFC 7591 §3.2.1 — the management
+// endpoints never re-emit it). registration_client_uri is always
+// included so a client that lost track of its management URI can
+// recover it.
+func (s *RegistrationService) toResponse(c *domain.OAuthClient, clientSecret, regToken string) *domain.RegistrationResponse {
+	return &domain.RegistrationResponse{
+		ClientID:                c.ID,
+		ClientIDIssuedAt:        c.CreatedAt.Unix(),
+		ClientSecret:            clientSecret,
+		ClientSecretExpiresAt:   0,
+		RegistrationAccessToken: regToken,
+		RegistrationClientURI:   s.publicBaseURL + "/register/" + c.ID,
+		ClientName:              c.Name,
+		RedirectURIs:            c.RedirectURIs,
+		GrantTypes:              c.GrantTypes,
+		ResponseTypes:           []string{"code"},
+		TokenEndpointAuthMethod: c.TokenEndpointAuthMethod,
+		Scope:                   strings.Join(c.Scopes, " "),
+	}
+}
