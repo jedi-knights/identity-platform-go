@@ -63,26 +63,9 @@ func run(_ *cobra.Command, _ []string) error {
 	startCtx, startCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer startCancel()
 
-	// OTel bootstrap. When AUTH_TRACING_ENABLED=false (default) the
-	// global TracerProvider stays as the no-op default and downstream
-	// otelhttp wrappers emit no spans — the rest of the wiring is
-	// unconditional so flipping the env var at deploy time turns
-	// tracing on without code changes.
-	shutdownTracing := func(context.Context) error { return nil }
-	if cfg.Tracing.Enabled {
-		shutdownTracing, err = platformotel.Init(startCtx, platformotel.Config{
-			ServiceName:      "auth-server",
-			ServiceVersion:   cfg.Tracing.ServiceVersion,
-			Environment:      cfg.Log.Environment,
-			ExporterEndpoint: cfg.Tracing.ExporterEndpoint,
-			ExporterProtocol: cfg.Tracing.ExporterProtocol,
-			ExporterInsecure: cfg.Tracing.ExporterInsecure,
-			SamplerRatio:     cfg.Tracing.SamplerRatio,
-		})
-		if err != nil {
-			return fmt.Errorf("setting up tracing: %w", err)
-		}
-		logger.Info("opentelemetry bootstrap complete", "exporter", cfg.Tracing.ExporterEndpoint)
+	shutdownTracing, err := setupTracing(startCtx, cfg, logger)
+	if err != nil {
+		return err
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -146,6 +129,30 @@ func run(_ *cobra.Command, _ []string) error {
 	defer cancel()
 
 	return srv.Shutdown(ctx)
+}
+
+// setupTracing bootstraps the OTel SDK when AUTH_TRACING_ENABLED is
+// set. When tracing is disabled it returns a no-op shutdown so the
+// caller's deferred shutdown still has a stable target. Extracted from
+// [run] so the entry point stays under the gocyclo budget.
+func setupTracing(ctx context.Context, cfg *config.Config, logger logging.Logger) (platformotel.Shutdown, error) {
+	if !cfg.Tracing.Enabled {
+		return func(context.Context) error { return nil }, nil
+	}
+	shutdown, err := platformotel.Init(ctx, platformotel.Config{
+		ServiceName:      "auth-server",
+		ServiceVersion:   cfg.Tracing.ServiceVersion,
+		Environment:      cfg.Log.Environment,
+		ExporterEndpoint: cfg.Tracing.ExporterEndpoint,
+		ExporterProtocol: cfg.Tracing.ExporterProtocol,
+		ExporterInsecure: cfg.Tracing.ExporterInsecure,
+		SamplerRatio:     cfg.Tracing.SamplerRatio,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("setting up tracing: %w", err)
+	}
+	logger.Info("opentelemetry bootstrap complete", "exporter", cfg.Tracing.ExporterEndpoint)
+	return shutdown, nil
 }
 
 // listenAndWait starts the HTTP server and blocks until either it fails or a quit signal is received.
