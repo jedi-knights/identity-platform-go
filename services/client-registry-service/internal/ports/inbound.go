@@ -35,3 +35,14 @@ type ClientDeleter interface {
 type ClientRegistrar interface {
 	Register(ctx context.Context, req domain.RegistrationRequest) (*domain.RegistrationResponse, error)
 }
+
+// ClientRegistrationManager is the inbound port for the RFC 7592
+// management endpoints. Every method takes the bearer token from the
+// Authorization header so the application layer can bcrypt-compare
+// against the stored hash; the HTTP layer does not authenticate, it
+// only extracts and forwards.
+type ClientRegistrationManager interface {
+	ReadRegistration(ctx context.Context, clientID, token string) (*domain.RegistrationResponse, error)
+	UpdateRegistration(ctx context.Context, clientID, token string, req domain.RegistrationRequest) (*domain.RegistrationResponse, error)
+	DeleteRegistration(ctx context.Context, clientID, token string) error
+}

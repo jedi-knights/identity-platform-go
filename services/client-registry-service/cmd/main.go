@@ -73,11 +73,13 @@ func run(_ *cobra.Command, _ []string) error {
 	}()
 
 	handler := platform.MustResolve[*inboundhttp.Handler](startCtx, ctr)
-	// RegistrationHandler is nil-resolved when ADR-0013 wiring is
-	// disabled (no registration service registered); the router skips
-	// /register in that case.
+	// RegistrationHandler and RegistrationManagementHandler are
+	// nil-resolved when ADR-0013 wiring is disabled (no registration
+	// service registered); the router skips /register and the RFC 7592
+	// management routes in that case.
 	registration := platform.MustResolve[*inboundhttp.RegistrationHandler](startCtx, ctr)
-	router := inboundhttp.NewRouter(handler, registration, logger)
+	management := platform.MustResolve[*inboundhttp.RegistrationManagementHandler](startCtx, ctr)
+	router := inboundhttp.NewRouter(handler, registration, management, logger)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{

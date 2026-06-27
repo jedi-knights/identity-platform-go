@@ -365,4 +365,88 @@ paths:
       summary: RFC 7591 Dynamic Client Registration
       tags:
       - registration
+  /register/{client_id}:
+    delete:
+      parameters:
+      - description: Client ID
+        in: path
+        name: client_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationError'
+      summary: RFC 7592 deregister
+      tags:
+      - registration
+    get:
+      parameters:
+      - description: Client ID
+        in: path
+        name: client_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationError'
+      summary: RFC 7592 read registration
+      tags:
+      - registration
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Client ID
+        in: path
+        name: client_id
+        required: true
+        type: string
+      - description: Replacement metadata
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_client-registry-service_internal_domain.RegistrationError'
+      summary: RFC 7592 update registration
+      tags:
+      - registration
 swagger: "2.0"
