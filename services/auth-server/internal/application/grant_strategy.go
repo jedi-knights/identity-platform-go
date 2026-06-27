@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+	"github.com/jedi-knights/go-platform/audit"
 	"github.com/jedi-knights/go-platform/jwtutil"
 
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
@@ -48,24 +49,124 @@ type GrantStrategy interface {
 }
 
 // GrantStrategyRegistry holds all grant strategies (Registry/Factory pattern).
+//
+// The registry is the chokepoint for token issuance and therefore the
+// natural emission point for the ADR-0018 token_issued audit event.
+// Emission is wired via [GrantStrategyRegistry.WithAudit]; when audit is
+// not configured the registry uses a no-op emitter that always succeeds,
+// preserving backwards compatibility for tests and adapters that pre-date
+// the audit feature.
 type GrantStrategyRegistry struct {
 	strategies []GrantStrategy
+
+	// emitter is the audit.Emitter used by Handle on successful token
+	// issuance. Defaults to noopEmitter so unwired callers keep working.
+	emitter audit.Emitter
+	// service is the value placed on Event.Service. Defaults to
+	// "auth-server" which is correct for the only deployment of this
+	// registry today.
+	service string
 }
 
 // NewGrantStrategyRegistry creates a registry containing all provided strategies.
+// The registry defaults to a no-op audit emitter; call [GrantStrategyRegistry.WithAudit]
+// to wire a real emitter at composition time.
 func NewGrantStrategyRegistry(strategies ...GrantStrategy) *GrantStrategyRegistry {
-	return &GrantStrategyRegistry{strategies: strategies}
+	return &GrantStrategyRegistry{
+		strategies: strategies,
+		emitter:    audit.New(audit.NoopSink{}),
+		service:    "auth-server",
+	}
 }
 
-// Handle dispatches the grant request to the first matching strategy.
-// Returns ErrUnsupportedGrantType when no strategy supports the grant type.
+// WithAudit configures the registry's audit emitter and service name.
+// Returns the receiver to allow chained construction at the composition
+// root. emitter must be non-nil; service is used as Event.Service on
+// every emitted token_issued event.
+//
+// Per ADR-0019 the durable-sink failure must fail token issuance for
+// paid event types — the registry returns the audit error to the caller
+// when Emit fails, which propagates as a 500 from the token endpoint
+// (callers retry; the prior token's TTL prevents accumulation).
+func (r *GrantStrategyRegistry) WithAudit(emitter audit.Emitter, service string) *GrantStrategyRegistry {
+	if emitter == nil {
+		panic("application: WithAudit called with nil emitter")
+	}
+	r.emitter = emitter
+	if service != "" {
+		r.service = service
+	}
+	return r
+}
+
+// Handle dispatches the grant request to the first matching strategy
+// and emits a token_issued audit event on success. Returns
+// ErrUnsupportedGrantType when no strategy supports the grant type.
+//
+// On a successful strategy invocation the registry calls audit.Emit
+// before returning the token to the caller. An emission error is
+// surfaced to the caller — see [WithAudit] for the rationale.
 func (r *GrantStrategyRegistry) Handle(ctx context.Context, req domain.GrantRequest) (*domain.GrantResponse, error) {
 	for _, s := range r.strategies {
-		if s.Supports(req.GrantType) {
-			return s.Handle(ctx, req)
+		if !s.Supports(req.GrantType) {
+			continue
 		}
+		resp, err := s.Handle(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		if emitErr := r.emitter.Emit(ctx, tokenIssuedEvent(r.service, req, resp)); emitErr != nil {
+			return nil, fmt.Errorf("audit emit (token_issued): %w", emitErr)
+		}
+		return resp, nil
 	}
 	return nil, fmt.Errorf("%w: %s", ErrUnsupportedGrantType, req.GrantType)
+}
+
+// tokenIssuedEvent constructs the ADR-0018 envelope for a successful
+// token grant. ActorType is derived from the grant type as a placeholder
+// pending ADR-0015 implementation (which will source actor_type from the
+// authenticated client record); actor identification still respects the
+// human-vs-machine split the policy engine cares about today.
+func tokenIssuedEvent(service string, req domain.GrantRequest, resp *domain.GrantResponse) audit.Event {
+	return audit.Event{
+		EventType:      "token_issued",
+		Service:        service,
+		ActorType:      actorTypeForGrant(req.GrantType),
+		ActorID:        req.ClientID,
+		ClientID:       req.ClientID,
+		Resource:       "token:access",
+		ResourceKind:   audit.ResourceKindToken,
+		ResourceID:     "access",
+		ResourceParent: service,
+		ResourcePath:   service + "/token/access",
+		Action:         "issue",
+		Decision:       audit.DecisionAllow,
+		Attrs: map[string]any{
+			"grant_type":  string(req.GrantType),
+			"scope":       resp.Scope,
+			"expires_in":  resp.ExpiresIn,
+			"id_token":    resp.IDToken != "",
+			"has_refresh": resp.RefreshToken != "",
+		},
+	}
+}
+
+// actorTypeForGrant is a placeholder until ADR-0015 lands and the
+// authenticated client record carries an actor_type field. The mapping
+// matches the human-vs-machine split that the policy engine uses today:
+// client_credentials is service-to-service, authorization_code involves
+// a human resource owner, refresh_token preserves the original principal
+// kind (defaulting to service when ambiguous).
+func actorTypeForGrant(gt domain.GrantType) audit.ActorType {
+	switch gt {
+	case domain.GrantTypeAuthorizationCode:
+		return audit.ActorTypeUser
+	case domain.GrantTypeClientCredentials, domain.GrantTypeRefreshToken:
+		return audit.ActorTypeService
+	default:
+		return audit.ActorTypeService
+	}
 }
 
 // ClientCredentialsStrategy handles the client_credentials grant.
