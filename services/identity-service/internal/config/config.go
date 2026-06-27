@@ -14,6 +14,23 @@ type Config struct {
 	Log      LogConfig      `mapstructure:"log"`
 	Database DatabaseConfig `mapstructure:"database"`
 	Email    EmailConfig    `mapstructure:"email"`
+	Audit    AuditConfig    `mapstructure:"audit"`
+}
+
+// AuditConfig configures the agent-audit emitter (ADR-0018 / ADR-0019).
+// The emitter is always wired with the best-effort stderr JSON sink;
+// the durable Postgres sink is added when DurableDSN is set.
+type AuditConfig struct {
+	// DurableDSN is the Postgres connection string for the
+	// at-least-once durable audit sink. When empty, audit emission
+	// is best-effort (stderr only) and accounting integrity cannot be
+	// guaranteed — never deploy a billable environment without this.
+	DurableDSN string `mapstructure:"durable_dsn"` // IDENTITY_AUDIT_DURABLE_DSN
+
+	// SkipMigration disables the CREATE TABLE IF NOT EXISTS call at
+	// startup. Default false. Set to true when a separate migration job
+	// owns the audit_events schema.
+	SkipMigration bool `mapstructure:"skip_migration"` // IDENTITY_AUDIT_SKIP_MIGRATION
 }
 
 // EmailConfig holds the email-sender configuration. The flow is:
@@ -65,6 +82,8 @@ func Load() (*Config, error) {
 	v.SetDefault("email.sender", "stdout")
 	v.SetDefault("email.verification_url_template", "")
 	v.SetDefault("email.token_ttl_secs", 86400) // 24h
+	v.SetDefault("audit.durable_dsn", "")
+	v.SetDefault("audit.skip_migration", false)
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")

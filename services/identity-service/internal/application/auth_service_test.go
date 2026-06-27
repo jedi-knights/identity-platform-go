@@ -2,11 +2,13 @@ package application_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+	"github.com/jedi-knights/go-platform/audit"
 
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/domain"
@@ -239,4 +241,155 @@ func TestRegister(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- Audit emission (ADR-0018 / ADR-0019) ---
+
+type captureSink struct {
+	events []audit.Event
+	err    error
+}
+
+func (c *captureSink) Sink(_ context.Context, e audit.Event) error {
+	c.events = append(c.events, e)
+	return c.err
+}
+
+var errAuditFailure = errors.New("simulated audit transport failure")
+
+func TestLogin_EmitsUserAuthenticated(t *testing.T) {
+	repo := newMockUserRepo()
+	hasher := &mockHasher{}
+	seedUser(t, repo, &domain.User{
+		ID:           "u-1",
+		Email:        "test@example.com",
+		PasswordHash: "hashed:pw",
+		Name:         "Test",
+		Active:       true,
+	})
+	sink := &captureSink{}
+	svc := application.NewAuthService(repo, hasher).WithAudit(audit.New(sink), "identity-service")
+
+	if _, err := svc.Login(context.Background(), domain.LoginRequest{
+		Email:    "test@example.com",
+		Password: "pw",
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sink.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
+	}
+	e := sink.events[0]
+	if e.EventType != "user_authenticated" {
+		t.Errorf("event_type = %q, want user_authenticated", e.EventType)
+	}
+	if e.Service != "identity-service" {
+		t.Errorf("service = %q, want identity-service", e.Service)
+	}
+	if e.ActorType != audit.ActorTypeUser {
+		t.Errorf("actor_type = %q, want user", e.ActorType)
+	}
+	if e.ActorID != "u-1" {
+		t.Errorf("actor_id = %q, want u-1", e.ActorID)
+	}
+	if e.SubjectID != "u-1" {
+		t.Errorf("subject_id = %q, want u-1", e.SubjectID)
+	}
+	if e.ResourceKind != audit.ResourceKindEndpoint {
+		t.Errorf("resource_kind = %q, want endpoint", e.ResourceKind)
+	}
+	if e.ResourcePath != "identity-service/endpoint/authenticate" {
+		t.Errorf("resource_path = %q, want identity-service/endpoint/authenticate", e.ResourcePath)
+	}
+	if email, _ := e.Attrs["email"].(string); email != "test@example.com" {
+		t.Errorf("attrs.email = %v, want test@example.com", e.Attrs["email"])
+	}
+}
+
+func TestLogin_AuditFailureSurfaces(t *testing.T) {
+	repo := newMockUserRepo()
+	hasher := &mockHasher{}
+	seedUser(t, repo, &domain.User{
+		ID:           "u-1",
+		Email:        "test@example.com",
+		PasswordHash: "hashed:pw",
+		Name:         "Test",
+		Active:       true,
+	})
+	sink := &captureSink{err: errAuditFailure}
+	svc := application.NewAuthService(repo, hasher).WithAudit(audit.New(sink), "identity-service")
+
+	_, err := svc.Login(context.Background(), domain.LoginRequest{
+		Email:    "test@example.com",
+		Password: "pw",
+	})
+	if err == nil {
+		t.Fatal("expected error when audit emit fails")
+	}
+	if !errors.Is(err, errAuditFailure) {
+		t.Errorf("expected wrapped audit error, got %v", err)
+	}
+}
+
+func TestRegister_EmitsUserRegistered(t *testing.T) {
+	repo := newMockUserRepo()
+	hasher := &mockHasher{}
+	sink := &captureSink{}
+	svc := application.NewAuthService(repo, hasher).WithAudit(audit.New(sink), "identity-service")
+
+	resp, err := svc.Register(context.Background(), domain.RegisterRequest{
+		Email:    "new@example.com",
+		Password: "pw",
+		Name:     "New User",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sink.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
+	}
+	e := sink.events[0]
+	if e.EventType != "user_registered" {
+		t.Errorf("event_type = %q, want user_registered", e.EventType)
+	}
+	if e.ActorID != resp.UserID {
+		t.Errorf("actor_id = %q, want %q", e.ActorID, resp.UserID)
+	}
+	if e.SubjectID != resp.UserID {
+		t.Errorf("subject_id = %q, want %q", e.SubjectID, resp.UserID)
+	}
+	if e.ResourcePath != "identity-service/endpoint/register" {
+		t.Errorf("resource_path = %q, want identity-service/endpoint/register", e.ResourcePath)
+	}
+}
+
+func TestRegister_AuditFailureSurfaces(t *testing.T) {
+	repo := newMockUserRepo()
+	hasher := &mockHasher{}
+	sink := &captureSink{err: errAuditFailure}
+	svc := application.NewAuthService(repo, hasher).WithAudit(audit.New(sink), "identity-service")
+
+	_, err := svc.Register(context.Background(), domain.RegisterRequest{
+		Email:    "new@example.com",
+		Password: "pw",
+		Name:     "New User",
+	})
+	if err == nil {
+		t.Fatal("expected error when audit emit fails")
+	}
+	if !errors.Is(err, errAuditFailure) {
+		t.Errorf("expected wrapped audit error, got %v", err)
+	}
+}
+
+func TestAuthService_WithAudit_NilEmitterPanics(t *testing.T) {
+	repo := newMockUserRepo()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	_ = application.NewAuthService(repo, &mockHasher{}).WithAudit(nil, "identity-service")
 }
