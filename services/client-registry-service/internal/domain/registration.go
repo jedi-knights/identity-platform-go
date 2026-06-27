@@ -56,10 +56,10 @@ type RegistrationResponse struct {
 // to RegistrationErrorServerError; everything client-facing is one of
 // the codes below.
 const (
-	RegistrationErrorInvalidRedirectURI     = "invalid_redirect_uri"
-	RegistrationErrorInvalidClientMetadata  = "invalid_client_metadata"
+	RegistrationErrorInvalidRedirectURI       = "invalid_redirect_uri"
+	RegistrationErrorInvalidClientMetadata    = "invalid_client_metadata"
 	RegistrationErrorInvalidSoftwareStatement = "invalid_software_statement"
-	RegistrationErrorServerError            = "server_error"
+	RegistrationErrorServerError              = "server_error"
 )
 
 // RegistrationError carries a typed RFC 7591 error. The application

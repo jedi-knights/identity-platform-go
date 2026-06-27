@@ -35,7 +35,8 @@ func registerErr(t *testing.T, err error) *domain.RegistrationError {
 	return regErr
 }
 
-func TestRegister_DefaultsPublicWithoutSecret(t *testing.T) {
+func registerDefault(t *testing.T) *domain.RegistrationResponse {
+	t.Helper()
 	svc, _ := newRegSvc(t, application.RegistrationServiceConfig{})
 	resp, err := svc.Register(context.Background(), domain.RegistrationRequest{
 		RedirectURIs: []string{"https://example.com/callback"},
@@ -43,18 +44,31 @@ func TestRegister_DefaultsPublicWithoutSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
+	return resp
+}
+
+func TestRegister_DefaultsPublic_AuthMethodAndSecret(t *testing.T) {
+	resp := registerDefault(t)
 	if resp.TokenEndpointAuthMethod != domain.TokenEndpointAuthMethodNone {
 		t.Errorf("token_endpoint_auth_method = %q, want %q", resp.TokenEndpointAuthMethod, domain.TokenEndpointAuthMethodNone)
 	}
 	if resp.ClientSecret != "" {
 		t.Errorf("client_secret = %q, want empty for public client", resp.ClientSecret)
 	}
+}
+
+func TestRegister_DefaultsPublic_RegistrationManagement(t *testing.T) {
+	resp := registerDefault(t)
 	if resp.RegistrationAccessToken == "" {
 		t.Error("registration_access_token must be non-empty")
 	}
 	if resp.RegistrationClientURI != "https://clients.example.com/register/"+resp.ClientID {
 		t.Errorf("registration_client_uri = %q", resp.RegistrationClientURI)
 	}
+}
+
+func TestRegister_DefaultsPublic_GrantAndResponseTypes(t *testing.T) {
+	resp := registerDefault(t)
 	if !slices.Equal(resp.GrantTypes, []string{"authorization_code"}) {
 		t.Errorf("grant_types = %v", resp.GrantTypes)
 	}
