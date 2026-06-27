@@ -14,6 +14,21 @@ type Config struct {
 	Log      LogConfig      `mapstructure:"log"`
 	Database DatabaseConfig `mapstructure:"database"`
 	Redis    RedisConfig    `mapstructure:"redis"`
+	Audit    AuditConfig    `mapstructure:"audit"`
+}
+
+// AuditConfig configures the agent-audit emitter (ADR-0018 / ADR-0019).
+// The emitter is always wired with the best-effort stderr JSON sink;
+// the durable Postgres sink is added when DurableDSN is set.
+type AuditConfig struct {
+	// DurableDSN is the Postgres connection string for the
+	// at-least-once durable audit sink. When empty, audit emission
+	// is best-effort (stderr only).
+	DurableDSN string `mapstructure:"durable_dsn"` // POLICY_AUDIT_DURABLE_DSN
+
+	// SkipMigration disables the CREATE TABLE IF NOT EXISTS call at
+	// startup. Default false.
+	SkipMigration bool `mapstructure:"skip_migration"` // POLICY_AUDIT_SKIP_MIGRATION
 }
 
 // DatabaseConfig holds database connection settings.
@@ -55,6 +70,8 @@ func Load() (*Config, error) {
 	v.SetDefault("log.environment", "development")
 	v.SetDefault("database.url", "")
 	v.SetDefault("redis.url", "")
+	v.SetDefault("audit.durable_dsn", "")
+	v.SetDefault("audit.skip_migration", false)
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
