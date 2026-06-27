@@ -18,6 +18,8 @@ import (
 	"github.com/jedi-knights/go-platform/audit"
 	platform "github.com/jedi-knights/go-platform/container"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/clientregistry"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/identityservice"
@@ -94,7 +96,15 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 }
 
 func httpClientProvider(context.Context, *platform.Container) (*http.Client, error) {
-	return &http.Client{Timeout: 5 * time.Second}, nil
+	// otelhttp.NewTransport wraps the default transport so every
+	// outbound request becomes a client span and carries the W3C
+	// traceparent header. The wrapper is inert when tracing is
+	// disabled — no spans are emitted but the header propagation still
+	// runs, which is the correct behaviour for a no-op TracerProvider.
+	return &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}, nil
 }
 
 // auditEmitterProvider builds the audit.Emitter per ADR-0018 + ADR-0019.

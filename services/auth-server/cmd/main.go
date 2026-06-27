@@ -14,6 +14,9 @@ import (
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	platform "github.com/jedi-knights/go-platform/container"
+	platformotel "github.com/jedi-knights/go-platform/otel"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/config"
@@ -60,6 +63,35 @@ func run(_ *cobra.Command, _ []string) error {
 	startCtx, startCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer startCancel()
 
+	// OTel bootstrap. When AUTH_TRACING_ENABLED=false (default) the
+	// global TracerProvider stays as the no-op default and downstream
+	// otelhttp wrappers emit no spans — the rest of the wiring is
+	// unconditional so flipping the env var at deploy time turns
+	// tracing on without code changes.
+	shutdownTracing := func(context.Context) error { return nil }
+	if cfg.Tracing.Enabled {
+		shutdownTracing, err = platformotel.Init(startCtx, platformotel.Config{
+			ServiceName:      "auth-server",
+			ServiceVersion:   cfg.Tracing.ServiceVersion,
+			Environment:      cfg.Log.Environment,
+			ExporterEndpoint: cfg.Tracing.ExporterEndpoint,
+			ExporterProtocol: cfg.Tracing.ExporterProtocol,
+			ExporterInsecure: cfg.Tracing.ExporterInsecure,
+			SamplerRatio:     cfg.Tracing.SamplerRatio,
+		})
+		if err != nil {
+			return fmt.Errorf("setting up tracing: %w", err)
+		}
+		logger.Info("opentelemetry bootstrap complete", "exporter", cfg.Tracing.ExporterEndpoint)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if serr := shutdownTracing(shutdownCtx); serr != nil {
+			logger.Error("tracing shutdown error", "err", serr)
+		}
+	}()
+
 	ctr, err := container.New(startCtx, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("creating container: %w", err)
@@ -80,6 +112,15 @@ func run(_ *cobra.Command, _ []string) error {
 	// MetadataHandler is nil-resolved when AUTH_METADATA_PUBLIC_BASE_URL is unset (ADR-0012).
 	metadata := platform.MustResolve[*inboundhttp.MetadataHandler](startCtx, ctr)
 	router := inboundhttp.NewRouter(handler, jwks, userInfo, metadata, logger)
+	// otelhttp wraps the router so every inbound request becomes a
+	// server span; traceparent headers from the client are honoured by
+	// the global W3C TraceContext propagator that go-platform/otel
+	// registers. The wrapper is a no-op when tracing is disabled.
+	router = otelhttp.NewHandler(router, "auth-server",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			return r.Method + " " + r.URL.Path
+		}),
+	)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
