@@ -579,6 +579,166 @@ func TestDeleteClient_AuditFailureSurfaces(t *testing.T) {
 	}
 }
 
+func TestCreateClient_DefaultsActorTypeToService(t *testing.T) {
+	repo := newFakeClientRepo()
+	svc := newSvc(t, repo)
+
+	resp, err := svc.CreateClient(context.Background(), domain.CreateClientRequest{
+		Name:       "no-actor-type",
+		GrantTypes: []string{"client_credentials"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.ActorType != string(domain.ActorTypeService) {
+		t.Errorf("ActorType = %q, want service (default)", resp.ActorType)
+	}
+	stored := repo.clients[resp.ClientID]
+	if stored.ActorType != domain.ActorTypeService {
+		t.Errorf("stored ActorType = %q, want service", stored.ActorType)
+	}
+}
+
+func TestCreateClient_PersistsActorTypeAgent(t *testing.T) {
+	repo := newFakeClientRepo()
+	svc := newSvc(t, repo)
+
+	resp, err := svc.CreateClient(context.Background(), domain.CreateClientRequest{
+		Name:       "agent-claude",
+		ActorType:  "agent",
+		GrantTypes: []string{"client_credentials"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.ActorType != string(domain.ActorTypeAgent) {
+		t.Errorf("ActorType = %q, want agent", resp.ActorType)
+	}
+	stored := repo.clients[resp.ClientID]
+	if stored.ActorType != domain.ActorTypeAgent {
+		t.Errorf("stored ActorType = %q, want agent", stored.ActorType)
+	}
+}
+
+func TestCreateClient_UnknownActorTypeFailsClosed(t *testing.T) {
+	// ADR-0015 fail-closed rule: unknown wire values must not silently
+	// grant agent semantics.
+	repo := newFakeClientRepo()
+	svc := newSvc(t, repo)
+
+	resp, err := svc.CreateClient(context.Background(), domain.CreateClientRequest{
+		Name:       "weird",
+		ActorType:  "robot",
+		GrantTypes: []string{"client_credentials"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.ActorType != string(domain.ActorTypeService) {
+		t.Errorf("ActorType = %q, want service (fail-closed default)", resp.ActorType)
+	}
+}
+
+func TestCreateClient_EmitsAgentRegistered(t *testing.T) {
+	sink := &captureSink{}
+	svc := newSvc(t, newFakeClientRepo()).
+		WithAudit(audit.New(sink), "client-registry-service")
+
+	resp, err := svc.CreateClient(context.Background(), domain.CreateClientRequest{
+		Name:       "agent-claude",
+		ActorType:  "agent",
+		GrantTypes: []string{"client_credentials"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sink.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
+	}
+	e := sink.events[0]
+	if e.EventType != "agent_registered" {
+		t.Errorf("event_type = %q, want agent_registered", e.EventType)
+	}
+	if e.ActorType != audit.ActorTypeAgent {
+		t.Errorf("actor_type = %q, want agent", e.ActorType)
+	}
+	if e.ActorID != resp.ClientID {
+		t.Errorf("actor_id = %q, want %q", e.ActorID, resp.ClientID)
+	}
+	if at, _ := e.Attrs["actor_type"].(string); at != "agent" {
+		t.Errorf("attrs.actor_type = %v, want agent", e.Attrs["actor_type"])
+	}
+}
+
+func TestCreateClient_EmitsClientRegistered_NonAgent(t *testing.T) {
+	// Verify that the default (service) path still emits client_registered.
+	sink := &captureSink{}
+	svc := newSvc(t, newFakeClientRepo()).
+		WithAudit(audit.New(sink), "client-registry-service")
+
+	if _, err := svc.CreateClient(context.Background(), domain.CreateClientRequest{
+		Name:       "service-client",
+		GrantTypes: []string{"client_credentials"},
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sink.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
+	}
+	if sink.events[0].EventType != "client_registered" {
+		t.Errorf("event_type = %q, want client_registered", sink.events[0].EventType)
+	}
+	if sink.events[0].ActorType != audit.ActorTypeService {
+		t.Errorf("actor_type = %q, want service", sink.events[0].ActorType)
+	}
+}
+
+func TestGetClient_ReturnsActorType(t *testing.T) {
+	repo := newFakeClientRepo()
+	repo.clients["c-1"] = &domain.OAuthClient{
+		ID:        "c-1",
+		Name:      "agent-claude",
+		Type:      domain.ClientTypeConfidential,
+		ActorType: domain.ActorTypeAgent,
+		Active:    true,
+		CreatedAt: time.Now(),
+	}
+	svc := newSvc(t, repo)
+
+	resp, err := svc.GetClient(context.Background(), "c-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.ActorType != "agent" {
+		t.Errorf("ActorType = %q, want agent", resp.ActorType)
+	}
+}
+
+func TestGetClient_EmptyStoredActorTypeSurfacesAsService(t *testing.T) {
+	// Records persisted before ADR-0015 have an empty ActorType; the
+	// fail-closed normalization must surface them as "service".
+	repo := newFakeClientRepo()
+	repo.clients["c-1"] = &domain.OAuthClient{
+		ID:        "c-1",
+		Name:      "legacy",
+		Type:      domain.ClientTypeConfidential,
+		ActorType: "",
+		Active:    true,
+		CreatedAt: time.Now(),
+	}
+	svc := newSvc(t, repo)
+
+	resp, err := svc.GetClient(context.Background(), "c-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.ActorType != "service" {
+		t.Errorf("ActorType = %q, want service (fail-closed default)", resp.ActorType)
+	}
+}
+
 func TestClientService_WithAudit_NilEmitterPanics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {

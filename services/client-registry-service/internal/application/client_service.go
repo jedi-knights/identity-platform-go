@@ -108,6 +108,7 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 	}
 
 	clientType := normalizeIncomingClientType(req.ClientType)
+	actorType := normalizeIncomingActorType(req.ActorType)
 	plainSecret, storedSecret, err := s.generateSecretFor(clientType)
 	if err != nil {
 		return nil, err
@@ -119,6 +120,7 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 		Secret:       storedSecret,
 		Name:         req.Name,
 		Type:         clientType,
+		ActorType:    actorType,
 		Scopes:       req.Scopes,
 		RedirectURIs: req.RedirectURIs,
 		GrantTypes:   req.GrantTypes,
@@ -131,10 +133,23 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 		return nil, fmt.Errorf("failed to save client: %w", err)
 	}
 
+	eventType := "client_registered"
+	auditActorType := audit.ActorTypeService
+	if client.ActorType == domain.ActorTypeAgent {
+		// ADR-0015: agents register through the same DCR endpoint as
+		// services. The event type and actor classification on the
+		// envelope follow ADR-0018's registry so downstream consumers
+		// (audit dashboards, Lago billable metrics) can route on
+		// agent-specific signals.
+		eventType = "agent_registered"
+		auditActorType = audit.ActorTypeAgent
+	} else if client.ActorType == domain.ActorTypeUser {
+		auditActorType = audit.ActorTypeUser
+	}
 	if err := s.emitter.Emit(ctx, audit.Event{
-		EventType:      "client_registered",
+		EventType:      eventType,
 		Service:        s.service,
-		ActorType:      audit.ActorTypeService,
+		ActorType:      auditActorType,
 		ActorID:        client.ID,
 		SubjectID:      client.ID,
 		ClientID:       client.ID,
@@ -148,11 +163,12 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 		Attrs: map[string]any{
 			"name":        client.Name,
 			"client_type": string(client.Type),
+			"actor_type":  string(client.ActorType),
 			"grant_types": client.GrantTypes,
 			"scopes":      client.Scopes,
 		},
 	}); err != nil {
-		return nil, fmt.Errorf("audit emit (client_registered): %w", err)
+		return nil, fmt.Errorf("audit emit (%s): %w", eventType, err)
 	}
 
 	// Return the plain-text secret once — it will not be recoverable from
@@ -163,6 +179,7 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 		ClientSecret: plainSecret,
 		Name:         client.Name,
 		ClientType:   string(client.Type),
+		ActorType:    string(client.ActorType),
 		Scopes:       client.Scopes,
 		RedirectURIs: client.RedirectURIs,
 		GrantTypes:   client.GrantTypes,
@@ -181,6 +198,7 @@ func (s *ClientService) GetClient(ctx context.Context, id string) (*domain.GetCl
 		ClientID:     client.ID,
 		Name:         client.Name,
 		ClientType:   normalizeClientType(client.Type),
+		ActorType:    normalizeActorType(client.ActorType),
 		Scopes:       client.Scopes,
 		RedirectURIs: client.RedirectURIs,
 		GrantTypes:   client.GrantTypes,
@@ -208,6 +226,35 @@ func normalizeIncomingClientType(wire string) domain.ClientType {
 		return domain.ClientTypePublic
 	}
 	return domain.ClientTypeConfidential
+}
+
+// normalizeActorType returns the wire value of t, defaulting to "service"
+// for empty or unrecognised stored values per ADR-0015's fail-closed
+// rule. Records persisted before ADR-0015 carry an empty ActorType and
+// surface as "service".
+func normalizeActorType(t domain.ActorType) string {
+	switch t {
+	case domain.ActorTypeUser, domain.ActorTypeAgent:
+		return string(t)
+	default:
+		return string(domain.ActorTypeService)
+	}
+}
+
+// normalizeIncomingActorType maps the wire value on a CreateClientRequest
+// to a domain.ActorType, defaulting empty / unknown to "service" per
+// ADR-0015's fail-closed rule. Only user / service / agent are recognised
+// — any other value is silently coerced to service so a misspelled
+// classification cannot accidentally grant agent semantics.
+func normalizeIncomingActorType(wire string) domain.ActorType {
+	switch domain.ActorType(wire) {
+	case domain.ActorTypeUser:
+		return domain.ActorTypeUser
+	case domain.ActorTypeAgent:
+		return domain.ActorTypeAgent
+	default:
+		return domain.ActorTypeService
+	}
 }
 
 // generateSecretFor returns (plain, stored) for the given client type.
