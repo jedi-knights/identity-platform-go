@@ -11,19 +11,38 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/jedi-knights/go-platform/apperrors"
+	"github.com/jedi-knights/go-platform/audit"
 
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/domain"
 )
 
 // ClientService handles OAuth client management operations.
+//
+// The service is the chokepoint for client registration and lifecycle
+// operations and therefore the natural emission point for the
+// client_registered and client_deleted audit events (ADR-0018 /
+// ADR-0019). Audit is wired via [ClientService.WithAudit]; when audit is
+// not configured the service uses a no-op emitter that always succeeds,
+// preserving backwards compatibility for tests and adapters that
+// pre-date the audit feature.
 type ClientService struct {
 	repo       domain.ClientRepository
 	bcryptCost int
+
+	emitter audit.Emitter
+	service string
 }
 
 // NewClientService creates a ClientService using bcrypt.DefaultCost for secret hashing.
+// The returned service uses a no-op audit emitter; call [ClientService.WithAudit]
+// to wire a real emitter at composition time.
 func NewClientService(repo domain.ClientRepository) *ClientService {
-	return &ClientService{repo: repo, bcryptCost: bcrypt.DefaultCost}
+	return &ClientService{
+		repo:       repo,
+		bcryptCost: bcrypt.DefaultCost,
+		emitter:    audit.New(audit.NoopSink{}),
+		service:    "client-registry-service",
+	}
 }
 
 // NewClientServiceWithCost creates a ClientService with a custom bcrypt cost.
@@ -34,7 +53,31 @@ func NewClientServiceWithCost(repo domain.ClientRepository, cost int) (*ClientSe
 		return nil, apperrors.New(apperrors.ErrCodeBadRequest,
 			fmt.Sprintf("bcrypt cost must be between %d and %d", bcrypt.MinCost, bcrypt.MaxCost))
 	}
-	return &ClientService{repo: repo, bcryptCost: cost}, nil
+	return &ClientService{
+		repo:       repo,
+		bcryptCost: cost,
+		emitter:    audit.New(audit.NoopSink{}),
+		service:    "client-registry-service",
+	}, nil
+}
+
+// WithAudit configures the service's audit emitter and service name.
+// Returns the receiver to allow chained construction at the composition
+// root. emitter must be non-nil. service is used as Event.Service on
+// every emitted client_registered and client_deleted event.
+//
+// Per ADR-0019 these are paid events for accounting purposes — a
+// durable-sink failure surfaces to the caller and the request fails so
+// the meter cannot have gaps.
+func (s *ClientService) WithAudit(emitter audit.Emitter, service string) *ClientService {
+	if emitter == nil {
+		panic("application: WithAudit called with nil emitter")
+	}
+	s.emitter = emitter
+	if service != "" {
+		s.service = service
+	}
+	return s
 }
 
 // validateCreateRequest checks that a CreateClientRequest contains the required fields.
@@ -86,6 +129,30 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 
 	if err := s.repo.Save(ctx, client); err != nil {
 		return nil, fmt.Errorf("failed to save client: %w", err)
+	}
+
+	if err := s.emitter.Emit(ctx, audit.Event{
+		EventType:      "client_registered",
+		Service:        s.service,
+		ActorType:      audit.ActorTypeService,
+		ActorID:        client.ID,
+		SubjectID:      client.ID,
+		ClientID:       client.ID,
+		Resource:       "endpoint:register",
+		ResourceKind:   audit.ResourceKindEndpoint,
+		ResourceID:     "register",
+		ResourceParent: s.service,
+		ResourcePath:   s.service + "/endpoint/register",
+		Action:         "register",
+		Decision:       audit.DecisionAllow,
+		Attrs: map[string]any{
+			"name":        client.Name,
+			"client_type": string(client.Type),
+			"grant_types": client.GrantTypes,
+			"scopes":      client.Scopes,
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("audit emit (client_registered): %w", err)
 	}
 
 	// Return the plain-text secret once — it will not be recoverable from
@@ -216,6 +283,23 @@ func (s *ClientService) ListClients(ctx context.Context) ([]*domain.GetClientRes
 func (s *ClientService) DeleteClient(ctx context.Context, id string) error {
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("deleting client %s: %w", id, err)
+	}
+	if err := s.emitter.Emit(ctx, audit.Event{
+		EventType:      "client_deleted",
+		Service:        s.service,
+		ActorType:      audit.ActorTypeService,
+		ActorID:        id,
+		SubjectID:      id,
+		ClientID:       id,
+		Resource:       "endpoint:delete",
+		ResourceKind:   audit.ResourceKindEndpoint,
+		ResourceID:     "delete",
+		ResourceParent: s.service,
+		ResourcePath:   s.service + "/endpoint/delete",
+		Action:         "delete",
+		Decision:       audit.DecisionAllow,
+	}); err != nil {
+		return fmt.Errorf("audit emit (client_deleted): %w", err)
 	}
 	return nil
 }
