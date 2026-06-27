@@ -64,10 +64,37 @@ func (s *AuthService) WithAudit(emitter audit.Emitter, service string) *AuthServ
 // Returns ErrCodeBadRequest for missing fields, ErrCodeUnauthorized for invalid
 // credentials, and ErrCodeForbidden when the account is disabled.
 func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (*domain.LoginResponse, error) {
-	if req.Email == "" || req.Password == "" {
-		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "email and password are required")
+	if err := validateLoginRequest(req); err != nil {
+		return nil, err
 	}
+	user, err := s.authenticate(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.emitUserAuthenticated(ctx, user); err != nil {
+		return nil, err
+	}
+	return &domain.LoginResponse{
+		UserID: user.ID,
+		Email:  user.Email,
+		Name:   user.Name,
+	}, nil
+}
 
+// validateLoginRequest enforces the shape rules at the wire boundary so
+// the strategy proper never inspects empty inputs.
+func validateLoginRequest(req domain.LoginRequest) error {
+	if req.Email == "" || req.Password == "" {
+		return apperrors.New(apperrors.ErrCodeBadRequest, "email and password are required")
+	}
+	return nil
+}
+
+// authenticate resolves the user by email and verifies the password.
+// Returns ErrCodeUnauthorized on missing-user or bad-password (the two
+// cases collapse so callers cannot probe email existence) and
+// ErrCodeForbidden when the account is disabled.
+func (s *AuthService) authenticate(ctx context.Context, req domain.LoginRequest) (*domain.User, error) {
 	user, err := s.userRepo.FindByEmail(ctx, req.Email)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
@@ -75,15 +102,20 @@ func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (*doma
 		}
 		return nil, fmt.Errorf("looking up user: %w", err)
 	}
-
 	if !user.Active {
 		return nil, apperrors.New(apperrors.ErrCodeForbidden, "account is disabled")
 	}
-
 	if err := s.hasher.Compare(user.PasswordHash, req.Password); err != nil {
 		return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid credentials")
 	}
+	return user, nil
+}
 
+// emitUserAuthenticated emits the ADR-0018 user_authenticated event.
+// Per ADR-0019 this is a paid event for accounting purposes — a
+// durable-sink failure surfaces to the caller so the meter cannot have
+// gaps.
+func (s *AuthService) emitUserAuthenticated(ctx context.Context, user *domain.User) error {
 	if err := s.emitter.Emit(ctx, audit.Event{
 		EventType:      "user_authenticated",
 		Service:        s.service,
@@ -102,37 +134,50 @@ func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (*doma
 			"email_verified": user.IsEmailVerified(),
 		},
 	}); err != nil {
-		return nil, fmt.Errorf("audit emit (user_authenticated): %w", err)
+		return fmt.Errorf("audit emit (user_authenticated): %w", err)
 	}
-
-	return &domain.LoginResponse{
-		UserID: user.ID,
-		Email:  user.Email,
-		Name:   user.Name,
-	}, nil
+	return nil
 }
 
 // Register creates a new user account with a bcrypt-hashed password.
 // Returns ErrCodeBadRequest for missing fields and ErrCodeConflict if the email
 // is already registered.
 func (s *AuthService) Register(ctx context.Context, req domain.RegisterRequest) (*domain.RegisterResponse, error) {
-	if req.Email == "" || req.Password == "" || req.Name == "" {
-		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "email, password, and name are required")
+	if err := validateRegisterRequest(req); err != nil {
+		return nil, err
 	}
-
 	if err := s.assertEmailAvailable(ctx, req.Email); err != nil {
 		return nil, err
 	}
-
 	user, err := s.buildUser(req)
 	if err != nil {
 		return nil, err
 	}
-
 	if err := s.userRepo.Save(ctx, user); err != nil {
 		return nil, fmt.Errorf("saving user: %w", err)
 	}
+	if err := s.emitUserRegistered(ctx, user); err != nil {
+		return nil, err
+	}
+	return &domain.RegisterResponse{
+		UserID: user.ID,
+		Email:  user.Email,
+		Name:   user.Name,
+	}, nil
+}
 
+// validateRegisterRequest enforces the shape rules at the wire boundary.
+func validateRegisterRequest(req domain.RegisterRequest) error {
+	if req.Email == "" || req.Password == "" || req.Name == "" {
+		return apperrors.New(apperrors.ErrCodeBadRequest, "email, password, and name are required")
+	}
+	return nil
+}
+
+// emitUserRegistered emits the ADR-0018 user_registered event for a
+// newly created user. Per ADR-0019 a durable-sink failure fails the
+// request so the meter cannot have gaps.
+func (s *AuthService) emitUserRegistered(ctx context.Context, user *domain.User) error {
 	if err := s.emitter.Emit(ctx, audit.Event{
 		EventType:      "user_registered",
 		Service:        s.service,
@@ -150,14 +195,9 @@ func (s *AuthService) Register(ctx context.Context, req domain.RegisterRequest) 
 			"email": user.Email,
 		},
 	}); err != nil {
-		return nil, fmt.Errorf("audit emit (user_registered): %w", err)
+		return fmt.Errorf("audit emit (user_registered): %w", err)
 	}
-
-	return &domain.RegisterResponse{
-		UserID: user.ID,
-		Email:  user.Email,
-		Name:   user.Name,
-	}, nil
+	return nil
 }
 
 // GetUserClaims returns the OIDC claim projection for the user with the
