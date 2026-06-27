@@ -487,44 +487,18 @@ type validatedUpdate struct {
 
 // validateUpdate runs every RFC 7591 rule against an update request and
 // returns the normalised values the caller writes back to storage.
-// Extracted from [UpdateRegistration] so the writer stays under the
-// gocyclo budget.
+// Validation is split into [validateRequestShape] and
+// [validateRequestContent] so each stays under the gocyclo budget.
 func (s *RegistrationService) validateUpdate(req domain.RegistrationRequest) (*validatedUpdate, error) {
-	if req.SoftwareStatement != "" {
-		return nil, &domain.RegistrationError{
-			Code:        domain.RegistrationErrorInvalidSoftwareStatement,
-			Description: "software_statement is not supported",
-		}
-	}
-	grantTypes := defaultGrantTypes(req.GrantTypes)
-	if err := validateGrantTypes(grantTypes); err != nil {
-		return nil, err
-	}
-	responseTypes := defaultResponseTypes(req.ResponseTypes)
-	if err := validateResponseTypes(responseTypes); err != nil {
-		return nil, err
-	}
-	if err := validateGrantResponseConsistency(grantTypes, responseTypes); err != nil {
-		return nil, err
-	}
-	authMethod := defaultAuthMethod(req.TokenEndpointAuthMethod)
-	if err := validateAuthMethod(authMethod); err != nil {
+	grantTypes, authMethod, err := validateRequestShape(req)
+	if err != nil {
 		return nil, err
 	}
 	if err := validateRedirectURIs(req.RedirectURIs, grantTypes, s.allowLocalhost); err != nil {
 		return nil, err
 	}
 	scopes := parseScopes(req.Scope)
-	if err := s.validateScopes(scopes); err != nil {
-		return nil, err
-	}
-	if err := validateMetadataURIs(req, s.allowLocalhost); err != nil {
-		return nil, err
-	}
-	if err := validateContacts(req.Contacts); err != nil {
-		return nil, err
-	}
-	if err := validateClientName(req.ClientName); err != nil {
+	if err := s.validateRequestContent(req, scopes); err != nil {
 		return nil, err
 	}
 	return &validatedUpdate{
@@ -534,6 +508,51 @@ func (s *RegistrationService) validateUpdate(req domain.RegistrationRequest) (*v
 		redirects:  req.RedirectURIs,
 		name:       req.ClientName,
 	}, nil
+}
+
+// validateRequestShape covers the structural rules (software statement,
+// grant / response type vocabulary, consistency, and auth method).
+// Returns the normalised grant types and auth method so the caller does
+// not have to re-derive them.
+func validateRequestShape(req domain.RegistrationRequest) (grantTypes []string, authMethod string, err error) {
+	if req.SoftwareStatement != "" {
+		return nil, "", &domain.RegistrationError{
+			Code:        domain.RegistrationErrorInvalidSoftwareStatement,
+			Description: "software_statement is not supported",
+		}
+	}
+	grantTypes = defaultGrantTypes(req.GrantTypes)
+	if err := validateGrantTypes(grantTypes); err != nil {
+		return nil, "", err
+	}
+	responseTypes := defaultResponseTypes(req.ResponseTypes)
+	if err := validateResponseTypes(responseTypes); err != nil {
+		return nil, "", err
+	}
+	if err := validateGrantResponseConsistency(grantTypes, responseTypes); err != nil {
+		return nil, "", err
+	}
+	authMethod = defaultAuthMethod(req.TokenEndpointAuthMethod)
+	if err := validateAuthMethod(authMethod); err != nil {
+		return nil, "", err
+	}
+	return grantTypes, authMethod, nil
+}
+
+// validateRequestContent covers the field-level rules — scopes,
+// metadata URIs, contacts, client name. Split from validateRequestShape
+// so neither half exceeds the gocyclo budget.
+func (s *RegistrationService) validateRequestContent(req domain.RegistrationRequest, scopes []string) error {
+	if err := s.validateScopes(scopes); err != nil {
+		return err
+	}
+	if err := validateMetadataURIs(req, s.allowLocalhost); err != nil {
+		return err
+	}
+	if err := validateContacts(req.Contacts); err != nil {
+		return err
+	}
+	return validateClientName(req.ClientName)
 }
 
 // validateMetadataURIs enforces the https-only constraint on every
