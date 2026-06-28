@@ -281,6 +281,17 @@ func TestMetadataBuilder_OAuthMetadata_OmitsRequestParamFlags(t *testing.T) {
 	}
 }
 
+func TestMetadataBuilder_OAuthMetadata_AdvertisesAuthorizationDetailsTypes(t *testing.T) {
+	b := newBuilder(t, nil)
+	md := b.OAuthMetadata()
+	if !slices.Contains(md.AuthorizationDetailsTypesSupported, "mcp_tool") {
+		t.Errorf("authorization_details_types_supported = %v, must include mcp_tool", md.AuthorizationDetailsTypesSupported)
+	}
+	if !slices.Contains(md.AuthorizationDetailsTypesSupported, "resource") {
+		t.Errorf("authorization_details_types_supported = %v, must include resource", md.AuthorizationDetailsTypesSupported)
+	}
+}
+
 func TestMetadataBuilder_OIDCMetadata_HS256ReportsHS256Alg(t *testing.T) {
 	b := newBuilder(t, func(c *application.MetadataBuilderConfig) {
 		c.OIDCIssuer = "https://oidc.example.com"
