@@ -52,6 +52,13 @@ type GrantRequest struct {
 	ActorTokenType     string
 	Audience           []string
 	RequestedTokenType string
+
+	// AuthorizationDetails is the RFC 9396 §2 parsed array, populated
+	// by the HTTP layer when the caller supplies the
+	// `authorization_details` form parameter. Nil when the parameter
+	// was absent; strategies that issue tokens propagate the slice
+	// onto the resulting domain.Token unchanged.
+	AuthorizationDetails []AuthorizationDetail
 }
 
 // GrantResponse contains the issued token information.

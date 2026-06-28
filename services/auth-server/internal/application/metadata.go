@@ -173,6 +173,7 @@ func (b *MetadataBuilder) base() *domain.AuthorizationServerMetadata {
 		RevocationEndpointAuthMethodsSupported:    []string{"client_secret_basic", "client_secret_post"},
 		CodeChallengeMethodsSupported:             []string{"S256"},
 		UILocalesSupported:                        []string{"en"},
+		AuthorizationDetailsTypesSupported:        append([]string(nil), domain.SupportedAuthorizationDetailTypes...),
 	}
 	if b.hasJWKS {
 		md.JWKSURI = b.publicBaseURL + "/.well-known/jwks.json"

@@ -27,6 +27,12 @@ type AuthorizationServerMetadata struct {
 	ServiceDocumentation                      string   `json:"service_documentation,omitempty"`
 	UILocalesSupported                        []string `json:"ui_locales_supported,omitempty"`
 
+	// AuthorizationDetailsTypesSupported lists the RFC 9396 §10 type
+	// discriminators this server understands (ADR-0017). Emitted on
+	// both /.well-known endpoints because clients use it to decide
+	// whether to opt into the richer parameter.
+	AuthorizationDetailsTypesSupported []string `json:"authorization_details_types_supported,omitempty"`
+
 	// OIDC Discovery 1.0 §3 additions. Emitted in the OIDC Discovery
 	// document; RFC 8414 §2 tolerates the extras but they convey OIDC
 	// semantics, so the RFC 8414 path omits them.
