@@ -33,8 +33,17 @@ type AuthorizationCode struct {
 	CodeChallenge       string
 	CodeChallengeMethod string
 	Nonce               string
-	IssuedAt            time.Time
-	ExpiresAt           time.Time
+
+	// AuthorizationDetails is the RFC 9396 §2 granted-details array
+	// captured at /oauth/authorize and carried atomically with the
+	// code (per ADR-0009's "binding everything together" principle).
+	// The authorization_code grant strategy embeds these onto the
+	// issued access token as the RFC 9396 §7 claim. Nil when the
+	// request did not include the parameter.
+	AuthorizationDetails []AuthorizationDetail
+
+	IssuedAt  time.Time
+	ExpiresAt time.Time
 }
 
 // IsExpiredAt reports whether the code is past its expiry as of now. The

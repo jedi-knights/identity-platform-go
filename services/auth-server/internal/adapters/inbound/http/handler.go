@@ -361,7 +361,16 @@ func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 		redirectAuthorizeError(w, r, req.RedirectURI, req.State, code, desc)
 		return
 	}
-	h.persistChallengeAndRedirect(w, r, req)
+	details, err := domain.ParseAuthorizationDetails(req.AuthorizationDetails)
+	if err != nil {
+		// RFC 9396 §5 — when the authorization_details parameter is
+		// malformed, the AS returns invalid_authorization_details via
+		// the same error channel as the other authorize-time errors,
+		// i.e. a redirect back to the client.
+		redirectAuthorizeError(w, r, req.RedirectURI, req.State, "invalid_authorization_details", err.Error())
+		return
+	}
+	h.persistChallengeAndRedirect(w, r, req, details)
 }
 
 // IssueCode handles POST /internal/issue-code per ADR-0011.
@@ -474,6 +483,14 @@ func (h *Handler) mintAndRespond(w http.ResponseWriter, r *http.Request, challen
 		CodeChallenge:       challenge.CodeChallenge,
 		CodeChallengeMethod: challenge.CodeChallengeMethod,
 		Nonce:               challenge.Nonce,
+		// ADR-0017: the granted-details captured at /oauth/authorize
+		// follow the challenge into the code. Today this is the
+		// full request — no consent narrowing yet. When the consent
+		// UI lands the narrowed subset will already be on the
+		// challenge (login-ui will call Update before Consume), so
+		// the field-name is the same and no signature change is
+		// required at that point.
+		AuthorizationDetails: challenge.AuthorizationDetails,
 	}
 	code, err := h.authorize.AuthCodeIssuer.Issue(r.Context(), req)
 	if err != nil {
@@ -503,21 +520,27 @@ type authorizeRequest struct {
 	CodeChallengeMethod string
 	Prompt              string
 	MaxAge              string
+	// AuthorizationDetails is the raw RFC 9396 `authorization_details`
+	// query parameter (a JSON-encoded array). Parsed and validated by
+	// [domain.ParseAuthorizationDetails] in the Authorize handler before
+	// it lands on the LoginChallenge.
+	AuthorizationDetails string
 }
 
 func parseAuthorizeRequest(r *http.Request) authorizeRequest {
 	q := r.URL.Query()
 	return authorizeRequest{
-		ResponseType:        q.Get("response_type"),
-		ClientID:            q.Get("client_id"),
-		RedirectURI:         q.Get("redirect_uri"),
-		Scope:               q.Get("scope"),
-		State:               q.Get("state"),
-		Nonce:               q.Get("nonce"),
-		CodeChallenge:       q.Get("code_challenge"),
-		CodeChallengeMethod: q.Get("code_challenge_method"),
-		Prompt:              q.Get("prompt"),
-		MaxAge:              q.Get("max_age"),
+		ResponseType:         q.Get("response_type"),
+		ClientID:             q.Get("client_id"),
+		RedirectURI:          q.Get("redirect_uri"),
+		Scope:                q.Get("scope"),
+		State:                q.Get("state"),
+		Nonce:                q.Get("nonce"),
+		CodeChallenge:        q.Get("code_challenge"),
+		CodeChallengeMethod:  q.Get("code_challenge_method"),
+		Prompt:               q.Get("prompt"),
+		MaxAge:               q.Get("max_age"),
+		AuthorizationDetails: q.Get("authorization_details"),
 	}
 }
 
@@ -581,7 +604,12 @@ func scopesAreSubset(requested, allowed []string) bool {
 // persistChallengeAndRedirect mints a fresh opaque ID, saves a LoginChallenge
 // holding every authorize parameter, and 302s to login-ui. Extracted from
 // Authorize to keep the cyclomatic complexity within bounds.
-func (h *Handler) persistChallengeAndRedirect(w http.ResponseWriter, r *http.Request, req authorizeRequest) {
+func (h *Handler) persistChallengeAndRedirect(
+	w http.ResponseWriter,
+	r *http.Request,
+	req authorizeRequest,
+	details []domain.AuthorizationDetail,
+) {
 	id, err := h.generateChallengeID()
 	if err != nil {
 		h.logger.Error("authorize: generate challenge id", "error", err)
@@ -591,18 +619,19 @@ func (h *Handler) persistChallengeAndRedirect(w http.ResponseWriter, r *http.Req
 	now := time.Now()
 	maxAge, _ := strconvAtoiSafe(req.MaxAge)
 	challenge := &domain.LoginChallenge{
-		ID:                  id,
-		ClientID:            req.ClientID,
-		RedirectURI:         req.RedirectURI,
-		Scopes:              parseScopes(req.Scope),
-		State:               req.State,
-		Nonce:               req.Nonce,
-		CodeChallenge:       req.CodeChallenge,
-		CodeChallengeMethod: req.CodeChallengeMethod,
-		Prompt:              parseScopes(req.Prompt),
-		MaxAge:              maxAge,
-		CreatedAt:           now,
-		ExpiresAt:           now.Add(h.authorize.ChallengeTTL),
+		ID:                   id,
+		ClientID:             req.ClientID,
+		RedirectURI:          req.RedirectURI,
+		Scopes:               parseScopes(req.Scope),
+		State:                req.State,
+		Nonce:                req.Nonce,
+		CodeChallenge:        req.CodeChallenge,
+		CodeChallengeMethod:  req.CodeChallengeMethod,
+		Prompt:               parseScopes(req.Prompt),
+		MaxAge:               maxAge,
+		AuthorizationDetails: details,
+		CreatedAt:            now,
+		ExpiresAt:            now.Add(h.authorize.ChallengeTTL),
 	}
 	if err := h.authorize.ChallengeRepo.Save(r.Context(), challenge); err != nil {
 		h.logger.Error("authorize: save login challenge", "error", err)
