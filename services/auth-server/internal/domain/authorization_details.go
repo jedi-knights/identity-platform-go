@@ -8,9 +8,8 @@ import (
 
 // SupportedAuthorizationDetailType is the platform-defined registry of
 // RFC 9396 type discriminators per ADR-0017. Adding a type is cheap —
-// add it to the slice and register a validator in
-// [validateAuthorizationDetailContents]. Removing one is a breaking
-// change for every client that requested it.
+// add it to the slice and register a validator in [perTypeValidators].
+// Removing one is a breaking change for every client that requested it.
 const (
 	AuthorizationDetailTypeMCPTool  = "mcp_tool"
 	AuthorizationDetailTypeResource = "resource"
@@ -73,7 +72,7 @@ func ParseAuthorizationDetails(raw string) ([]AuthorizationDetail, error) {
 
 // parseDetail validates a single element. Type registration is
 // centralised here — adding a type requires adding it to
-// [SupportedAuthorizationDetailTypes] and the switch below.
+// [SupportedAuthorizationDetailTypes] and [perTypeValidators].
 func parseDetail(elem json.RawMessage) (AuthorizationDetail, error) {
 	var head struct {
 		Type string `json:"type"`
@@ -84,19 +83,85 @@ func parseDetail(elem json.RawMessage) (AuthorizationDetail, error) {
 	if head.Type == "" {
 		return AuthorizationDetail{}, fmt.Errorf("type is required")
 	}
-	if !isSupportedAuthorizationDetailType(head.Type) {
+	validate, ok := perTypeValidators[head.Type]
+	if !ok {
 		return AuthorizationDetail{}, fmt.Errorf("type %q is not supported", head.Type)
+	}
+	if err := validate(elem); err != nil {
+		return AuthorizationDetail{}, err
 	}
 	return AuthorizationDetail{Type: head.Type, Raw: append(json.RawMessage(nil), elem...)}, nil
 }
 
-func isSupportedAuthorizationDetailType(t string) bool {
-	for _, s := range SupportedAuthorizationDetailTypes {
-		if s == t {
-			return true
+// perTypeValidators dispatches per-type schema enforcement after the
+// type discriminator passes. The registry is intentionally closed —
+// the [SupportedAuthorizationDetailTypes] slice and this map must
+// stay in sync, and the parser refuses any type without a registered
+// validator so a missed entry surfaces at request time rather than
+// as an opaque pass-through.
+var perTypeValidators = map[string]func(json.RawMessage) error{
+	AuthorizationDetailTypeMCPTool:  validateMCPTool,
+	AuthorizationDetailTypeResource: validateResource,
+}
+
+// validateMCPTool enforces the ADR-0017 schema for the `mcp_tool`
+// type: `tool` is required, `actions` if present must be a subset of
+// `{"read","invoke"}`, `expires_in` if present must be a positive
+// integer. `constraints` is free-form per the ADR and passes through
+// without inspection.
+func validateMCPTool(raw json.RawMessage) error {
+	var v struct {
+		Tool      string   `json:"tool"`
+		Actions   []string `json:"actions"`
+		ExpiresIn *int     `json:"expires_in"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return fmt.Errorf("mcp_tool: not a JSON object")
+	}
+	if v.Tool == "" {
+		return fmt.Errorf("mcp_tool: tool is required")
+	}
+	if err := validateMCPToolActions(v.Actions); err != nil {
+		return err
+	}
+	return validateMCPToolExpiry(v.ExpiresIn)
+}
+
+func validateMCPToolActions(actions []string) error {
+	for _, a := range actions {
+		if a != "read" && a != "invoke" {
+			return fmt.Errorf("mcp_tool: action %q is not one of [\"read\",\"invoke\"]", a)
 		}
 	}
-	return false
+	return nil
+}
+
+func validateMCPToolExpiry(expiresIn *int) error {
+	if expiresIn != nil && *expiresIn <= 0 {
+		return fmt.Errorf("mcp_tool: expires_in must be positive")
+	}
+	return nil
+}
+
+// validateResource enforces the ADR-0017 schema for the `resource`
+// type. At least one of `locations`, `actions`, `datatypes` must be
+// present — a resource entry with no constraint is meaningless.
+// Values inside each array are operator-defined per RFC 9396 §2.2, so
+// the validator only enforces the array-of-string shape that
+// json.Unmarshal already gives us.
+func validateResource(raw json.RawMessage) error {
+	var v struct {
+		Locations []string `json:"locations"`
+		Actions   []string `json:"actions"`
+		Datatypes []string `json:"datatypes"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return fmt.Errorf("resource: not a JSON object")
+	}
+	if len(v.Locations) == 0 && len(v.Actions) == 0 && len(v.Datatypes) == 0 {
+		return fmt.Errorf("resource: at least one of locations, actions, datatypes is required")
+	}
+	return nil
 }
 
 // AuthorizationDetailsToRaw projects the typed slice back to the

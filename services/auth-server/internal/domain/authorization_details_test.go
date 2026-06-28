@@ -111,3 +111,81 @@ func TestSupportedAuthorizationDetailTypes_HasBothPlatformTypes(t *testing.T) {
 		t.Error("registry missing resource")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Per-type schema validation (ADR-0017)
+// ---------------------------------------------------------------------------
+
+func TestParseAuthorizationDetails_MCPTool_RejectsMissingTool(t *testing.T) {
+	_, err := domain.ParseAuthorizationDetails(`[{"type":"mcp_tool"}]`)
+	if !errors.Is(err, domain.ErrInvalidAuthorizationDetails) {
+		t.Errorf("err = %v, want ErrInvalidAuthorizationDetails", err)
+	}
+	if !strings.Contains(err.Error(), "tool is required") {
+		t.Errorf("err = %v, want message naming the required field", err)
+	}
+}
+
+func TestParseAuthorizationDetails_MCPTool_AcceptsValidActions(t *testing.T) {
+	raw := `[{"type":"mcp_tool","tool":"get_standings","actions":["read","invoke"]}]`
+	if _, err := domain.ParseAuthorizationDetails(raw); err != nil {
+		t.Errorf("err = %v, want nil for in-range actions", err)
+	}
+}
+
+func TestParseAuthorizationDetails_MCPTool_RejectsUnknownAction(t *testing.T) {
+	raw := `[{"type":"mcp_tool","tool":"get_standings","actions":["delete"]}]`
+	_, err := domain.ParseAuthorizationDetails(raw)
+	if !errors.Is(err, domain.ErrInvalidAuthorizationDetails) {
+		t.Errorf("err = %v, want ErrInvalidAuthorizationDetails", err)
+	}
+}
+
+func TestParseAuthorizationDetails_MCPTool_AcceptsPositiveExpiresIn(t *testing.T) {
+	raw := `[{"type":"mcp_tool","tool":"get_standings","expires_in":300}]`
+	if _, err := domain.ParseAuthorizationDetails(raw); err != nil {
+		t.Errorf("err = %v, want nil", err)
+	}
+}
+
+func TestParseAuthorizationDetails_MCPTool_RejectsNonPositiveExpiresIn(t *testing.T) {
+	raw := `[{"type":"mcp_tool","tool":"get_standings","expires_in":0}]`
+	_, err := domain.ParseAuthorizationDetails(raw)
+	if !errors.Is(err, domain.ErrInvalidAuthorizationDetails) {
+		t.Errorf("err = %v, want ErrInvalidAuthorizationDetails", err)
+	}
+}
+
+func TestParseAuthorizationDetails_MCPTool_AcceptsFreeFormConstraints(t *testing.T) {
+	// constraints is free-form per ADR-0017 — the validator must
+	// not inspect its shape so resource servers can branch on
+	// operator-defined keys without coordinating a parser change.
+	raw := `[{"type":"mcp_tool","tool":"get_standings","constraints":{"team":"1234","scope":"current"}}]`
+	if _, err := domain.ParseAuthorizationDetails(raw); err != nil {
+		t.Errorf("err = %v, want nil for free-form constraints", err)
+	}
+}
+
+func TestParseAuthorizationDetails_Resource_AcceptsLocationsOnly(t *testing.T) {
+	raw := `[{"type":"resource","locations":["https://api.example.com/v1"]}]`
+	if _, err := domain.ParseAuthorizationDetails(raw); err != nil {
+		t.Errorf("err = %v, want nil", err)
+	}
+}
+
+func TestParseAuthorizationDetails_Resource_AcceptsDatatypesOnly(t *testing.T) {
+	raw := `[{"type":"resource","datatypes":["account"]}]`
+	if _, err := domain.ParseAuthorizationDetails(raw); err != nil {
+		t.Errorf("err = %v, want nil", err)
+	}
+}
+
+func TestParseAuthorizationDetails_Resource_RejectsEmpty(t *testing.T) {
+	// A resource entry with no constraints expresses nothing —
+	// reject so clients catch the shape error at the auth-server
+	// instead of having resource servers silently ignore it.
+	_, err := domain.ParseAuthorizationDetails(`[{"type":"resource"}]`)
+	if !errors.Is(err, domain.ErrInvalidAuthorizationDetails) {
+		t.Errorf("err = %v, want ErrInvalidAuthorizationDetails", err)
+	}
+}
