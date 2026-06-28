@@ -55,6 +55,20 @@ type LoginChallenge struct {
 	// scope outside this set.
 	ConsentGranted []string
 
+	// AuthorizationDetails is the RFC 9396 §2 authorization_details
+	// array as parsed off the /oauth/authorize request (ADR-0017).
+	// Persisted on the challenge so the granted-details follow the
+	// auth code into the token at /oauth/token. Nil when the request
+	// did not include the parameter — the auth-code grant then
+	// issues a token without the claim.
+	//
+	// Today the consent flow is auto-approve (no UI narrowing), so
+	// this field is the request's parsed array. When the consent
+	// screen lands (follow-up commit), the narrowed-by-user subset
+	// will overwrite this value before /internal/issue-code consumes
+	// the challenge.
+	AuthorizationDetails []AuthorizationDetail
+
 	CreatedAt time.Time
 	ExpiresAt time.Time
 }

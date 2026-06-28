@@ -135,6 +135,51 @@ func TestAuthorizationCodeStrategy_Handle_HappyPath(t *testing.T) {
 	}
 }
 
+func TestAuthorizationCodeStrategy_Handle_EmbedsAuthorizationDetailsOnToken(t *testing.T) {
+	// ADR-0017: granted-details persisted on the AuthorizationCode at
+	// /oauth/authorize must land on the access token at /oauth/token
+	// so RAR-aware resource servers (jk-mcp-nwsl, jk-mcp-ecnl) can
+	// enforce the per-call permissions the user originally approved.
+	f := newAuthCodeFixtures(t)
+	// Reseed the code with AuthorizationDetails — the default fixture
+	// omits them, so explicitly install them and overwrite the existing
+	// seeded code under the same Code value.
+	if err := f.codeRepo.Save(context.Background(), &domain.AuthorizationCode{
+		Code:                testCode,
+		ClientID:            "client-conf",
+		Subject:             "user-1",
+		RedirectURI:         testRedirect,
+		Scopes:              []string{"openid", "email"},
+		CodeChallenge:       s256(testVerifier),
+		CodeChallengeMethod: "S256",
+		AuthorizationDetails: []domain.AuthorizationDetail{
+			{Type: domain.AuthorizationDetailTypeMCPTool, Raw: []byte(`{"type":"mcp_tool","tool":"get_standings"}`)},
+		},
+		IssuedAt:  time.Now(),
+		ExpiresAt: time.Now().Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("seed Save: %v", err)
+	}
+
+	if _, err := f.strategy.Handle(context.Background(), f.req); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	if len(f.tokenRepo.tokens) != 1 {
+		t.Fatalf("got %d tokens saved, want 1", len(f.tokenRepo.tokens))
+	}
+	var saved *domain.Token
+	for _, tok := range f.tokenRepo.tokens {
+		saved = tok
+	}
+	if len(saved.AuthorizationDetails) != 1 {
+		t.Fatalf("Token.AuthorizationDetails len = %d, want 1", len(saved.AuthorizationDetails))
+	}
+	if saved.AuthorizationDetails[0].Type != domain.AuthorizationDetailTypeMCPTool {
+		t.Errorf("Type = %q, want mcp_tool", saved.AuthorizationDetails[0].Type)
+	}
+}
+
 func TestAuthorizationCodeStrategy_Handle_MissingCode_InvalidRequest(t *testing.T) {
 	// Arrange
 	f := newAuthCodeFixtures(t)

@@ -1000,6 +1000,81 @@ func TestAuthorize_ScopeNotPermitted_RedirectsToClientWithInvalidScope(t *testin
 	}
 }
 
+func TestAuthorize_AuthorizationDetails_PersistedOnChallenge(t *testing.T) {
+	// ADR-0017: a well-formed RFC 9396 `authorization_details` array on
+	// /oauth/authorize must land on the LoginChallenge byte-for-byte so
+	// the granted-details flow through to the issued token at
+	// /oauth/token without an extra parse hop.
+	repo := &fakeChallengeRepo{}
+	q := validAuthorizeQuery()
+	q.Set("authorization_details", `[{"type":"mcp_tool","tool":"get_standings"}]`)
+	h := newAuthorizeTestHandler(t, newAuthorizeClient(), repo)
+	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil)
+	w := httptest.NewRecorder()
+
+	h.Authorize(w, r)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302; body = %s", w.Code, w.Body.String())
+	}
+	if repo.lastSaved == nil {
+		t.Fatal("expected Save to be invoked")
+	}
+	if len(repo.lastSaved.AuthorizationDetails) != 1 {
+		t.Fatalf("AuthorizationDetails len = %d, want 1", len(repo.lastSaved.AuthorizationDetails))
+	}
+	if repo.lastSaved.AuthorizationDetails[0].Type != domain.AuthorizationDetailTypeMCPTool {
+		t.Errorf("Type = %q, want mcp_tool", repo.lastSaved.AuthorizationDetails[0].Type)
+	}
+}
+
+func TestAuthorize_MalformedAuthorizationDetails_RedirectsWithInvalidAuthorizationDetails(t *testing.T) {
+	// RFC 9396 §5: a malformed authorization_details parameter must be
+	// reported via the same redirect-based error channel as the other
+	// authorize-time errors, with code `invalid_authorization_details`.
+	repo := &fakeChallengeRepo{}
+	q := validAuthorizeQuery()
+	q.Set("authorization_details", `not-a-json-array`)
+	h := newAuthorizeTestHandler(t, newAuthorizeClient(), repo)
+	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil)
+	w := httptest.NewRecorder()
+
+	h.Authorize(w, r)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", w.Code)
+	}
+	u, _ := url.Parse(w.Header().Get("Location"))
+	if got := u.Query().Get("error"); got != "invalid_authorization_details" {
+		t.Errorf("error = %q, want invalid_authorization_details", got)
+	}
+	if repo.lastSaved != nil {
+		t.Error("Save was invoked despite malformed authorization_details")
+	}
+}
+
+func TestAuthorize_OmittedAuthorizationDetails_PersistsNilSlice(t *testing.T) {
+	// Backwards compatibility — RFC 9396 §2 makes the parameter optional.
+	// Existing OAuth clients that have never heard of RAR must continue
+	// to authorize successfully with no granted-details on the challenge.
+	repo := &fakeChallengeRepo{}
+	h := newAuthorizeTestHandler(t, newAuthorizeClient(), repo)
+	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+validAuthorizeQuery().Encode(), nil)
+	w := httptest.NewRecorder()
+
+	h.Authorize(w, r)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302; body = %s", w.Code, w.Body.String())
+	}
+	if repo.lastSaved == nil {
+		t.Fatal("expected Save to be invoked")
+	}
+	if repo.lastSaved.AuthorizationDetails != nil {
+		t.Errorf("AuthorizationDetails = %v, want nil when omitted", repo.lastSaved.AuthorizationDetails)
+	}
+}
+
 // --- /internal/issue-code ---
 
 // fakeChallengeReader is a LoginChallengeRepository whose Consume returns a
@@ -1220,6 +1295,33 @@ func TestIssueCode_MalformedJSON_Returns400(t *testing.T) {
 	}
 	if repo.consumedKey != "" {
 		t.Error("Consume was called despite invalid body")
+	}
+}
+
+func TestIssueCode_ForwardsAuthorizationDetailsFromChallenge(t *testing.T) {
+	// ADR-0017: granted-details captured at /oauth/authorize must
+	// follow the LoginChallenge onto the IssueCodeRequest so the
+	// AuthorizationCode (and the eventual token) carry the same
+	// per-call permissions the agent originally requested.
+	challenge := storedChallenge()
+	challenge.AuthorizationDetails = []domain.AuthorizationDetail{
+		{Type: domain.AuthorizationDetailTypeMCPTool, Raw: []byte(`{"type":"mcp_tool","tool":"get_standings"}`)},
+	}
+	repo := &fakeChallengeReader{seeded: challenge}
+	issuer := &fakeAuthCodeIssuer{codeToMint: "minted-code-abc"}
+	h := newIssueCodeHandler(t, repo, issuer)
+	body := `{"login_challenge":"ch-1","session_id":"user-42","consent_granted":["openid","profile"]}`
+
+	w := postIssueCode(t, h, "service-token-secret", body)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	if len(issuer.lastReq.AuthorizationDetails) != 1 {
+		t.Fatalf("IssueCodeRequest.AuthorizationDetails len = %d, want 1", len(issuer.lastReq.AuthorizationDetails))
+	}
+	if issuer.lastReq.AuthorizationDetails[0].Type != domain.AuthorizationDetailTypeMCPTool {
+		t.Errorf("Type = %q, want mcp_tool", issuer.lastReq.AuthorizationDetails[0].Type)
 	}
 }
 

@@ -42,6 +42,15 @@ type IssueCodeRequest struct {
 	CodeChallenge       string
 	CodeChallengeMethod string
 	Nonce               string
+
+	// AuthorizationDetails is the RFC 9396 granted-details array the
+	// authorize handler captured from /oauth/authorize (or the
+	// narrowed subset the consent UI returned when that flow ships).
+	// The issuer carries it onto the AuthorizationCode without
+	// inspection — the parser at /oauth/authorize is the only place
+	// that validates the shape, and the value here has already
+	// passed that check.
+	AuthorizationDetails []domain.AuthorizationDetail
 }
 
 // AuthorizationCodeIssuer mints a fresh authorization code, persists it via
