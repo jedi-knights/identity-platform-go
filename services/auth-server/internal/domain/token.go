@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"time"
@@ -47,6 +48,13 @@ type Token struct {
 	// the domain Token so the audit emitter can record chain depth and
 	// the token generator can lift it into the issued JWT.
 	Act *Actor
+
+	// AuthorizationDetails is the RFC 9396 §7 granted-details array
+	// per ADR-0017. Set by the grant strategies when the caller
+	// supplied the parameter; the RS256 token generator lifts it onto
+	// the issued JWT and the introspection projection surfaces it for
+	// resource servers that opt into the richer enforcement model.
+	AuthorizationDetails []AuthorizationDetail
 
 	ExpiresAt time.Time
 	IssuedAt  time.Time
@@ -138,4 +146,9 @@ type IntrospectResponse struct {
 	TokenType string   `json:"token_type,omitempty"`
 	JTI       string   `json:"jti,omitempty"`
 	Audience  []string `json:"aud,omitempty"`
+
+	// AuthorizationDetails echoes the RFC 9396 §10.1 granted-details
+	// array. Omitted when empty so RAR-unaware resource servers see
+	// the same shape they always have.
+	AuthorizationDetails []json.RawMessage `json:"authorization_details,omitempty"`
 }

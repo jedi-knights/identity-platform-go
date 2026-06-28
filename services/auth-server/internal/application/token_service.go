@@ -141,16 +141,17 @@ func (s *TokenService) Introspect(ctx context.Context, raw string) (*domain.Intr
 	scopeStr := strings.Join(token.Scopes, " ")
 
 	return &domain.IntrospectResponse{
-		Active:    true,
-		ClientID:  token.ClientID,
-		Subject:   token.Subject,
-		Issuer:    token.Issuer,
-		Scope:     scopeStr,
-		ExpiresAt: token.ExpiresAt.Unix(),
-		IssuedAt:  token.IssuedAt.Unix(),
-		TokenType: string(token.TokenType),
-		JTI:       token.ID,
-		Audience:  token.Audience,
+		Active:               true,
+		ClientID:             token.ClientID,
+		Subject:              token.Subject,
+		Issuer:               token.Issuer,
+		Scope:                scopeStr,
+		ExpiresAt:            token.ExpiresAt.Unix(),
+		IssuedAt:             token.IssuedAt.Unix(),
+		TokenType:            string(token.TokenType),
+		JTI:                  token.ID,
+		Audience:             token.Audience,
+		AuthorizationDetails: domain.AuthorizationDetailsToRaw(token.AuthorizationDetails),
 	}, nil
 }
 

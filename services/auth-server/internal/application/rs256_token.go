@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"crypto/rsa"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -44,19 +45,20 @@ func NewRS256TokenGenerator(keys *domain.KeySet, issuer string, audience []strin
 // §4.5) in the JOSE header.
 func (g *RS256TokenGenerator) Generate(_ context.Context, token *domain.Token) (string, error) {
 	claims := jwtutil.NewClaims(jwtutil.ClaimsConfig{
-		Issuer:      g.issuer,
-		Subject:     token.Subject,
-		TokenID:     token.ID,
-		ClientID:    token.ClientID,
-		Scope:       strings.Join(token.Scopes, " "),
-		Audience:    g.audience,
-		Roles:       token.Roles,
-		Permissions: token.Permissions,
-		ActorType:   string(token.ActorType),
-		AgentID:     token.AgentID,
-		Act:         actorToJWT(token.Act),
-		IssuedAt:    token.IssuedAt,
-		ExpiresAt:   token.ExpiresAt,
+		Issuer:               g.issuer,
+		Subject:              token.Subject,
+		TokenID:              token.ID,
+		ClientID:             token.ClientID,
+		Scope:                strings.Join(token.Scopes, " "),
+		Audience:             g.audience,
+		Roles:                token.Roles,
+		Permissions:          token.Permissions,
+		ActorType:            string(token.ActorType),
+		AgentID:              token.AgentID,
+		Act:                  actorToJWT(token.Act),
+		AuthorizationDetails: domain.AuthorizationDetailsToRaw(token.AuthorizationDetails),
+		IssuedAt:             token.IssuedAt,
+		ExpiresAt:            token.ExpiresAt,
 	})
 	current := g.keys.Current()
 	return jwtutil.SignRS256(claims, current.Private, current.KID)
@@ -132,18 +134,40 @@ func (v *RS256TokenValidator) Validate(ctx context.Context, raw string) (*domain
 		return nil, fmt.Errorf("invalid token: %w (iss %q != %q)", jwtutil.ErrTokenInvalid, claims.Issuer, v.issuer)
 	}
 	return &domain.Token{
-		ID:        claims.ID,
-		ClientID:  claims.ClientID,
-		Subject:   claims.Subject,
-		Issuer:    claims.Issuer,
-		Audience:  []string(claims.Audience),
-		Scopes:    strings.Fields(claims.Scope),
-		ActorType: domain.ActorType(claims.ActorType),
-		AgentID:   claims.AgentID,
-		Act:       actorFromJWT(claims.Act),
-		ExpiresAt: claims.ExpiresAt.Time,
-		IssuedAt:  claims.IssuedAt.Time,
-		TokenType: domain.TokenTypeBearer,
-		Raw:       raw,
+		ID:                   claims.ID,
+		ClientID:             claims.ClientID,
+		Subject:              claims.Subject,
+		Issuer:               claims.Issuer,
+		Audience:             []string(claims.Audience),
+		Scopes:               strings.Fields(claims.Scope),
+		ActorType:            domain.ActorType(claims.ActorType),
+		AgentID:              claims.AgentID,
+		Act:                  actorFromJWT(claims.Act),
+		AuthorizationDetails: authorizationDetailsFromJWT(claims.AuthorizationDetails),
+		ExpiresAt:            claims.ExpiresAt.Time,
+		IssuedAt:             claims.IssuedAt.Time,
+		TokenType:            domain.TokenTypeBearer,
+		Raw:                  raw,
 	}, nil
+}
+
+// authorizationDetailsFromJWT lifts the wire-shape granted-details
+// array back into the domain layer. Used by the validator so the
+// introspection projection (and the token-exchange strategy when it
+// reads the subject_token's chain) can reason about the granted
+// permissions. Validation already happened at the originating
+// /oauth/token request — the validator trusts the issuer.
+func authorizationDetailsFromJWT(in []json.RawMessage) []domain.AuthorizationDetail {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]domain.AuthorizationDetail, 0, len(in))
+	for _, raw := range in {
+		var head struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(raw, &head)
+		out = append(out, domain.AuthorizationDetail{Type: head.Type, Raw: append(json.RawMessage(nil), raw...)})
+	}
+	return out
 }
