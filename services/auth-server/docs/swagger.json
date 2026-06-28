@@ -297,6 +297,13 @@
         "github_com_ocrosby_identity-platform-go_services_auth-server_internal_domain.AuthorizationServerMetadata": {
             "type": "object",
             "properties": {
+                "authorization_details_types_supported": {
+                    "description": "AuthorizationDetailsTypesSupported lists the RFC 9396 §10 type\ndiscriminators this server understands (ADR-0017). Emitted on\nboth /.well-known endpoints because clients use it to decide\nwhether to opt into the richer parameter.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "authorization_endpoint": {
                     "type": "string"
                 },
@@ -456,6 +463,17 @@
                     "type": "array",
                     "items": {
                         "type": "string"
+                    }
+                },
+                "authorization_details": {
+                    "description": "AuthorizationDetails echoes the RFC 9396 §10.1 granted-details\narray. Omitted when empty so RAR-unaware resource servers see\nthe same shape they always have.",
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "integer",
+                            "format": "int32"
+                        }
                     }
                 },
                 "client_id": {

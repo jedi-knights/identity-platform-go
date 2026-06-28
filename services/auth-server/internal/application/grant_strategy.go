@@ -263,23 +263,24 @@ func (s *ClientCredentialsStrategy) issueRefreshToken(ctx context.Context, clien
 // issueAccessToken generates a token ID, builds the domain.Token, signs it as a JWT,
 // and persists it. Extracted from Handle to keep Handle's cyclomatic complexity
 // within bounds.
-func (s *ClientCredentialsStrategy) issueAccessToken(ctx context.Context, client *domain.Client, scopes, roles, permissions []string, now time.Time) (string, error) {
+func (s *ClientCredentialsStrategy) issueAccessToken(ctx context.Context, client *domain.Client, scopes, roles, permissions []string, now time.Time, authzDetails []domain.AuthorizationDetail) (string, error) {
 	tokenID, err := generateID()
 	if err != nil {
 		return "", apperrors.Wrap(apperrors.ErrCodeInternal, "generating token id", err)
 	}
 	token := &domain.Token{
-		ID:          tokenID,
-		ClientID:    client.ID,
-		Subject:     client.ID,
-		Scopes:      scopes,
-		Roles:       roles,
-		Permissions: permissions,
-		ActorType:   client.ResolvedActorType(),
-		AgentID:     client.AgentID(),
-		ExpiresAt:   now.Add(s.ttl),
-		IssuedAt:    now,
-		TokenType:   domain.TokenTypeBearer,
+		ID:                   tokenID,
+		ClientID:             client.ID,
+		Subject:              client.ID,
+		Scopes:               scopes,
+		Roles:                roles,
+		Permissions:          permissions,
+		ActorType:            client.ResolvedActorType(),
+		AgentID:              client.AgentID(),
+		AuthorizationDetails: authzDetails,
+		ExpiresAt:            now.Add(s.ttl),
+		IssuedAt:             now,
+		TokenType:            domain.TokenTypeBearer,
 	}
 	raw, err := s.tokenGen.Generate(ctx, token)
 	if err != nil {
@@ -314,7 +315,7 @@ func (s *ClientCredentialsStrategy) Handle(ctx context.Context, req domain.Grant
 	}
 
 	now := time.Now()
-	raw, err := s.issueAccessToken(ctx, client, scopes, roles, permissions, now)
+	raw, err := s.issueAccessToken(ctx, client, scopes, roles, permissions, now, req.AuthorizationDetails)
 	if err != nil {
 		return nil, err
 	}

@@ -205,28 +205,23 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request, logger logging.Lo
 		writeOAuthError(w, logger, "invalid_request", "grant_type is required", http.StatusBadRequest)
 		return domain.GrantRequest{}, false
 	}
-
-	// RFC 6749 §2.3.1: clients SHOULD use HTTP Basic Auth; form body is a fallback.
-	clientID, clientSecret, ok := r.BasicAuth()
+	clientID, clientSecret, ok := readGrantClientCredentials(w, r, logger, grantType)
 	if !ok {
-		clientID = r.FormValue("client_id")
-		clientSecret = r.FormValue("client_secret")
-	}
-
-	if clientID == "" {
-		writeOAuthError(w, logger, "invalid_request", "client_id is required", http.StatusBadRequest)
-		return domain.GrantRequest{}, false
-	}
-	// RFC 8693 token-exchange accepts public clients (no secret) per
-	// ADR-0016; every other grant type still requires the secret.
-	if clientSecret == "" && grantType != domain.GrantTypeTokenExchange {
-		writeOAuthError(w, logger, "invalid_request", "client_secret is required", http.StatusBadRequest)
 		return domain.GrantRequest{}, false
 	}
 
 	var scopes []string
 	if scopeStr := r.FormValue("scope"); scopeStr != "" {
 		scopes = strings.Fields(scopeStr)
+	}
+
+	// RFC 9396 §2 — authorization_details is an optional form parameter
+	// (JSON array). Reject only when supplied and malformed so the
+	// existing flows (no parameter) keep working unchanged.
+	authzDetails, parseErr := domain.ParseAuthorizationDetails(r.FormValue("authorization_details"))
+	if parseErr != nil {
+		writeOAuthError(w, logger, "invalid_authorization_details", parseErr.Error(), http.StatusBadRequest)
+		return domain.GrantRequest{}, false
 	}
 
 	return domain.GrantRequest{
@@ -240,13 +235,37 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request, logger logging.Lo
 		// RFC 8693 §2.1 fields. Populated for every request but only
 		// consumed by the token-exchange strategy — empty for every
 		// other grant type by virtue of the wire being empty.
-		SubjectToken:       r.FormValue("subject_token"),
-		SubjectTokenType:   r.FormValue("subject_token_type"),
-		ActorToken:         r.FormValue("actor_token"),
-		ActorTokenType:     r.FormValue("actor_token_type"),
-		RequestedTokenType: r.FormValue("requested_token_type"),
-		Audience:           parseExchangeAudience(r),
+		SubjectToken:         r.FormValue("subject_token"),
+		SubjectTokenType:     r.FormValue("subject_token_type"),
+		ActorToken:           r.FormValue("actor_token"),
+		ActorTokenType:       r.FormValue("actor_token_type"),
+		RequestedTokenType:   r.FormValue("requested_token_type"),
+		Audience:             parseExchangeAudience(r),
+		AuthorizationDetails: authzDetails,
 	}, true
+}
+
+// readGrantClientCredentials extracts the OAuth client credentials,
+// preferring HTTP Basic Auth per RFC 6749 §2.3.1 and falling back to
+// form-body parameters. Returns (clientID, clientSecret, true) on
+// success; writes an RFC 6749 §5.2 error and returns ok=false otherwise.
+// Token-exchange (ADR-0016) tolerates a missing secret per the
+// public-client carve-out; every other grant type requires it.
+func readGrantClientCredentials(w http.ResponseWriter, r *http.Request, logger logging.Logger, grantType domain.GrantType) (string, string, bool) {
+	clientID, clientSecret, ok := r.BasicAuth()
+	if !ok {
+		clientID = r.FormValue("client_id")
+		clientSecret = r.FormValue("client_secret")
+	}
+	if clientID == "" {
+		writeOAuthError(w, logger, "invalid_request", "client_id is required", http.StatusBadRequest)
+		return "", "", false
+	}
+	if clientSecret == "" && grantType != domain.GrantTypeTokenExchange {
+		writeOAuthError(w, logger, "invalid_request", "client_secret is required", http.StatusBadRequest)
+		return "", "", false
+	}
+	return clientID, clientSecret, true
 }
 
 // parseExchangeAudience extracts the optional RFC 8693 "audience"

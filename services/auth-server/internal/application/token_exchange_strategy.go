@@ -131,22 +131,33 @@ func (s *TokenExchangeStrategy) Handle(ctx context.Context, req domain.GrantRequ
 	ttl := s.resolveTTL(now, subjectToken)
 	actorType, agentID := s.resolveActor(caller, actorToken)
 
+	// RFC 9396 + ADR-0016: the exchanged token's granted-details must
+	// be a subset of the subject_token's. When the caller supplies
+	// authorization_details on the exchange request the result is the
+	// intersection; otherwise the subject_token's details flow through
+	// unchanged.
+	authzDetails, err := intersectAuthorizationDetails(subjectToken.AuthorizationDetails, req.AuthorizationDetails)
+	if err != nil {
+		return nil, err
+	}
+
 	tokenID, err := generateID()
 	if err != nil {
 		return nil, apperrors.Wrap(apperrors.ErrCodeInternal, "generate token id", err)
 	}
 	token := &domain.Token{
-		ID:        tokenID,
-		ClientID:  caller.ID,
-		Subject:   subjectToken.Subject,
-		Audience:  req.Audience,
-		Scopes:    scopes,
-		ActorType: actorType,
-		AgentID:   agentID,
-		Act:       chain,
-		ExpiresAt: now.Add(ttl),
-		IssuedAt:  now,
-		TokenType: domain.TokenTypeBearer,
+		ID:                   tokenID,
+		ClientID:             caller.ID,
+		Subject:              subjectToken.Subject,
+		Audience:             req.Audience,
+		Scopes:               scopes,
+		ActorType:            actorType,
+		AgentID:              agentID,
+		Act:                  chain,
+		AuthorizationDetails: authzDetails,
+		ExpiresAt:            now.Add(ttl),
+		IssuedAt:             now,
+		TokenType:            domain.TokenTypeBearer,
 	}
 	raw, err := s.tokenGen.Generate(ctx, token)
 	if err != nil {
@@ -292,6 +303,43 @@ func (s *TokenExchangeStrategy) resolveActor(caller *domain.Client, actorToken *
 		return actorToken.ActorType, actorToken.AgentID
 	}
 	return caller.ResolvedActorType(), caller.AgentID()
+}
+
+// intersectAuthorizationDetails enforces ADR-0016's "exchanged token's
+// granted-details must be a subset of the subject_token's" rule.
+//
+//   - No requested details and no subject_token details → nil (token
+//     issued without the claim).
+//   - No requested details, subject_token has details → propagate
+//     verbatim. This is the common A2A pattern: the delegate inherits
+//     the originator's granted permissions.
+//   - Requested details with no subject_token details → invalid_request
+//     because the subject_token never had those permissions to grant.
+//   - Requested details all matching a subject_token type → returned
+//     verbatim. Type-match is required; sub-shape narrowing is
+//     deliberately not implemented in this PR — adding it would
+//     require a per-type schema validator which RFC 9396 explicitly
+//     leaves to the deployment.
+func intersectAuthorizationDetails(subjectDetails, requestedDetails []domain.AuthorizationDetail) ([]domain.AuthorizationDetail, error) {
+	if len(requestedDetails) == 0 {
+		if len(subjectDetails) == 0 {
+			return nil, nil
+		}
+		return append([]domain.AuthorizationDetail(nil), subjectDetails...), nil
+	}
+	if len(subjectDetails) == 0 {
+		return nil, fmt.Errorf("%w: subject_token has no authorization_details to narrow", ErrInvalidRequest)
+	}
+	subjectTypes := make(map[string]struct{}, len(subjectDetails))
+	for _, d := range subjectDetails {
+		subjectTypes[d.Type] = struct{}{}
+	}
+	for _, req := range requestedDetails {
+		if _, ok := subjectTypes[req.Type]; !ok {
+			return nil, fmt.Errorf("%w: requested authorization_details type %q not present on subject_token", ErrInvalidRequest, req.Type)
+		}
+	}
+	return append([]domain.AuthorizationDetail(nil), requestedDetails...), nil
 }
 
 // resolveTTL caps the issued token's lifetime at
