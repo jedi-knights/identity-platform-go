@@ -58,16 +58,17 @@ func (i *authorizationCodeIssuer) Issue(ctx context.Context, req ports.IssueCode
 	}
 	now := time.Now()
 	code := &domain.AuthorizationCode{
-		Code:                raw,
-		ClientID:            req.ClientID,
-		Subject:             req.Subject,
-		RedirectURI:         req.RedirectURI,
-		Scopes:              append([]string(nil), req.Scopes...),
-		CodeChallenge:       req.CodeChallenge,
-		CodeChallengeMethod: req.CodeChallengeMethod,
-		Nonce:               req.Nonce,
-		IssuedAt:            now,
-		ExpiresAt:           now.Add(i.ttl),
+		Code:                 raw,
+		ClientID:             req.ClientID,
+		Subject:              req.Subject,
+		RedirectURI:          req.RedirectURI,
+		Scopes:               append([]string(nil), req.Scopes...),
+		CodeChallenge:        req.CodeChallenge,
+		CodeChallengeMethod:  req.CodeChallengeMethod,
+		Nonce:                req.Nonce,
+		AuthorizationDetails: append([]domain.AuthorizationDetail(nil), req.AuthorizationDetails...),
+		IssuedAt:             now,
+		ExpiresAt:            now.Add(i.ttl),
 	}
 	if err := i.repo.Save(ctx, code); err != nil {
 		return "", fmt.Errorf("saving authorization code: %w", err)

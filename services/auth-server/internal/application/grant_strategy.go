@@ -696,9 +696,13 @@ func (s *AuthorizationCodeStrategy) issueTokens(ctx context.Context, client *dom
 		// an agent acting on the user's behalf, but the access token still
 		// carries the user's identity.
 		ActorType: domain.ActorTypeUser,
-		ExpiresAt: now.Add(s.ttl),
-		IssuedAt:  now,
-		TokenType: domain.TokenTypeBearer,
+		// ADR-0017: the granted authorization_details follow the code
+		// onto the token so RAR-aware resource servers see the same
+		// per-call permissions the user approved at /oauth/authorize.
+		AuthorizationDetails: code.AuthorizationDetails,
+		ExpiresAt:            now.Add(s.ttl),
+		IssuedAt:             now,
+		TokenType:            domain.TokenTypeBearer,
 	}
 	raw, err := s.tokenGen.Generate(ctx, token)
 	if err != nil {

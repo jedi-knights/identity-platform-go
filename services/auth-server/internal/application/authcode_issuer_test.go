@@ -233,6 +233,58 @@ func TestAuthorizationCodeIssuer_Issue_CopiesAllRequestFields(t *testing.T) {
 	}
 }
 
+func TestAuthorizationCodeIssuer_Issue_PersistsAuthorizationDetails(t *testing.T) {
+	// ADR-0017: the granted-details captured at /oauth/authorize must
+	// land on the AuthorizationCode so the token issuance step has a
+	// single source of truth at code-redemption time. The issuer must
+	// also defensively copy the slice — sharing the backing array with
+	// the IssueCodeRequest would let later mutations on the request
+	// leak into already-persisted codes.
+	repo := &fakeAuthCodeRepo{}
+	issuer := application.NewAuthorizationCodeIssuer(repo, time.Minute)
+	req := validIssueReq()
+	details := []domain.AuthorizationDetail{
+		{Type: domain.AuthorizationDetailTypeMCPTool, Raw: []byte(`{"type":"mcp_tool","tool":"get_standings"}`)},
+	}
+	req.AuthorizationDetails = details
+
+	if _, err := issuer.Issue(context.Background(), req); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	saved := repo.saved()[0]
+	if len(saved.AuthorizationDetails) != 1 {
+		t.Fatalf("AuthorizationDetails len = %d, want 1", len(saved.AuthorizationDetails))
+	}
+	if saved.AuthorizationDetails[0].Type != domain.AuthorizationDetailTypeMCPTool {
+		t.Errorf("Type = %q, want mcp_tool", saved.AuthorizationDetails[0].Type)
+	}
+	// Defensive-copy check — mutating the caller's slice must not
+	// affect the stored record.
+	details[0] = domain.AuthorizationDetail{Type: "resource"}
+	if saved.AuthorizationDetails[0].Type != domain.AuthorizationDetailTypeMCPTool {
+		t.Error("issuer aliased the AuthorizationDetails slice with the caller")
+	}
+}
+
+func TestAuthorizationCodeIssuer_Issue_OmittedAuthorizationDetails_PersistsNilSlice(t *testing.T) {
+	// Backwards compatibility — RAR is optional on the request, so an
+	// IssueCodeRequest without details must round-trip to a nil slice
+	// on the code (not an empty non-nil slice that resource servers
+	// might branch differently on).
+	repo := &fakeAuthCodeRepo{}
+	issuer := application.NewAuthorizationCodeIssuer(repo, time.Minute)
+
+	if _, err := issuer.Issue(context.Background(), validIssueReq()); err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+
+	saved := repo.saved()[0]
+	if saved.AuthorizationDetails != nil {
+		t.Errorf("AuthorizationDetails = %v, want nil", saved.AuthorizationDetails)
+	}
+}
+
 func TestAuthorizationCodeIssuer_Issue_RepoErrorPropagates(t *testing.T) {
 	// Arrange
 	wantErr := errors.New("disk on fire")
