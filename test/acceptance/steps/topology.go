@@ -29,6 +29,10 @@ func startTopologyForTags(ctx context.Context, world *support.World, sc *godog.S
 			if err := startAuthAndClientRegistry(ctx, world); err != nil {
 				return err
 			}
+		case "@topology:auth-client-registry-introspection":
+			if err := startAuthClientRegistryIntrospection(ctx, world); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -49,18 +53,69 @@ func startTopologyForTags(ctx context.Context, world *support.World, sc *godog.S
 // once the SQLite-dispatch PR lands, a later feature can set
 // CLIENT_DATABASE_URL=file:... to exercise that path specifically.
 func startAuthAndClientRegistry(ctx context.Context, world *support.World) error {
+	_, err := startAuthAndClientRegistryServices(ctx, world)
+	return err
+}
+
+// startAuthAndClientRegistryServices is the shared base every
+// auth-server-centric topology builds on — it returns the started
+// auth-server process so callers that layer on more services (like
+// introspection) can point them at it without re-parsing world.Services.
+func startAuthAndClientRegistryServices(ctx context.Context, world *support.World) (*support.RunningService, error) {
 	clientRegistry, err := startClientRegistryService(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	world.Services["client-registry-service"] = clientRegistry
 
 	authServer, err := startAuthServer(ctx, clientRegistry.BaseURL)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	world.Services["auth-server"] = authServer
+	return authServer, nil
+}
+
+// startAuthClientRegistryIntrospection layers token-introspection-service
+// on top of the auth+client-registry pair, pointing it at auth-server's
+// JWKS endpoint (RS256 is the default signing algorithm per ADR-0008) so
+// it can validate real tokens auth-server issues, and giving it a
+// pre-shared introspection secret every scenario using this topology
+// shares — safe because each scenario gets its own freshly-spawned
+// process, so there is no cross-scenario secret reuse to worry about.
+func startAuthClientRegistryIntrospection(ctx context.Context, world *support.World) error {
+	authServer, err := startAuthAndClientRegistryServices(ctx, world)
+	if err != nil {
+		return err
+	}
+
+	introspection, err := startTokenIntrospectionService(ctx, authServer.BaseURL)
+	if err != nil {
+		return err
+	}
+	world.Services["token-introspection-service"] = introspection
 	return nil
+}
+
+// introspectionSecret is the pre-shared secret token-introspection-service
+// requires callers to present. See startAuthClientRegistryIntrospection's
+// doc comment for why a shared constant is safe here.
+const introspectionSecret = "acceptance-test-introspection-secret"
+
+func startTokenIntrospectionService(ctx context.Context, authServerURL string) (*support.RunningService, error) {
+	port, err := support.FreePort()
+	if err != nil {
+		return nil, err
+	}
+	bin, err := support.BuildBinary("token-introspection-service")
+	if err != nil {
+		return nil, err
+	}
+	return support.StartService(ctx, "token-introspection-service", bin, port, []string{
+		"INTROSPECT_SERVER_PORT=" + strconv.Itoa(port),
+		"INTROSPECT_JWT_JWKS_URL=" + authServerURL + "/.well-known/jwks.json",
+		"INTROSPECT_INTROSPECTION_SECRET=" + introspectionSecret,
+	})
 }
 
 func startClientRegistryService(ctx context.Context) (*support.RunningService, error) {
