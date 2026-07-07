@@ -6,7 +6,9 @@ package container
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -20,6 +22,7 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/outbound/email"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/outbound/memory"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/outbound/postgres"
+	sqliteadapter "github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/outbound/sqlite"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/domain"
@@ -75,14 +78,28 @@ type repositories struct {
 
 func repositoriesProvider(ctx context.Context, c *platform.Container) (*repositories, error) {
 	cfg := platform.MustResolve[*config.Config](ctx, c)
-	if cfg.Database.URL == "" {
+	switch {
+	case cfg.Database.URL == "":
 		return &repositories{
 			user:  memory.NewUserRepository(),
 			token: memory.NewVerificationTokenRepository(),
 		}, nil
+	case isSQLiteDSN(cfg.Database.URL):
+		return sqliteRepositoriesProvider(ctx, c, cfg.Database.URL)
+	default:
+		return postgresRepositoriesProvider(ctx, c, cfg.Database.URL)
 	}
+}
 
-	if err := postgres.RunMigrations(cfg.Database.URL); err != nil {
+// isSQLiteDSN reports whether dsn should be routed to the SQLite adapter.
+// modernc.org/sqlite accepts both "file:" and bare "sqlite:" DSNs; anything
+// else (in practice, "postgres://" / "postgresql://") goes to postgres.
+func isSQLiteDSN(dsn string) bool {
+	return strings.HasPrefix(dsn, "file:") || strings.HasPrefix(dsn, "sqlite:")
+}
+
+func postgresRepositoriesProvider(ctx context.Context, c *platform.Container, dsn string) (*repositories, error) {
+	if err := postgres.RunMigrations(dsn); err != nil {
 		return nil, fmt.Errorf("running postgres migrations: %w", err)
 	}
 
@@ -91,7 +108,7 @@ func repositoriesProvider(ctx context.Context, c *platform.Container) (*reposito
 	// 10s budget from the prior implementation.
 	connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	pool, err := postgres.Connect(connectCtx, cfg.Database.URL)
+	pool, err := postgres.Connect(connectCtx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to postgres: %w", err)
 	}
@@ -102,6 +119,35 @@ func repositoriesProvider(ctx context.Context, c *platform.Container) (*reposito
 	return &repositories{
 		user:  postgres.NewUserRepository(pool),
 		token: postgres.NewVerificationTokenRepository(pool),
+	}, nil
+}
+
+// sqliteRepositoriesProvider mirrors postgresRepositoriesProvider for the
+// SQLite adapter — same migration-then-connect shape, sharing one *sql.DB
+// between the user and verification-token repositories.
+func sqliteRepositoriesProvider(ctx context.Context, c *platform.Container, dsn string) (*repositories, error) {
+	migrationDB, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("opening sqlite database for migrations: %w", err)
+	}
+	if err := sqliteadapter.RunMigrations(ctx, migrationDB); err != nil {
+		_ = migrationDB.Close()
+		return nil, fmt.Errorf("running sqlite migrations: %w", err)
+	}
+	if err := migrationDB.Close(); err != nil {
+		return nil, fmt.Errorf("closing sqlite migration connection: %w", err)
+	}
+
+	db, err := sqliteadapter.Connect(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to sqlite: %w", err)
+	}
+	c.OnClose("sqlite", func(_ context.Context) error {
+		return db.Close()
+	})
+	return &repositories{
+		user:  sqliteadapter.NewUserRepository(db),
+		token: sqliteadapter.NewVerificationTokenRepository(db),
 	}, nil
 }
 
