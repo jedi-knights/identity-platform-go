@@ -15,6 +15,9 @@ import (
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	platform "github.com/jedi-knights/go-platform/container"
 	"github.com/jedi-knights/go-platform/jwtutil"
+	platformotel "github.com/jedi-knights/go-platform/otel"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/config"
@@ -65,22 +68,32 @@ func run(_ *cobra.Command, _ []string) error {
 	startCtx, startCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer startCancel()
 
+	shutdownTracing, err := setupTracing(startCtx, cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer shutdownWithTimeout(logger, "tracing", 5*time.Second, shutdownTracing)
+
 	ctr, err := container.New(startCtx, cfg, logger)
 	if err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
-	defer func() {
-		closeCtx, closeCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer closeCancel()
-		if cerr := ctr.Close(closeCtx); cerr != nil {
-			logger.Error("container close error", "err", cerr)
-		}
-	}()
+	defer shutdownWithTimeout(logger, "container", 30*time.Second, ctr.Close)
 
 	handler := platform.MustResolve[*inboundhttp.Handler](startCtx, ctr)
 	introspector := platform.MustResolve[ports.TokenIntrospector](startCtx, ctr)
 	keySource := platform.MustResolve[jwtutil.KeySource](startCtx, ctr)
-	router := inboundhttp.NewRouter(handler, logger, []byte(cfg.JWT.SigningKey), keySource, cfg.JWT.Audience, cfg.JWT.Issuer, introspector)
+	// otelhttp wraps the router so every inbound request becomes a
+	// server span; traceparent headers from the client are honoured by
+	// the W3C TraceContext propagator that go-platform/otel registers.
+	// The wrapper is a no-op when tracing is disabled.
+	router := otelhttp.NewHandler(
+		inboundhttp.NewRouter(handler, logger, []byte(cfg.JWT.SigningKey), keySource, cfg.JWT.Audience, cfg.JWT.Issuer, introspector),
+		"example-resource-service",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			return r.Method + " " + r.URL.Path
+		}),
+	)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	srv := &http.Server{
@@ -106,6 +119,39 @@ func run(_ *cobra.Command, _ []string) error {
 	defer cancel()
 
 	return srv.Shutdown(ctx)
+}
+
+// setupTracing bootstraps the OTel SDK when RESOURCE_TRACING_ENABLED is
+// set. When tracing is disabled it returns a no-op shutdown so the
+// caller's deferred shutdown still has a stable target.
+func setupTracing(ctx context.Context, cfg *config.Config, logger logging.Logger) (platformotel.Shutdown, error) {
+	if !cfg.Tracing.Enabled {
+		return func(context.Context) error { return nil }, nil
+	}
+	shutdown, err := platformotel.Init(ctx, platformotel.Config{
+		ServiceName:      "example-resource-service",
+		ServiceVersion:   cfg.Tracing.ServiceVersion,
+		Environment:      cfg.Log.Environment,
+		ExporterEndpoint: cfg.Tracing.ExporterEndpoint,
+		ExporterProtocol: cfg.Tracing.ExporterProtocol,
+		ExporterInsecure: cfg.Tracing.ExporterInsecure,
+		SamplerRatio:     cfg.Tracing.SamplerRatio,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("setting up tracing: %w", err)
+	}
+	logger.Info("opentelemetry bootstrap complete", "exporter", cfg.Tracing.ExporterEndpoint)
+	return shutdown, nil
+}
+
+// shutdownWithTimeout runs fn with its own bounded context and logs any
+// error against the supplied name.
+func shutdownWithTimeout(logger logging.Logger, name string, timeout time.Duration, fn func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := fn(ctx); err != nil {
+		logger.Error(name+" shutdown error", "err", err)
+	}
 }
 
 // listenAndWait starts the HTTP server and blocks until either it fails or a quit signal is received.

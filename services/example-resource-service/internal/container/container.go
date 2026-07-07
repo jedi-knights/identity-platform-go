@@ -15,6 +15,8 @@ import (
 	platform "github.com/jedi-knights/go-platform/container"
 	"github.com/jedi-knights/go-platform/jwtutil"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/introspection"
 	jwksadapter "github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/jwks"
@@ -57,6 +59,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, func(_ context.Context, _ *platform.Container) (logging.Logger, error) {
 		return logger, nil
 	})
+	platform.Register(c, httpClientProvider)
 	platform.Register(c, resourceRepositoryProvider)
 	platform.Register(c, resourceServiceProvider)
 	platform.Register(c, introspectorProvider)
@@ -68,6 +71,19 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 		return nil, fmt.Errorf("bootstrapping container: %w", err)
 	}
 	return c, nil
+}
+
+// httpClientProvider builds the single shared HTTP client used by every
+// outbound adapter (introspection, policy, JWKS). otelhttp.NewTransport
+// wraps the default transport so every outbound request becomes a client
+// span and carries the W3C traceparent header. The wrapper is inert when
+// tracing is disabled — no spans are emitted but header propagation still
+// runs, which is the correct behaviour for a no-op TracerProvider.
+func httpClientProvider(context.Context, *platform.Container) (*http.Client, error) {
+	return &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
+	}, nil
 }
 
 func resourceRepositoryProvider(ctx context.Context, c *platform.Container) (domain.ResourceRepository, error) {
@@ -110,7 +126,8 @@ func introspectorProvider(ctx context.Context, c *platform.Container) (ports.Tok
 		return nil, nil
 	}
 	log.Info("using remote token-introspection-service", "url", cfg.Introspection.URL)
-	return introspection.NewClient(cfg.Introspection.URL, &http.Client{Timeout: 5 * time.Second}, cfg.Introspection.Secret), nil
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	return introspection.NewClient(cfg.Introspection.URL, httpClient, cfg.Introspection.Secret), nil
 }
 
 // keySourceProvider builds a JWKS-backed jwtutil.KeySource when
@@ -125,7 +142,11 @@ func keySourceProvider(ctx context.Context, c *platform.Container) (jwtutil.KeyS
 	}
 	ttl := parseJWKSCacheTTL(cfg.JWT.JWKSCacheTTL)
 	log.Info("using JWKS-backed local RS256 validation", "url", cfg.JWT.JWKSURL, "cache_ttl", ttl)
-	fetcher := jwksadapter.NewFetcher(cfg.JWT.JWKSURL, jwksadapter.WithCacheTTL(ttl))
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	fetcher := jwksadapter.NewFetcher(cfg.JWT.JWKSURL,
+		jwksadapter.WithCacheTTL(ttl),
+		jwksadapter.WithHTTPClient(httpClient),
+	)
 	return fetcher.KeyByID, nil
 }
 
@@ -147,7 +168,8 @@ func policyCheckerProvider(ctx context.Context, c *platform.Container) (ports.Po
 		return nil, nil
 	}
 	log.Info("using remote authorization-policy-service", "url", cfg.Policy.URL)
-	return policyadapter.New(cfg.Policy.URL), nil
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	return policyadapter.New(cfg.Policy.URL, policyadapter.WithHTTPClient(httpClient)), nil
 }
 
 func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.Handler, error) {
