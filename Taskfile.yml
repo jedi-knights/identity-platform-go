@@ -45,6 +45,11 @@ tasks:
           (cd "$dir" && go test -tags integration ./... -race -count=1) || exit 1
         done
 
+  test:acceptance:
+    desc: Run the OAuth2/OIDC acceptance suite (requires Docker for the shared Redis container)
+    cmds:
+      - cd test/acceptance && go test -tags acceptance ./... -count=1
+
   build:
     desc: Build all services
     deps:

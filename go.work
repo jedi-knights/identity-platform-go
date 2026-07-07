@@ -8,4 +8,5 @@ use (
 	./services/identity-service
 	./services/login-ui
 	./services/token-introspection-service
+	./test/acceptance
 )
