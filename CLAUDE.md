@@ -26,11 +26,19 @@ This codebase implements specific RFCs. Understand the semantics before modifyin
 
 | RFC | What it governs | Where implemented |
 |-----|----------------|-------------------|
-| [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749) | OAuth 2.0 core — token endpoint, grant types, error responses | `services/auth-server` — `client_credentials` only; `authorization_code` is a stub |
+| [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749) | OAuth 2.0 core — token endpoint, grant types, error responses | `services/auth-server` — `client_credentials`, `refresh_token`, and `authorization_code` are all fully implemented |
 | [RFC 6750](https://datatracker.ietf.org/doc/html/rfc6750) | Bearer token usage — `Authorization: Bearer` header format, `WWW-Authenticate` error params, `insufficient_scope` error | `services/example-resource-service/internal/adapters/inbound/http/middleware.go` |
 | [RFC 7009](https://datatracker.ietf.org/doc/html/rfc7009) | Token revocation | `services/auth-server` |
+| [RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636) | PKCE — `code_challenge` / `code_verifier` | `services/auth-server`, [ADR-0009](docs/adr/0009-authorization-code-pkce.md). Mandatory S256 for every client; `plain` is rejected. |
+| [RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517) | JSON Web Key Sets — `/.well-known/jwks.json` | `services/auth-server`, [ADR-0008](docs/adr/0008-rs256-jwks-token-signing.md). RS256 by default with a `_PREVIOUS`/`_NEXT` key-rotation window; HS256 remains available as a migration fallback. |
+| [RFC 7518](https://datatracker.ietf.org/doc/html/rfc7518) | JSON Web Algorithms — defines `RS256`, `HS256`, etc. | `services/auth-server`, [ADR-0008](docs/adr/0008-rs256-jwks-token-signing.md). Algorithm-confusion defence (RFC 8725 §3.1) enforced by `jwtutil.ParseRS256` — HS256-signed tokens are rejected outright under RS256 config. |
+| [RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591) | Dynamic Client Registration | `services/client-registry-service`, [ADR-0013](docs/adr/0013-dynamic-client-registration.md) |
 | [RFC 7662](https://datatracker.ietf.org/doc/html/rfc7662) | Token introspection | `services/auth-server`, `services/token-introspection-service` |
+| [RFC 8414](https://datatracker.ietf.org/doc/html/rfc8414) | Authorization Server Metadata — `/.well-known/oauth-authorization-server` | `services/auth-server`, [ADR-0012](docs/adr/0012-authorization-server-metadata.md) |
+| [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) | Token Exchange | `services/auth-server`, [ADR-0016](docs/adr/0016-token-exchange-rfc-8693.md) |
 | [RFC 9068](https://datatracker.ietf.org/doc/html/rfc9068) | JWT profile for access tokens — `scope` as space-delimited string, `client_id` claim | `services/auth-server/internal/application/token_service.go` |
+| [RFC 9396](https://datatracker.ietf.org/doc/html/rfc9396) | Rich Authorization Requests — `authorization_details` | `services/auth-server`, [ADR-0017](docs/adr/0017-rich-authorization-requests-rfc-9396.md). Per-type schema validation for `mcp_tool` and `resource`. |
+| [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html) | `id_token`, `/userinfo` endpoint, `nonce`, `openid` scope, authentication context | `services/auth-server`, `services/identity-service`, [ADR-0010](docs/adr/0010-oidc-core.md) |
 
 ### Planned (not yet implemented)
 
@@ -38,14 +46,8 @@ These RFCs are on the roadmap toward a complete auth/authz system. Do not implem
 
 | RFC | What it adds | Key design notes |
 |-----|-------------|-----------------|
-| [RFC 7521](https://datatracker.ietf.org/doc/html/rfc7521) / [RFC 7523](https://datatracker.ietf.org/doc/html/rfc7523) | Assertion Framework / JWT Bearer Grants — clients authenticate using a signed JWT instead of a client_secret | Enables service-to-service federation where a client proves identity with a private key. Requires JWKS (RFC 7517) to be in place first so the auth-server can retrieve the client's public key for assertion verification. |
-| [RFC 7636](https://datatracker.ietf.org/doc/html/rfc7636) | PKCE — `code_challenge` / `code_verifier` | Parameters already parsed in `handler.go` and stored in `GrantRequest.CodeVerifier`; validation is the missing piece. Required before `authorization_code` can be considered complete. |
-| [RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517) | JSON Web Key Sets — `/.well-known/jwks.json` | Enables RS256 signing so resource servers can verify tokens without sharing the signing secret. Currently all signing is HS256 with a shared key. |
-| [RFC 7518](https://datatracker.ietf.org/doc/html/rfc7518) | JSON Web Algorithms — defines `RS256`, `HS256`, etc. | Governs valid `alg` values in JWTs. Becomes relevant when JWKS/RS256 support is added. |
-| [RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591) | Dynamic Client Registration | Standardizes the `client-registry-service` API. Any OAuth2-aware tool can register clients without custom integration. |
-| [RFC 8414](https://datatracker.ietf.org/doc/html/rfc8414) | Authorization Server Metadata — `/.well-known/oauth-authorization-server` | Required for OAuth2 client libraries to auto-configure. Without it, every consumer must be manually pointed at each endpoint. |
-| [RFC 9449](https://datatracker.ietf.org/doc/html/rfc9449) | DPoP — Demonstrating Proof of Possession | Binds access tokens to the client's private key, so a stolen token cannot be replayed from a different client. Requires JWKS (RFC 7517) and changes the token endpoint to accept a `DPoP` header. High implementation cost; most valuable when tokens are long-lived or carried over untrusted channels. |
-| [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html) | `id_token`, `/userinfo` endpoint, `nonce`, `openid` scope, authentication context | Bridges the gap between authorization and authentication. The `identity-service` does user auth but does not issue identity tokens. OIDC is what makes this an authentication system, not just an authorization one. |
+| [RFC 7521](https://datatracker.ietf.org/doc/html/rfc7521) / [RFC 7523](https://datatracker.ietf.org/doc/html/rfc7523) | Assertion Framework / JWT Bearer Grants — clients authenticate using a signed JWT instead of a client_secret | Enables service-to-service federation where a client proves identity with a private key. JWKS (RFC 7517) is now in place, so the main remaining work is the assertion-verification grant strategy itself. |
+| [RFC 9449](https://datatracker.ietf.org/doc/html/rfc9449) | DPoP — Demonstrating Proof of Possession | Binds access tokens to the client's private key, so a stolen token cannot be replayed from a different client. JWKS (RFC 7517) is now in place; remaining work is accepting and validating a `DPoP` header at the token endpoint. High implementation cost; most valuable when tokens are long-lived or carried over untrusted channels. |
 
 ### Considered (lower priority)
 
@@ -54,7 +56,6 @@ These are valid for a complete auth/authz system but have narrower applicability
 | RFC | What it adds | Key design notes |
 |-----|-------------|-----------------|
 | [RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628) | Device Authorization Flow — browserless devices (CLIs, IoT) | Adds a new grant type (`urn:ietf:params:oauth:grant-type:device_code`) and a `POST /device_authorization` endpoint. Follows the same Strategy pattern extension point as other grant types. |
-| [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) | Token Exchange — a service impersonates a user or delegates to another service | Useful in service-mesh / zero-trust scenarios. Adds a new grant type (`urn:ietf:params:oauth:grant-type:token-exchange`) with `subject_token` and `actor_token` parameters. |
 | [RFC 9207](https://datatracker.ietf.org/doc/html/rfc9207) | Authorization Server Issuer Identification — adds `iss` to authorization responses | Prevents mix-up attacks when a client interacts with multiple authorization servers. Low cost to implement; high value if this platform ever runs multiple issuers. |
 
 ### Out of scope
@@ -62,6 +63,10 @@ These are valid for a complete auth/authz system but have narrower applicability
 | RFC | Reason |
 |-----|--------|
 | [RFC 8705](https://datatracker.ietf.org/doc/html/rfc8705) — mTLS Client Authentication | Infrastructure-level concern beyond the reference implementation's scope |
+
+### Platform extensions beyond the OAuth2/OIDC spec
+
+A few ADRs add platform-specific behavior that isn't governed by an RFC — worth knowing about when scoping test coverage, since they layer on top of the specs above rather than replacing them: [ADR-0015](docs/adr/0015-agent-principal-type.md) (agent principal type — distinguishes AI-agent clients from human/service clients, referenced by RAR's `mcp_tool` authorization details), [ADR-0018](docs/adr/0018-agent-audit-event-schema.md) (agent audit event schema), and [ADR-0019](docs/adr/0019-usage-accounting-and-billing.md) (usage accounting and billing).
 
 ### Key OAuth2 Invariants — Do Not Break These
 
@@ -76,7 +81,7 @@ These are valid for a complete auth/authz system but have narrower applicability
 
 ### Grant Types
 
-Only `client_credentials` is fully implemented. `authorization_code` and `refresh_token` are intentional stubs — their `GrantStrategy` implementations exist as extension points, not forgotten work.
+`client_credentials`, `refresh_token`, and `authorization_code` (with mandatory PKCE-S256, per [ADR-0009](docs/adr/0009-authorization-code-pkce.md)) are all fully implemented. See `services/auth-server/CLAUDE.md` for the current per-grant status table and the ADR-0011 login-challenge handoff that `authorization_code` depends on.
 
 **To add a new grant type:**
 1. Add a constant to `services/auth-server/internal/domain/grant.go`
