@@ -1,8 +1,13 @@
 package steps
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/cucumber/godog"
 
@@ -27,6 +32,14 @@ func registerCommonSteps(sctx *godog.ScenarioContext, world func() *support.Worl
 
 	sctx.Step(`^the response header "([^"]*)" is "([^"]*)"$`, func(header, want string) error {
 		return stepAssertHeader(world(), header, want)
+	})
+
+	sctx.Step(`^the response "([^"]*)" is (true|false)$`, func(field, want string) error {
+		return stepAssertBoolField(world(), field, want == "true")
+	})
+
+	sctx.Step(`^the "([^"]*)" from the last response is captured as "([^"]*)"$`, func(field, key string) error {
+		return captureField(world(), field, key)
 	})
 }
 
@@ -65,11 +78,53 @@ func stepAssertField(world *support.World, field, want string) error {
 	return nil
 }
 
+func stepAssertBoolField(world *support.World, field string, want bool) error {
+	var decoded map[string]any
+	if err := json.Unmarshal(world.LastBody, &decoded); err != nil {
+		return fmt.Errorf("decoding response body: %w — body: %s", err, world.LastBody)
+	}
+	got, ok := decoded[field].(bool)
+	if !ok {
+		return fmt.Errorf("field %q: want bool, got %v (body: %s)", field, decoded[field], world.LastBody)
+	}
+	if got != want {
+		return fmt.Errorf("field %q: want %v, got %v", field, want, got)
+	}
+	return nil
+}
+
 func stepAssertHeader(world *support.World, header, want string) error {
 	got := world.LastResponse.Header.Get(header)
 	if got != want {
 		return fmt.Errorf("header %q: want %q, got %q", header, want, got)
 	}
+	return nil
+}
+
+// postForm posts form to the given path on auth-server and stores the
+// response for later "Then" assertions. Shared by every auth-server
+// endpoint step file (token, revoke, introspect, ...).
+func postForm(ctx context.Context, world *support.World, path string, form url.Values) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		world.Services["auth-server"].BaseURL+path, strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := world.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("calling auth-server: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading auth-server response body: %w", err)
+	}
+
+	world.LastResponse = resp
+	world.LastBody = body
 	return nil
 }
 

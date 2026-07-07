@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -90,28 +89,7 @@ func stepRequestClientCredentialsToken(ctx context.Context, world *support.World
 }
 
 // postToken posts form to auth-server's /oauth/token and stores the
-// response for later "Then" assertions. Shared by every grant-type step
-// file so the request/response plumbing lives in one place.
+// response for later "Then" assertions.
 func postToken(ctx context.Context, world *support.World, form url.Values) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		world.Services["auth-server"].BaseURL+"/oauth/token", strings.NewReader(form.Encode()))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := world.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("calling auth-server: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("reading auth-server response body: %w", err)
-	}
-
-	world.LastResponse = resp
-	world.LastBody = body
-	return nil
+	return postForm(ctx, world, "/oauth/token", form)
 }
