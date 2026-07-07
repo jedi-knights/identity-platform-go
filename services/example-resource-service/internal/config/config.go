@@ -21,6 +21,24 @@ type Config struct {
 	Introspection IntrospectionConfig `mapstructure:"introspection"`
 	Database      DatabaseConfig      `mapstructure:"database"`
 	Policy        PolicyConfig        `mapstructure:"policy"`
+	Tracing       TracingConfig       `mapstructure:"tracing"`
+}
+
+// TracingConfig configures the OpenTelemetry SDK bootstrap. Every field
+// is optional; missing values fall back to OTEL_* environment variables
+// and ultimately to a stdout exporter so traces are visible during
+// local development without a collector.
+//
+// Enabled controls whether the SDK is bootstrapped at all. When false
+// the global TracerProvider stays as the no-op default and the
+// otelhttp wrappers on the router and outbound clients emit no spans.
+type TracingConfig struct {
+	Enabled          bool    `mapstructure:"enabled"`           // RESOURCE_TRACING_ENABLED
+	ServiceVersion   string  `mapstructure:"service_version"`   // RESOURCE_TRACING_SERVICE_VERSION
+	ExporterEndpoint string  `mapstructure:"exporter_endpoint"` // RESOURCE_TRACING_EXPORTER_ENDPOINT
+	ExporterProtocol string  `mapstructure:"exporter_protocol"` // RESOURCE_TRACING_EXPORTER_PROTOCOL
+	ExporterInsecure bool    `mapstructure:"exporter_insecure"` // RESOURCE_TRACING_EXPORTER_INSECURE
+	SamplerRatio     float64 `mapstructure:"sampler_ratio"`     // RESOURCE_TRACING_SAMPLER_RATIO
 }
 
 type ServerConfig struct {
@@ -90,6 +108,12 @@ func Load() (*Config, error) {
 	v.SetDefault("introspection.secret", "")
 	v.SetDefault("database.url", "")
 	v.SetDefault("policy.url", "")
+	v.SetDefault("tracing.enabled", false)
+	v.SetDefault("tracing.service_version", "")
+	v.SetDefault("tracing.exporter_endpoint", "")
+	v.SetDefault("tracing.exporter_protocol", "")
+	v.SetDefault("tracing.exporter_insecure", false)
+	v.SetDefault("tracing.sampler_ratio", 0.0)
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")

@@ -25,12 +25,26 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// Option mutates a Client at construction time.
+type Option func(*Client)
+
+// WithHTTPClient overrides the default HTTP client (5s timeout). Callers
+// pass one wrapped with otelhttp.NewTransport so every /evaluate call
+// becomes a traced client span and carries the W3C traceparent header.
+func WithHTTPClient(c *http.Client) Option {
+	return func(cl *Client) { cl.httpClient = c }
+}
+
 // New returns a Client targeting the given base URL.
-func New(baseURL string) *Client {
-	return &Client{
+func New(baseURL string, opts ...Option) *Client {
+	c := &Client{
 		baseURL:    baseURL,
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 type evaluateRequest struct {
