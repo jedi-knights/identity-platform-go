@@ -232,6 +232,10 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request, logger logging.Lo
 		Code:         r.FormValue("code"),
 		CodeVerifier: r.FormValue("code_verifier"),
 		RedirectURI:  r.FormValue("redirect_uri"),
+		// RFC 6749 §6 — the refresh token presented by the client. Only
+		// consumed by RefreshTokenStrategy; empty for every other grant
+		// type by virtue of the wire being empty.
+		RefreshToken: r.FormValue("refresh_token"),
 		// RFC 8693 §2.1 fields. Populated for every request but only
 		// consumed by the token-exchange strategy — empty for every
 		// other grant type by virtue of the wire being empty.
