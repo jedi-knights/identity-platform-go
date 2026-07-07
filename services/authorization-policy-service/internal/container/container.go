@@ -6,7 +6,9 @@ package container
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
@@ -18,6 +20,7 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/adapters/outbound/memory"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/adapters/outbound/postgres"
 	redisadapter "github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/adapters/outbound/redis"
+	sqliteadapter "github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/adapters/outbound/sqlite"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/domain"
@@ -80,17 +83,32 @@ type repositories struct {
 func repositoriesProvider(ctx context.Context, c *platform.Container) (*repositories, error) {
 	cfg := platform.MustResolve[*config.Config](ctx, c)
 	log := platform.MustResolve[logging.Logger](ctx, c)
-	if cfg.Database.URL == "" {
+	switch {
+	case cfg.Database.URL == "":
 		return &repositories{
 			policy: memory.NewPolicyRepository(),
 			role:   memory.NewRoleRepository(),
 		}, nil
+	case isSQLiteDSN(cfg.Database.URL):
+		return sqliteRepositoriesProvider(ctx, c, cfg.Database.URL, log)
+	default:
+		return postgresRepositoriesProvider(ctx, c, cfg.Database.URL, log)
 	}
-	log.Info("using PostgreSQL policy store", "url", cfg.Database.URL)
-	if err := postgres.RunMigrations(cfg.Database.URL); err != nil {
+}
+
+// isSQLiteDSN reports whether dsn should be routed to the SQLite adapter.
+// modernc.org/sqlite accepts both "file:" and bare "sqlite:" DSNs; anything
+// else (in practice, "postgres://" / "postgresql://") goes to postgres.
+func isSQLiteDSN(dsn string) bool {
+	return strings.HasPrefix(dsn, "file:") || strings.HasPrefix(dsn, "sqlite:")
+}
+
+func postgresRepositoriesProvider(ctx context.Context, c *platform.Container, dsn string, log logging.Logger) (*repositories, error) {
+	log.Info("using PostgreSQL policy store", "url", dsn)
+	if err := postgres.RunMigrations(dsn); err != nil {
 		return nil, fmt.Errorf("running database migrations: %w", err)
 	}
-	pool, err := postgres.Connect(ctx, cfg.Database.URL)
+	pool, err := postgres.Connect(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to database: %w", err)
 	}
@@ -103,6 +121,36 @@ func repositoriesProvider(ctx context.Context, c *platform.Container) (*reposito
 	return &repositories{
 		policy: postgres.NewPolicyRepository(pool),
 		role:   postgres.NewRoleRepository(pool),
+	}, nil
+}
+
+// sqliteRepositoriesProvider mirrors postgresRepositoriesProvider for the
+// SQLite adapter — same migration-then-connect shape, sharing one *sql.DB
+// between the policy and role repositories.
+func sqliteRepositoriesProvider(ctx context.Context, c *platform.Container, dsn string, log logging.Logger) (*repositories, error) {
+	log.Info("using SQLite policy store", "dsn", dsn)
+	migrationDB, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("opening sqlite database for migrations: %w", err)
+	}
+	if err := sqliteadapter.RunMigrations(ctx, migrationDB); err != nil {
+		_ = migrationDB.Close()
+		return nil, fmt.Errorf("running sqlite migrations: %w", err)
+	}
+	if err := migrationDB.Close(); err != nil {
+		return nil, fmt.Errorf("closing sqlite migration connection: %w", err)
+	}
+
+	db, err := sqliteadapter.Connect(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to sqlite: %w", err)
+	}
+	c.OnClose("sqlite", func(_ context.Context) error {
+		return db.Close()
+	})
+	return &repositories{
+		policy: sqliteadapter.NewPolicyRepository(db),
+		role:   sqliteadapter.NewRoleRepository(db),
 	}, nil
 }
 
