@@ -6,8 +6,10 @@ package container
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
@@ -21,6 +23,7 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/memory"
 	policyadapter "github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/policy"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/postgres"
+	sqliteadapter "github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/adapters/outbound/sqlite"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/example-resource-service/internal/domain"
@@ -73,16 +76,30 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 func resourceRepositoryProvider(ctx context.Context, c *platform.Container) (domain.ResourceRepository, error) {
 	cfg := platform.MustResolve[*config.Config](ctx, c)
 	log := platform.MustResolve[logging.Logger](ctx, c)
-	if cfg.Database.URL == "" {
+	switch {
+	case cfg.Database.URL == "":
 		log.Info("RESOURCE_DATABASE_URL not set; using in-memory resource repository")
 		return memory.NewResourceRepository(), nil
+	case isSQLiteDSN(cfg.Database.URL):
+		return sqliteResourceRepositoryProvider(ctx, c, cfg.Database.URL, log)
+	default:
+		return postgresResourceRepositoryProvider(ctx, c, cfg.Database.URL, log)
 	}
+}
 
-	log.Info("running database migrations", "url", cfg.Database.URL)
-	if err := postgres.RunMigrations(cfg.Database.URL); err != nil {
+// isSQLiteDSN reports whether dsn should be routed to the SQLite adapter.
+// modernc.org/sqlite accepts both "file:" and bare "sqlite:" DSNs; anything
+// else (in practice, "postgres://" / "postgresql://") goes to postgres.
+func isSQLiteDSN(dsn string) bool {
+	return strings.HasPrefix(dsn, "file:") || strings.HasPrefix(dsn, "sqlite:")
+}
+
+func postgresResourceRepositoryProvider(ctx context.Context, c *platform.Container, dsn string, log logging.Logger) (domain.ResourceRepository, error) {
+	log.Info("running database migrations", "url", dsn)
+	if err := postgres.RunMigrations(dsn); err != nil {
 		return nil, fmt.Errorf("running resource migrations: %w", err)
 	}
-	pool, err := postgres.Connect(ctx, cfg.Database.URL)
+	pool, err := postgres.Connect(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to database: %w", err)
 	}
@@ -92,6 +109,33 @@ func resourceRepositoryProvider(ctx context.Context, c *platform.Container) (dom
 	})
 	log.Info("using PostgreSQL resource repository")
 	return postgres.NewResourceRepository(pool), nil
+}
+
+// sqliteResourceRepositoryProvider mirrors postgresResourceRepositoryProvider
+// for the SQLite adapter — same migration-then-connect shape.
+func sqliteResourceRepositoryProvider(ctx context.Context, c *platform.Container, dsn string, log logging.Logger) (domain.ResourceRepository, error) {
+	log.Info("running sqlite migrations", "dsn", dsn)
+	migrationDB, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("opening sqlite database for migrations: %w", err)
+	}
+	if err := sqliteadapter.RunMigrations(ctx, migrationDB); err != nil {
+		_ = migrationDB.Close()
+		return nil, fmt.Errorf("running sqlite migrations: %w", err)
+	}
+	if err := migrationDB.Close(); err != nil {
+		return nil, fmt.Errorf("closing sqlite migration connection: %w", err)
+	}
+
+	db, err := sqliteadapter.Connect(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to sqlite: %w", err)
+	}
+	c.OnClose("sqlite", func(_ context.Context) error {
+		return db.Close()
+	})
+	log.Info("using SQLite resource repository")
+	return sqliteadapter.NewResourceRepository(db), nil
 }
 
 func resourceServiceProvider(ctx context.Context, c *platform.Container) (*application.ResourceService, error) {
