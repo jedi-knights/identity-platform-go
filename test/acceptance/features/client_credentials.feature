@@ -3,6 +3,14 @@
 # The client_credentials grant: a client authenticates with its own
 # credentials (no end user involved) and receives an access token scoped
 # to its own registered permissions. Used for machine-to-machine calls.
+#
+# @topology:auth-client-registry tells the harness which service
+# processes this feature needs (see steps/topology.go) — an intentional,
+# narrow exception to "never use tags to control step behavior": this
+# tag describes infrastructure requirements, not scenario assertions, and
+# tags are the only signal godog's Before hook has available before any
+# step runs.
+@topology:auth-client-registry
 Feature: Client Credentials Grant
 
   Scenario: A registered client obtains a token for one of its registered scopes
