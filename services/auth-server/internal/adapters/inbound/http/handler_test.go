@@ -31,9 +31,16 @@ import (
 type fakeIssuer struct {
 	resp *domain.GrantResponse
 	err  error
+
+	// lastReq captures the request IssueToken was called with, so tests
+	// can assert which form fields the handler actually parsed into
+	// domain.GrantRequest — this is what catches a field silently never
+	// being wired from the HTTP layer.
+	lastReq domain.GrantRequest
 }
 
-func (f *fakeIssuer) IssueToken(_ context.Context, _ domain.GrantRequest) (*domain.GrantResponse, error) {
+func (f *fakeIssuer) IssueToken(_ context.Context, req domain.GrantRequest) (*domain.GrantResponse, error) {
+	f.lastReq = req
 	return f.resp, f.err
 }
 
@@ -167,6 +174,37 @@ func TestToken_SuccessfulIssuance_Returns200WithAccessToken(t *testing.T) {
 	}
 	if resp.AccessToken != "tok.abc" {
 		t.Errorf("AccessToken = %q, want %q", resp.AccessToken, "tok.abc")
+	}
+}
+
+// TestToken_RefreshTokenGrant_PopulatesRefreshTokenField is a regression
+// test for a bug where parseGrantRequest never read the "refresh_token"
+// form field into domain.GrantRequest.RefreshToken — RefreshTokenStrategy
+// reads that field to look up the presented token, so every refresh_token
+// grant request failed via the real HTTP endpoint (masked as
+// invalid_client/401, since FindByRaw("") returning not-found was
+// classified as a client-auth failure) despite the grant being fully
+// implemented and unit-tested at the application layer. No existing test
+// exercised the HTTP parsing layer for this grant type before this one.
+func TestToken_RefreshTokenGrant_PopulatesRefreshTokenField(t *testing.T) {
+	// Arrange
+	issuer := &fakeIssuer{resp: &domain.GrantResponse{AccessToken: "new.tok", TokenType: "Bearer"}}
+	h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
+	w := postForm(t, h.Token, url.Values{
+		"grant_type":    {"refresh_token"},
+		"client_id":     {"c1"},
+		"client_secret": {"s1"},
+		"refresh_token": {"the-raw-refresh-token"},
+	})
+
+	// Assert
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d — body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if issuer.lastReq.RefreshToken != "the-raw-refresh-token" {
+		t.Errorf("GrantRequest.RefreshToken = %q, want %q", issuer.lastReq.RefreshToken, "the-raw-refresh-token")
 	}
 }
 
