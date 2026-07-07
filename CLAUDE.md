@@ -239,3 +239,17 @@ Each service and library versions independently. Releases are triggered automati
 - `chore:`, `docs:`, `style:`, `ci:`, `test:` → no release
 
 Releases in the external `go-platform` and `go-logging` modules are independent of this repo. Service updates pull them in via `go get -u github.com/jedi-knights/go-platform` (or `go-logging`) followed by `go mod tidy` per affected service.
+
+---
+
+## Merging PRs — main must never go red
+
+Because releases fire automatically on every merge to `main` (see above), a merge that lands with a failing check doesn't just look bad — it can trigger a broken release. **Never merge a PR whose CI checks are not actually green**, even when you're confident the failure will resolve itself once another pending PR merges (e.g., a dependent feature branch predates a bug-fix branch it needs).
+
+The correct sequence when PR B depends on a fix landing in PR A:
+1. Merge PR A.
+2. Update PR B's branch against the new `main` (merge or rebase) so its CI re-runs against A's fix.
+3. Wait for CI to actually go green on B.
+4. Merge B.
+
+Reasoning through "the code will be correct after both merge" is not a substitute for step 2–3 — a stale red check on a merged PR is a real process failure even if the resulting `main` happens to build and pass. This repo has no branch-protection rule blocking merges on failing checks, which makes this a discipline rule to hold yourself to, not something the platform will catch for you.
