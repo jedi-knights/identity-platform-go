@@ -6,7 +6,9 @@ package container
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	"github.com/jedi-knights/go-platform/apperrors"
@@ -16,6 +18,7 @@ import (
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/adapters/outbound/memory"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/adapters/outbound/postgres"
+	sqliteadapter "github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/adapters/outbound/sqlite"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/client-registry-service/internal/domain"
@@ -25,11 +28,13 @@ import (
 // New constructs and bootstraps a platform container wired with every
 // dependency this service needs.
 //
-// When cfg.Database.URL is set, pending migrations are run and the PostgreSQL
-// repository adapter is used; the connection pool is registered as a close
-// hook so Container.Close shuts it down cleanly. When the URL is empty the
-// in-memory adapter is selected so the service can run without an external
-// database.
+// clientRepositoryProvider dispatches on cfg.Database.URL's scheme:
+// "postgres://" (or "postgresql://") selects the PostgreSQL adapter,
+// "sqlite:" or "file:" selects the SQLite adapter (local development and
+// acceptance testing — no server process required), and an empty URL
+// falls back to the in-memory adapter. Either database adapter's
+// connection is registered as a close hook so Container.Close shuts it
+// down cleanly.
 func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platform.Container, error) {
 	if cfg == nil {
 		return nil, apperrors.New(apperrors.ErrCodeInternal, "config is required")
@@ -63,16 +68,30 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 func clientRepositoryProvider(ctx context.Context, c *platform.Container) (domain.ClientRepository, error) {
 	cfg := platform.MustResolve[*config.Config](ctx, c)
 	log := platform.MustResolve[logging.Logger](ctx, c)
-	if cfg.Database.URL == "" {
+	switch {
+	case cfg.Database.URL == "":
 		log.Info("database.url not set — using in-memory client repository")
 		return memory.NewClientRepository(), nil
+	case isSQLiteDSN(cfg.Database.URL):
+		return sqliteClientRepositoryProvider(ctx, c, cfg.Database.URL, log)
+	default:
+		return postgresClientRepositoryProvider(ctx, c, cfg.Database.URL, log)
 	}
+}
 
+// isSQLiteDSN reports whether dsn should be routed to the SQLite adapter.
+// modernc.org/sqlite accepts both "file:" and bare "sqlite:" DSNs; anything
+// else (in practice, "postgres://" / "postgresql://") goes to postgres.
+func isSQLiteDSN(dsn string) bool {
+	return strings.HasPrefix(dsn, "file:") || strings.HasPrefix(dsn, "sqlite:")
+}
+
+func postgresClientRepositoryProvider(ctx context.Context, c *platform.Container, dsn string, log logging.Logger) (domain.ClientRepository, error) {
 	log.Info("database.url set — running migrations and connecting to postgres")
-	if err := postgres.RunMigrations(cfg.Database.URL); err != nil {
+	if err := postgres.RunMigrations(dsn); err != nil {
 		return nil, fmt.Errorf("running postgres migrations: %w", err)
 	}
-	repo, err := postgres.Connect(ctx, cfg.Database.URL)
+	repo, err := postgres.Connect(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to postgres: %w", err)
 	}
@@ -80,6 +99,36 @@ func clientRepositoryProvider(ctx context.Context, c *platform.Container) (domai
 	c.OnClose("postgres", func(_ context.Context) error {
 		repo.Close()
 		return nil
+	})
+	return repo, nil
+}
+
+// sqliteClientRepositoryProvider mirrors postgresClientRepositoryProvider
+// for the SQLite adapter — same migration-then-connect shape, but
+// RunMigrations needs its own short-lived *sql.DB since it isn't wrapped
+// by the ClientRepository the way postgres's RunMigrations is (postgres's
+// migrate library manages its own connection internally).
+func sqliteClientRepositoryProvider(ctx context.Context, c *platform.Container, dsn string, log logging.Logger) (domain.ClientRepository, error) {
+	log.Info("database.url set — running migrations and connecting to sqlite", "dsn", dsn)
+	migrationDB, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("opening sqlite database for migrations: %w", err)
+	}
+	if err := sqliteadapter.RunMigrations(ctx, migrationDB); err != nil {
+		_ = migrationDB.Close()
+		return nil, fmt.Errorf("running sqlite migrations: %w", err)
+	}
+	if err := migrationDB.Close(); err != nil {
+		return nil, fmt.Errorf("closing sqlite migration connection: %w", err)
+	}
+
+	repo, err := sqliteadapter.Connect(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to sqlite: %w", err)
+	}
+	log.Info("connected to sqlite — using sqlite client repository")
+	c.OnClose("sqlite", func(_ context.Context) error {
+		return repo.Close()
 	})
 	return repo, nil
 }
