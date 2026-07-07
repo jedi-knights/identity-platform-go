@@ -186,14 +186,25 @@ func isUniqueViolation(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
-// timeToText formats t as RFC3339Nano in UTC for storage in a TEXT column.
+// sqliteTimeLayout is a fixed-width variant of RFC3339Nano: always exactly
+// 9 fractional-second digits and a literal "Z" (guaranteed by always
+// formatting in UTC). time.RFC3339Nano itself trims trailing zeros from
+// the fractional part, which makes two timestamps' string forms compare
+// incorrectly under plain "<" / ORDER BY (e.g. "...:00.09Z" sorts after
+// "...:00.1Z" as strings, despite being chronologically earlier). A fixed
+// width keeps lexicographic and chronological ordering identical — this
+// adapter's List orders by created_at, so the distinction is load-bearing.
+const sqliteTimeLayout = "2006-01-02T15:04:05.000000000Z"
+
+// timeToText formats t in UTC using sqliteTimeLayout for storage in a TEXT
+// column that must remain correctly sortable via plain string comparison.
 func timeToText(t time.Time) string {
-	return t.UTC().Format(time.RFC3339Nano)
+	return t.UTC().Format(sqliteTimeLayout)
 }
 
 // textToTime parses a TEXT column written by timeToText.
 func textToTime(s string) (time.Time, error) {
-	return time.Parse(time.RFC3339Nano, s)
+	return time.Parse(sqliteTimeLayout, s)
 }
 
 // queryStringSlice executes query with a single argument and collects every
