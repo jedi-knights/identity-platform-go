@@ -36,11 +36,19 @@ func registerClientCredentialsSteps(sctx *godog.ScenarioContext, world func() *s
 // mints a fresh random name+ID via support.RandomID — never a hardcoded
 // fixture — per World's isolation contract.
 func stepRegisterClient(ctx context.Context, world *support.World, scopesStr, grantType string) error {
+	return registerClient(ctx, world, scopesStr, grantType, nil)
+}
+
+// registerClient is stepRegisterClient generalized with an optional
+// redirect_uris list, for grant types (authorization_code) that need one
+// registered before /oauth/authorize will accept it.
+func registerClient(ctx context.Context, world *support.World, scopesStr, grantType string, redirectURIs []string) error {
 	body := map[string]any{
-		"name":        support.RandomID("acceptance-client"),
-		"client_type": "confidential",
-		"scopes":      strings.Fields(scopesStr),
-		"grant_types": strings.Split(grantType, ","),
+		"name":          support.RandomID("acceptance-client"),
+		"client_type":   "confidential",
+		"scopes":        strings.Fields(scopesStr),
+		"grant_types":   strings.Split(grantType, ","),
+		"redirect_uris": redirectURIs,
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
