@@ -22,6 +22,7 @@ jobs:
           - services/identity-service
           - services/login-ui
           - services/token-introspection-service
+          - test/acceptance
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -104,3 +105,34 @@ jobs:
             echo "=== Testing $dir ==="
             (cd "$dir" && go test -tags integration ./... -race -count=1) || exit 1
           done
+
+  test-acceptance:
+    name: Acceptance Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache: false
+
+      - name: Cache Go modules
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.work.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Run acceptance tests
+        # No `services:` block needed — testcontainers-go talks to the
+        # Docker socket already present on GitHub-hosted runners to start
+        # the one shared Redis container this suite needs.
+        run: cd test/acceptance && go test -tags acceptance ./... -count=1
