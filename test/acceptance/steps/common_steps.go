@@ -30,7 +30,13 @@ func registerCommonSteps(sctx *godog.ScenarioContext, world func() *support.Worl
 		return stepAssertField(world(), field, want)
 	})
 
-	sctx.Step(`^the response header "([^"]*)" is "([^"]*)"$`, func(header, want string) error {
+	// The wanted value uses a greedy (.+) rather than [^"]* — header values
+	// like WWW-Authenticate legitimately contain embedded double quotes
+	// (Bearer realm="..."), and Gherkin step text is not escape-aware, so
+	// the feature file writes them as literal unescaped quotes. Greedy
+	// backtracking correctly finds the *last* quote before end-of-line as
+	// the closing delimiter instead of stopping at the first embedded one.
+	sctx.Step(`^the response header "([^"]*)" is "(.+)"$`, func(header, want string) error {
 		return stepAssertHeader(world(), header, want)
 	})
 
