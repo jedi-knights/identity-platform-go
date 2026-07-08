@@ -16,6 +16,10 @@ vendor/
 coverage.out
 coverage.html
 
+# Allure acceptance-test reports
+test/acceptance/allure-results/
+test/acceptance/allure-report/
+
 # Logs
 *.log
 
