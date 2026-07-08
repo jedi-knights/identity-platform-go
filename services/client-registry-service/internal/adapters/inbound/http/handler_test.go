@@ -466,18 +466,23 @@ func TestValidateClient_InvalidCredentials_Returns401(t *testing.T) {
 	}
 }
 
-// TestValidateClient_EmptySecret_Returns400 verifies that the handler rejects
-// requests with a missing client_secret at the HTTP layer.
-func TestValidateClient_EmptySecret_Returns400(t *testing.T) {
-	h := newHandler(t, &fakeCreator{}, &fakeReader{}, &fakeValidator{}, &fakeDeleter{})
-	body, _ := json.Marshal(domain.ValidateClientRequest{ClientID: "c1", ClientSecret: ""})
+// TestValidateClient_EmptySecret_DefersToService verifies that the handler
+// no longer rejects an empty client_secret at the HTTP layer — a public
+// client has no stored secret and validates with an empty one (see
+// ClientService.ValidateClient), so this layer must let the service decide
+// rather than blanket-reject before the client's type is known.
+func TestValidateClient_EmptySecret_DefersToService(t *testing.T) {
+	h := newHandler(t, &fakeCreator{}, &fakeReader{},
+		&fakeValidator{resp: &domain.ValidateClientResponse{Valid: true}},
+		&fakeDeleter{})
+	body, _ := json.Marshal(domain.ValidateClientRequest{ClientID: "public-client", ClientSecret: ""})
 	req := httptest.NewRequest(http.MethodPost, "/clients/validate", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 
 	h.ValidateClient(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("got status %d, want 400", w.Code)
+	if w.Code != http.StatusOK {
+		t.Errorf("got status %d, want 200", w.Code)
 	}
 }
 

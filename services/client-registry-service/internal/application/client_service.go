@@ -299,19 +299,29 @@ func (s *ClientService) generateSecretFor(t domain.ClientType) (plain, stored st
 // It returns Valid=false (no error) when the client does not exist or the secret
 // is wrong, so callers cannot distinguish the two cases (avoids client-ID enumeration).
 // Non-not-found repository errors are propagated as errors rather than Valid=false.
+//
+// A public client (ClientTypePublic) has no stored secret — it authenticates
+// by client_id alone (PKCE carries the actual proof at the token endpoint),
+// so an empty presented secret is valid for it as long as it's active. The
+// empty-secret short-circuit only applies once the client's type is known,
+// which is why the type check happens after the repository lookup, not before.
 func (s *ClientService) ValidateClient(ctx context.Context, req domain.ValidateClientRequest) (*domain.ValidateClientResponse, error) {
-	// Reject empty secrets immediately — bcrypt comparison would always fail anyway,
-	// but short-circuiting avoids unnecessary work and locks the contract explicitly.
-	if req.ClientSecret == "" {
-		return &domain.ValidateClientResponse{Valid: false}, nil
-	}
-
 	client, err := s.repo.FindByID(ctx, req.ClientID)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
 			return &domain.ValidateClientResponse{Valid: false}, nil
 		}
 		return nil, fmt.Errorf("looking up client: %w", err)
+	}
+
+	if client.Type == domain.ClientTypePublic {
+		return &domain.ValidateClientResponse{Valid: client.Active}, nil
+	}
+
+	// Reject empty secrets immediately — bcrypt comparison would always fail anyway,
+	// but short-circuiting avoids unnecessary work and locks the contract explicitly.
+	if req.ClientSecret == "" {
+		return &domain.ValidateClientResponse{Valid: false}, nil
 	}
 
 	// bcrypt comparison is constant-time and handles the hashed secret stored in persistence.
