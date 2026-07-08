@@ -20,6 +20,8 @@ var topologyStarters = map[string]func(context.Context, *support.World) error{
 	"@topology:auth-client-registry":               startAuthAndClientRegistry,
 	"@topology:auth-client-registry-introspection": startAuthClientRegistryIntrospection,
 	"@topology:auth-client-registry-resource":      startAuthClientRegistryResource,
+	"@topology:auth-server-only":                   startAuthServerOnly,
+	"@topology:auth-server-rotating-keys":          startAuthServerRotatingKeys,
 }
 
 // startTopologyForTags creates this scenario's temp dir and starts
@@ -185,7 +187,10 @@ func startClientRegistryService(ctx context.Context) (*support.RunningService, e
 // using this topology since none of them call those two endpoints.
 const loginUIServiceToken = "acceptance-test-login-ui-service-token"
 
-func startAuthServer(ctx context.Context, clientRegistryURL string) (*support.RunningService, error) {
+// startAuthServer starts auth-server. extraEnv is appended after the base
+// env, so a caller wiring a rotation keyset (see startAuthServerRotatingKeys)
+// can override the default ephemeral-key behavior.
+func startAuthServer(ctx context.Context, clientRegistryURL string, extraEnv ...string) (*support.RunningService, error) {
 	port, err := support.FreePort()
 	if err != nil {
 		return nil, err
@@ -194,10 +199,57 @@ func startAuthServer(ctx context.Context, clientRegistryURL string) (*support.Ru
 	if err != nil {
 		return nil, err
 	}
-	return support.StartService(ctx, "auth-server", bin, port, []string{
+	env := append([]string{
 		"AUTH_SERVER_PORT=" + strconv.Itoa(port),
 		"AUTH_CLIENT_REGISTRY_URL=" + clientRegistryURL,
 		"AUTH_LOGIN_UI_URL=http://127.0.0.1:1",
 		"AUTH_LOGIN_UI_SERVICE_TOKEN=" + loginUIServiceToken,
-	})
+	}, extraEnv...)
+	return support.StartService(ctx, "auth-server", bin, port, env)
+}
+
+// startAuthServerOnly starts a standalone auth-server with no
+// client-registry-service — for scenarios that only exercise the JWKS
+// endpoint or introspection with a pre-obtained token, where client
+// registration isn't part of what's being tested. AUTH_CLIENT_REGISTRY_URL
+// is left empty, which falls back to auth-server's in-memory client
+// adapter (see CLAUDE.md's "Fallback behavior").
+func startAuthServerOnly(ctx context.Context, world *support.World) error {
+	authServer, err := startAuthServer(ctx, "")
+	if err != nil {
+		return err
+	}
+	world.Services["auth-server"] = authServer
+	return nil
+}
+
+// startAuthServerRotatingKeys starts a standalone auth-server configured
+// with all three ADR-0008 key slots (current, retiring, next), each a
+// freshly generated 2048-bit RSA keypair — fresh per scenario since these
+// run as isolated subprocesses, not shared state, so there's no need to
+// treat them as a fixture requiring support.RandomID-style uniqueness.
+func startAuthServerRotatingKeys(ctx context.Context, world *support.World) error {
+	current, err := support.GenerateRSAKeyPEM()
+	if err != nil {
+		return fmt.Errorf("generating current signing key: %w", err)
+	}
+	previous, err := support.GenerateRSAKeyPEM()
+	if err != nil {
+		return fmt.Errorf("generating previous signing key: %w", err)
+	}
+	next, err := support.GenerateRSAKeyPEM()
+	if err != nil {
+		return fmt.Errorf("generating next signing key: %w", err)
+	}
+
+	authServer, err := startAuthServer(ctx, "",
+		"AUTH_JWT_RSA_PRIVATE_KEY_PEM="+current,
+		"AUTH_JWT_RSA_PRIVATE_KEY_PEM_PREVIOUS="+previous,
+		"AUTH_JWT_RSA_PRIVATE_KEY_PEM_NEXT="+next,
+	)
+	if err != nil {
+		return err
+	}
+	world.Services["auth-server"] = authServer
+	return nil
 }
