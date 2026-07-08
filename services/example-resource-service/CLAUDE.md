@@ -41,6 +41,7 @@ After authentication middleware runs, the following are available in `r.Context(
 | `contextKeyClientID` | `client_id` claim |
 | `contextKeyPermissions` | `[]string` of permissions (nil when absent — pre-RBAC tokens) |
 | `contextKeyAcr` | Authentication-context-class-reference value (RFC 9470, ADR-0024 in auth-server), `""` when the introspector has none to offer |
+| `contextKeyCNFJKT` | RFC 9449 DPoP confirmation thumbprint (RFC 9449, ADR-0025 in auth-server), `""` when the token is not DPoP-bound or the introspector has no `cnf.jkt` to offer |
 
 Handlers must handle the case where `contextKeyPermissions` is nil — not all tokens carry RBAC claims.
 
@@ -51,6 +52,12 @@ Handlers must handle the case where `contextKeyPermissions` is nil — not all t
 `RequireACRMiddleware(requiredACR string)` gates a route on `contextKeyAcr` equaling `requiredACR`, demonstrated on `GET /resources/sensitive` (`RequireACRMiddleware("pwd")` layered under `RequireScopeMiddleware("read")`). Unlike `RequireScopeMiddleware`, both "absent from context" and "present but mismatched" collapse into the same `401 insufficient_user_authentication` challenge — RFC 9470 doesn't distinguish those two cases the way scope's authorization concept distinguishes 401 from 403.
 
 **This mechanism has no live data source in the standard deployment today.** `IntrospectionAuthMiddleware` copies `result.Acr` into context unconditionally, but the documented default introspector — `token-introspection-service` — validates JWTs entirely locally and never calls auth-server, so it has no `acr` to offer regardless of configuration. `RequireACRMiddleware` is real, unit-tested code (`middleware_test.go`) that would light up automatically if a future `ports.TokenIntrospector` implementation sourced `Acr` (e.g., one that calls auth-server's own `/oauth/introspect` for this field). See auth-server's ADR-0024 for the full reasoning.
+
+## Proof-of-Possession (RFC 9449, ADR-0025)
+
+`RequireDPoPMiddleware` (in `dpop.go`) enforces DPoP whenever the token itself is bound — unlike `RequireScopeMiddleware`/`RequireACRMiddleware`, it takes no "requiredness" parameter; it reads `contextKeyCNFJKT` and is a no-op when empty (ordinary bearer token), or requires and validates a matching `DPoP` request header when non-empty. Demonstrated on `GET /resources/dpop-protected`.
+
+**This mechanism has no live data source in the standard deployment today**, for the same reason `RequireACRMiddleware` doesn't (see ADR-0024): `token-introspection-service`, the documented default introspector, validates JWTs entirely locally and never calls auth-server, so it has no `cnf.jkt` to offer regardless of configuration. `RequireDPoPMiddleware` is real, unit-tested code that would light up automatically if a future `ports.TokenIntrospector` implementation sourced `CNFJKT`. Deliberately does **not** implement a `jti` replay cache at this layer — see the ADR's stated scope cut.
 
 ---
 

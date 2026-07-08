@@ -4,6 +4,10 @@ package http_test
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,12 +20,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/jedi-knights/go-platform/apperrors"
 	"github.com/jedi-knights/go-platform/audit"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 
 	authhttp "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/inbound/http"
+	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/memory"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/application"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/ports"
@@ -87,7 +94,8 @@ var _ ports.ClientAuthenticator = (*fakeClientAuth)(nil)
 func newTestHandler(t *testing.T, issuer *fakeIssuer, introspector *fakeIntrospector, revoker *fakeRevoker) *authhttp.Handler {
 	t.Helper()
 	logger := logging.New(logging.Config{Output: io.Discard})
-	return authhttp.NewHandler(issuer, introspector, revoker, &fakeClientAuth{}, logger, "", nil)
+	return authhttp.NewHandler(issuer, introspector, revoker, &fakeClientAuth{}, logger, "", nil,
+		application.NewDPoPValidator(memory.NewDPoPProofRepository()))
 }
 
 // postForm posts the given form values to the handler and returns the recorded response.
@@ -151,6 +159,127 @@ func TestToken_MissingRequiredField_Returns400(t *testing.T) {
 				t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 			}
 		})
+	}
+}
+
+// --- RFC 9449 DPoP (ADR-0025) ---
+
+// buildValidDPoPProof signs a fresh ES256 DPoP proof for htm/htu, matching
+// exactly what a real DPoP client would send at the token endpoint.
+func buildValidDPoPProof(t *testing.T, htm, htu string) string {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating EC key: %v", err)
+	}
+	point, err := priv.PublicKey.Bytes()
+	if err != nil {
+		t.Fatalf("encoding EC public key: %v", err)
+	}
+	coordSize := (len(point) - 1) / 2
+	enc := base64.RawURLEncoding.EncodeToString
+	claims := jwt.MapClaims{
+		"htm": htm,
+		"htu": htu,
+		"iat": time.Now().Unix(),
+		"jti": "jti-" + t.Name(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+	token.Header["typ"] = "dpop+jwt"
+	token.Header["jwk"] = map[string]any{
+		"kty": "EC",
+		"crv": "P-256",
+		"x":   enc(point[1 : 1+coordSize]),
+		"y":   enc(point[1+coordSize:]),
+	}
+	signed, err := token.SignedString(priv)
+	if err != nil {
+		t.Fatalf("signing proof: %v", err)
+	}
+	return signed
+}
+
+// postFormWithHeaders is postForm plus arbitrary extra request headers —
+// needed for the DPoP header, which postForm has no parameter for.
+func postFormWithHeaders(t *testing.T, handler http.HandlerFunc, values url.Values, headers map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(values.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for k, v := range headers {
+		r.Header.Set(k, v)
+	}
+	w := httptest.NewRecorder()
+	handler(w, r)
+	return w
+}
+
+func TestToken_ValidDPoPHeader_SetsGrantRequestDPoPJKTAndReturnsDPoPTokenType(t *testing.T) {
+	// Arrange — httptest.NewRequest's default Host is "example.com" and the
+	// target path is "/", so the htu a real client would present is exactly
+	// "http://example.com/" — requestURL(r) must reconstruct the same value
+	// from the live request, not from any configured base URL.
+	proof := buildValidDPoPProof(t, http.MethodPost, "http://example.com/")
+	issuer := &fakeIssuer{resp: &domain.GrantResponse{AccessToken: "tok.abc", TokenType: "DPoP", ExpiresIn: 3600}}
+	h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
+	w := postFormWithHeaders(t, h.Token, url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {"c1"},
+		"client_secret": {"s1"},
+	}, map[string]string{"DPoP": proof})
+
+	// Assert
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if issuer.lastReq.DPoPJKT == "" {
+		t.Error("expected a non-empty DPoPJKT on the issued GrantRequest")
+	}
+}
+
+func TestToken_InvalidDPoPHeader_Returns400WithInvalidDPoPProofError(t *testing.T) {
+	// Arrange — htu deliberately wrong, so DPoPValidator rejects it.
+	proof := buildValidDPoPProof(t, http.MethodPost, "http://wrong-host.example.com/")
+	issuer := &fakeIssuer{resp: &domain.GrantResponse{AccessToken: "tok.abc", TokenType: "Bearer", ExpiresIn: 3600}}
+	h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
+	w := postFormWithHeaders(t, h.Token, url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {"c1"},
+		"client_secret": {"s1"},
+	}, map[string]string{"DPoP": proof})
+
+	// Assert
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	body := decodeOAuthError(t, w)
+	if body["error"] != "invalid_dpop_proof" {
+		t.Errorf(`error = %q, want "invalid_dpop_proof"`, body["error"])
+	}
+}
+
+func TestToken_NoDPoPHeader_IssuesOrdinaryRequest(t *testing.T) {
+	// Arrange — no DPoP header at all; must behave exactly as before this
+	// feature existed.
+	issuer := &fakeIssuer{resp: &domain.GrantResponse{AccessToken: "tok.abc", TokenType: "Bearer", ExpiresIn: 3600}}
+	h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
+	w := postForm(t, h.Token, url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {"c1"},
+		"client_secret": {"s1"},
+	})
+
+	// Assert
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if issuer.lastReq.DPoPJKT != "" {
+		t.Errorf("expected empty DPoPJKT with no DPoP header, got %q", issuer.lastReq.DPoPJKT)
 	}
 }
 
@@ -824,6 +953,7 @@ func newAuthorizeTestHandler(t *testing.T, lookup *fakeClientLookup, repo *fakeC
 			ChallengeTTL:  5 * time.Minute,
 			Issuer:        "https://auth.example.com",
 		},
+		application.NewDPoPValidator(memory.NewDPoPProofRepository()),
 	)
 }
 
@@ -1259,6 +1389,7 @@ func newIssueCodeHandler(t *testing.T, repo *fakeChallengeReader, issuer *fakeAu
 			IssueCodeBearer: "service-token-secret",
 			Issuer:          "https://auth.example.com",
 		},
+		application.NewDPoPValidator(memory.NewDPoPProofRepository()),
 	)
 }
 
@@ -1509,6 +1640,7 @@ func newPARTestHandler(t *testing.T, clientAuth *fakeClientAuth, parRepo *fakePA
 			PARRepo:      parRepo,
 			PARTTL:       90 * time.Second,
 		},
+		application.NewDPoPValidator(memory.NewDPoPProofRepository()),
 	)
 }
 
@@ -1665,6 +1797,7 @@ func TestAuthorize_WithRequestURI_HappyPath_RedirectsToLoginUIWithChallenge(t *t
 			PARRepo:       parRepo,
 			PARTTL:        90 * time.Second,
 		},
+		application.NewDPoPValidator(memory.NewDPoPProofRepository()),
 	)
 	r := httptest.NewRequest(http.MethodGet,
 		"/oauth/authorize?request_uri=urn:ietf:params:oauth:request_uri:abc&client_id=client-a", nil)
@@ -1747,7 +1880,8 @@ func TestAuthorize_WithRequestURI_MissingClientID_Returns400(t *testing.T) {
 func newTestHandlerWithSecret(t *testing.T, issuer *fakeIssuer, introspector *fakeIntrospector, revoker *fakeRevoker, secret string) *authhttp.Handler {
 	t.Helper()
 	logger := logging.New(logging.Config{Output: io.Discard})
-	return authhttp.NewHandler(issuer, introspector, revoker, &fakeClientAuth{}, logger, secret, nil)
+	return authhttp.NewHandler(issuer, introspector, revoker, &fakeClientAuth{}, logger, secret, nil,
+		application.NewDPoPValidator(memory.NewDPoPProofRepository()))
 }
 
 func TestIntrospect_WithSecret_CorrectSecret_Returns200(t *testing.T) {

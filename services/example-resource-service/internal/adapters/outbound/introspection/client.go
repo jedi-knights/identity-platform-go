@@ -26,6 +26,20 @@ type introspectResponse struct {
 	Roles       []string `json:"roles"`
 	Permissions []string `json:"permissions"`
 	Acr         string   `json:"acr"`
+
+	// CNF is the RFC 9449 §6.1 / RFC 7800 confirmation claim, nested per
+	// {"cnf":{"jkt":"..."}} rather than a flat field. Nil for ordinary
+	// bearer tokens.
+	CNF *confirmation `json:"cnf"`
+}
+
+// confirmation mirrors auth-server's domain.Confirmation (ADR-0025 in
+// identity-platform-go's auth-server) — kept as this service's own small
+// struct rather than a shared import, matching how introspectResponse
+// itself is a scoped mirror of the RFC 7662 response rather than a shared
+// type across services.
+type confirmation struct {
+	JKT string `json:"jkt"`
 }
 
 // Client implements ports.TokenIntrospector by calling token-introspection-service.
@@ -87,7 +101,14 @@ func (c *Client) Introspect(ctx context.Context, raw string) (_ *ports.Introspec
 		return nil, apperrors.Wrap(apperrors.ErrCodeInternal, "decoding introspect response", err)
 	}
 
-	return &ports.IntrospectionResult{
+	return ir.toResult(), nil
+}
+
+// toResult converts the wire DTO to the port's result type. Extracted so
+// Introspect's own branching (transport error, non-200 status, decode
+// error) stays within the cyclomatic complexity budget.
+func (ir introspectResponse) toResult() *ports.IntrospectionResult {
+	result := &ports.IntrospectionResult{
 		Active:      ir.Active,
 		Subject:     ir.Subject,
 		ClientID:    ir.ClientID,
@@ -96,5 +117,9 @@ func (c *Client) Introspect(ctx context.Context, raw string) (_ *ports.Introspec
 		Roles:       ir.Roles,
 		Permissions: ir.Permissions,
 		Acr:         ir.Acr,
-	}, nil
+	}
+	if ir.CNF != nil {
+		result.CNFJKT = ir.CNF.JKT
+	}
+	return result
 }

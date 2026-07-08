@@ -188,6 +188,7 @@ func (b *MetadataBuilder) base() *domain.AuthorizationServerMetadata {
 		CodeChallengeMethodsSupported:             []string{"S256"},
 		UILocalesSupported:                        []string{"en"},
 		AuthorizationDetailsTypesSupported:        append([]string(nil), domain.SupportedAuthorizationDetailTypes...),
+		DPoPSigningAlgValuesSupported:             append([]string(nil), domain.SupportedDPoPSigningAlgs...),
 	}
 	if b.hasJWKS {
 		md.JWKSURI = b.publicBaseURL + "/.well-known/jwks.json"
