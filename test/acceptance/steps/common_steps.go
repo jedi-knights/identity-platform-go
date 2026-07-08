@@ -65,6 +65,10 @@ func registerCommonSteps(sctx *godog.ScenarioContext, world func() *support.Worl
 		return stepAssertBodyContains(world(), want)
 	})
 
+	sctx.Step(`^the redirect Location's "([^"]*)" query parameter is "([^"]*)"$`, func(param, want string) error {
+		return stepAssertRedirectQueryParam(world(), param, want)
+	})
+
 	sctx.Step(`^the "([^"]*)" JWT's "([^"]*)" claim equals the captured "([^"]*)"$`,
 		func(jwtVar, claimPath, capturedVar string) error {
 			return stepAssertJWTClaimEqualsCaptured(world(), jwtVar, claimPath, capturedVar)
@@ -168,6 +172,27 @@ func stepAssertHeader(world *support.World, header, want string) error {
 	got := world.LastResponse.Header.Get(header)
 	if got != want {
 		return fmt.Errorf("header %q: want %q, got %q", header, want, got)
+	}
+	return nil
+}
+
+// stepAssertRedirectQueryParam checks one query parameter on the last
+// response's Location header, without following the redirect — the
+// generic form of the same check rich_authorization_requests_steps.go's
+// stepAssertRedirectError hardcodes to the "error" parameter alone (e.g.
+// RFC 9207's "iss").
+func stepAssertRedirectQueryParam(world *support.World, param, want string) error {
+	location := world.LastResponse.Header.Get("Location")
+	if location == "" {
+		return fmt.Errorf("no Location header on last response (status %d) — body: %s", world.LastResponse.StatusCode, world.LastBody)
+	}
+	parsed, err := url.Parse(location)
+	if err != nil {
+		return fmt.Errorf("parsing Location header %q: %w", location, err)
+	}
+	got := parsed.Query().Get(param)
+	if got != want {
+		return fmt.Errorf("redirect query %q: want %q, got %q — Location: %s", param, want, got, location)
 	}
 	return nil
 }

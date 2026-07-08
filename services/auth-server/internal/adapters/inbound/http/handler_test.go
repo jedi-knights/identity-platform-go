@@ -814,6 +814,7 @@ func newAuthorizeTestHandler(t *testing.T, lookup *fakeClientLookup, repo *fakeC
 			ChallengeRepo: repo,
 			LoginUIURL:    "https://login.example.com",
 			ChallengeTTL:  5 * time.Minute,
+			Issuer:        "https://auth.example.com",
 		},
 	)
 }
@@ -981,6 +982,32 @@ func TestAuthorize_UnsupportedResponseType_RedirectsToClientWithError(t *testing
 	}
 	if repo.lastSaved != nil {
 		t.Error("Save was invoked despite invalid response_type")
+	}
+}
+
+func TestAuthorize_ErrorRedirect_IncludesIssuer(t *testing.T) {
+	// Arrange — RFC 9207 §2: every authorization response, including the
+	// early-error redirect this handler issues directly (as opposed to the
+	// success path, which login-ui issues after the challenge handoff),
+	// must carry `iss` so a client talking to more than one AS can detect
+	// a mix-up attack.
+	repo := &fakeChallengeRepo{}
+	q := validAuthorizeQuery()
+	q.Set("response_type", "token")
+	h := newAuthorizeTestHandler(t, newAuthorizeClient(), repo)
+	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil)
+	w := httptest.NewRecorder()
+
+	// Act
+	h.Authorize(w, r)
+
+	// Assert
+	u, err := url.Parse(w.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse Location: %v", err)
+	}
+	if got := u.Query().Get("iss"); got != "https://auth.example.com" {
+		t.Errorf("iss = %q, want https://auth.example.com", got)
 	}
 }
 
@@ -1197,6 +1224,7 @@ func newIssueCodeHandler(t *testing.T, repo *fakeChallengeReader, issuer *fakeAu
 			ChallengeTTL:    5 * time.Minute,
 			AuthCodeIssuer:  issuer,
 			IssueCodeBearer: "service-token-secret",
+			Issuer:          "https://auth.example.com",
 		},
 	)
 }
@@ -1251,6 +1279,10 @@ func TestIssueCode_HappyPath_Returns200WithCode(t *testing.T) {
 	}
 	if issuer.lastReq.CodeChallengeMethod != "S256" {
 		t.Errorf("CodeChallengeMethod = %q, want S256", issuer.lastReq.CodeChallengeMethod)
+	}
+	if resp["iss"] != "https://auth.example.com" {
+		t.Errorf("iss = %q, want https://auth.example.com — RFC 9207 §2 requires it on every authorization response,"+
+			" and login-ui's success redirect is built from this field", resp["iss"])
 	}
 }
 

@@ -36,6 +36,11 @@ type IssueCodeResponse struct {
 	Code        string
 	RedirectURI string
 	State       string
+	// Issuer becomes the `iss` query parameter on the redirect back to the
+	// relying party (RFC 9207 §2), so a client talking to more than one
+	// authorization server can detect a mix-up attack. Empty when
+	// auth-server's AuthorizeConfig.Issuer is unset.
+	Issuer string
 }
 
 // AuthCodeIssuer is the outbound port behind auth-server's
