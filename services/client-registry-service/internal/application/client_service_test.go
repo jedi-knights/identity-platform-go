@@ -309,6 +309,59 @@ func TestClientService_ValidateClient_EmptySecret(t *testing.T) {
 	}
 }
 
+// TestClientService_ValidateClient_PublicClientEmptySecret verifies the
+// documented invariant (ADR-0009 / auth-server's CLAUDE.md: "public
+// clients (no secret, PKCE-only) ... work") — a public client has no
+// stored secret, so it must validate successfully with an empty
+// client_secret. Before this fix, ValidateClient short-circuited to
+// Valid=false for ANY empty secret regardless of client type, which
+// made public clients unable to authenticate through this path at all.
+func TestClientService_ValidateClient_PublicClientEmptySecret(t *testing.T) {
+	repo := newFakeClientRepo()
+	repo.clients["public-client"] = &domain.OAuthClient{
+		ID:     "public-client",
+		Type:   domain.ClientTypePublic,
+		Active: true,
+	}
+
+	svc := newSvc(t, repo)
+	resp, err := svc.ValidateClient(context.Background(), domain.ValidateClientRequest{
+		ClientID:     "public-client",
+		ClientSecret: "",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !resp.Valid {
+		t.Error("expected Valid=true for a public client presenting an empty secret")
+	}
+}
+
+// TestClientService_ValidateClient_PublicClientInactive verifies the
+// Active-flag invariant still applies to public clients.
+func TestClientService_ValidateClient_PublicClientInactive(t *testing.T) {
+	repo := newFakeClientRepo()
+	repo.clients["public-client"] = &domain.OAuthClient{
+		ID:     "public-client",
+		Type:   domain.ClientTypePublic,
+		Active: false,
+	}
+
+	svc := newSvc(t, repo)
+	resp, err := svc.ValidateClient(context.Background(), domain.ValidateClientRequest{
+		ClientID:     "public-client",
+		ClientSecret: "",
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Valid {
+		t.Error("expected Valid=false for an inactive public client")
+	}
+}
+
 func TestClientService_ListClients(t *testing.T) {
 	repo := newFakeClientRepo()
 	repo.clients["c1"] = &domain.OAuthClient{ID: "c1", Name: "Client 1", Active: true}
