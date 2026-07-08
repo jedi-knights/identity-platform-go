@@ -11,12 +11,14 @@ import (
 	"context"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/cucumber/godog"
 
 	"github.com/ocrosby/identity-platform-go/test/acceptance/steps"
 	"github.com/ocrosby/identity-platform-go/test/acceptance/support"
+	_ "github.com/ocrosby/identity-platform-go/test/acceptance/support/allure"
 )
 
 // sharedRedis is the one Redis container the whole suite run shares — see
@@ -47,8 +49,8 @@ func TestFeatures(t *testing.T) {
 			steps.InitializeScenario(sctx, func() string { return sharedRedis.URL })
 		},
 		Options: &godog.Options{
-			Format:      "pretty",
-			Paths:       []string{"features"},
+			Format:      format(),
+			Paths:       paths(),
 			TestingT:    t,
 			Concurrency: concurrency(),
 		},
@@ -57,6 +59,32 @@ func TestFeatures(t *testing.T) {
 	if suite.Run() != 0 {
 		os.Exit(1)
 	}
+}
+
+// format reads ACCEPTANCE_FORMAT (defaulting to "pretty", godog's
+// human-readable console output) so `task test:acceptance:report` can
+// request "allure" — see support/allure's package doc comment — without
+// changing the default developer loop's output.
+func format() string {
+	if v := os.Getenv("ACCEPTANCE_FORMAT"); v != "" {
+		return v
+	}
+	return "pretty"
+}
+
+// paths reads ACCEPTANCE_PATHS (comma-separated, defaulting to the whole
+// features directory) so a single feature file can be run during
+// development, e.g. ACCEPTANCE_PATHS=features/token_revocation.feature —
+// this suite has no domain tags to filter by (see any feature file's
+// header comment: scenarios tag their own @topology, not a shared
+// feature-level tag), so path filtering is the mechanism that actually
+// works here.
+func paths() []string {
+	v := os.Getenv("ACCEPTANCE_PATHS")
+	if v == "" {
+		return []string{"features"}
+	}
+	return strings.Split(v, ",")
 }
 
 // concurrency reads ACCEPTANCE_CONCURRENCY (defaulting to 1) so `task
