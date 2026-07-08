@@ -41,10 +41,11 @@ var plansTemplate = template.Must(template.ParseFS(templateFS, "templates/plans.
 // handler uses a no-op emitter so tests and callers that pre-date the
 // audit feature keep working.
 type Handler struct {
-	userAuth   ports.UserAuthenticator
-	codeIssuer ports.AuthCodeIssuer
-	billing    ports.BillingClient
-	logger     logging.Logger
+	userAuth      ports.UserAuthenticator
+	codeIssuer    ports.AuthCodeIssuer
+	billing       ports.BillingClient
+	deviceDecider ports.DeviceDecider
+	logger        logging.Logger
 
 	auditEmitter audit.Emitter
 	auditService string

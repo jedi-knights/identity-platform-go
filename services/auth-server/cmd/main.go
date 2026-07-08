@@ -129,7 +129,10 @@ func buildRouter(ctx context.Context, ctr *platform.Container, logger logging.Lo
 	// MetadataHandler is nil-resolved when AUTH_METADATA_PUBLIC_BASE_URL
 	// is unset (ADR-0012).
 	metadata := platform.MustResolve[*inboundhttp.MetadataHandler](ctx, ctr)
-	mux := inboundhttp.NewRouter(handler, jwks, userInfo, metadata, logger)
+	// DeviceAuthorizationHandler is nil-resolved when AUTH_LOGIN_UI_URL is
+	// unset (ADR-0022).
+	deviceAuth := platform.MustResolve[*inboundhttp.DeviceAuthorizationHandler](ctx, ctr)
+	mux := inboundhttp.NewRouter(handler, jwks, userInfo, metadata, deviceAuth, logger)
 	// otelhttp wraps the router so every inbound request becomes a
 	// server span; traceparent headers from the client are honoured by
 	// the W3C TraceContext propagator that go-platform/otel registers.
