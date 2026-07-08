@@ -50,6 +50,24 @@ tasks:
     cmds:
       - cd test/acceptance && go test -tags acceptance ./... -count=1
 
+  test:acceptance:allure:
+    desc: Run the acceptance suite producing Allure JSON results in test/acceptance/allure-results
+    cmds:
+      - rm -rf test/acceptance/allure-results
+      - cd test/acceptance && ACCEPTANCE_FORMAT=allure go test -tags acceptance ./... -count=1
+
+  test:acceptance:report:
+    desc: Generate and open the Allure compliance report from the acceptance suite (requires the allure CLI)
+    deps: [test:acceptance:allure]
+    cmds:
+      - allure generate test/acceptance/allure-results -o test/acceptance/allure-report --clean
+      - allure open test/acceptance/allure-report
+
+  test:acceptance:all:
+    desc: Run the acceptance suite and open the Allure compliance report (single command)
+    cmds:
+      - task: test:acceptance:report
+
   test:smoke:
     desc: Run @smoke scenarios against the real docker-compose stack (builds images, tears down after)
     cmds:
