@@ -26,6 +26,7 @@ var topologyStarters = map[string]func(context.Context, *support.World) error{
 	"@topology:auth-client-registry-identity-oidc": startAuthClientRegistryIdentityOIDC,
 	"@topology:auth-metadata":                      startAuthMetadataOnly,
 	"@topology:auth-metadata-full":                 startAuthMetadataFull,
+	"@topology:client-registry-dcr":                startClientRegistryDCR,
 }
 
 // startTopologyForTags creates this scenario's temp dir and starts
@@ -178,6 +179,34 @@ func startClientRegistryService(ctx context.Context) (*support.RunningService, e
 	return support.StartService(ctx, "client-registry-service", bin, port, []string{
 		"CLIENT_SERVER_PORT=" + strconv.Itoa(port),
 	})
+}
+
+// startClientRegistryDCR starts a standalone client-registry-service with
+// CLIENT_REGISTRATION_BASE_URL set to its own freshly-allocated address —
+// required for the RFC 7591 /register and RFC 7592 /register/{client_id}
+// routes to be registered at all (see registrationServiceProvider's nil
+// return when unset). The registration_client_uri each /register response
+// carries is built from this same base URL, so it must be self-referential
+// like the metadata topology's AUTH_METADATA_PUBLIC_BASE_URL.
+func startClientRegistryDCR(ctx context.Context, world *support.World) error {
+	port, err := support.FreePort()
+	if err != nil {
+		return err
+	}
+	bin, err := support.BuildBinary("client-registry-service")
+	if err != nil {
+		return err
+	}
+	baseURL := "http://127.0.0.1:" + strconv.Itoa(port)
+	clientRegistry, err := support.StartService(ctx, "client-registry-service", bin, port, []string{
+		"CLIENT_SERVER_PORT=" + strconv.Itoa(port),
+		"CLIENT_REGISTRATION_BASE_URL=" + baseURL,
+	})
+	if err != nil {
+		return err
+	}
+	world.Services["client-registry-service"] = clientRegistry
+	return nil
 }
 
 // loginUIServiceToken is the pre-shared bearer secret authorization_code_

@@ -56,4 +56,5 @@ func InitializeScenario(sctx *godog.ScenarioContext, redisURL func() string) {
 	registerAuthorizationCodeSteps(sctx, getWorld)
 	registerJWKSKeyRotationSteps(sctx, getWorld)
 	registerOIDCSteps(sctx, getWorld)
+	registerDynamicClientRegistrationSteps(sctx, getWorld)
 }
