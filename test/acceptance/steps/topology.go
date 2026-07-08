@@ -29,6 +29,7 @@ var topologyStarters = map[string]func(context.Context, *support.World) error{
 	"@topology:client-registry-dcr":                startClientRegistryDCR,
 	"@topology:auth-client-registry-short-ttl":     startAuthClientRegistryShortChallengeTTL,
 	"@topology:login-challenge-handoff-e2e":        startLoginChallengeHandoffE2E,
+	"@topology:auth-client-registry-saml-bearer":   startAuthClientRegistrySAMLBearer,
 }
 
 // startTopologyForTags creates this scenario's temp dir and starts
@@ -89,6 +90,47 @@ func startAuthAndClientRegistryServices(ctx context.Context, world *support.Worl
 	}
 	world.Services["auth-server"] = authServer
 	return authServer, nil
+}
+
+// startAuthClientRegistrySAMLBearer layers client-registry-service under
+// auth-server with AUTH_METADATA_PUBLIC_BASE_URL set self-referentially
+// (mirrors startAuthServerMetadata's pattern) — RFC 7522 (ADR-0026)
+// scenarios need this because the saml2-bearer grant's expected assertion
+// audience/recipient is this auth-server's own token endpoint URL, which
+// application.SAMLBearerStrategy resolves from that config value rather
+// than from any per-request context. startAuthAndClientRegistryServices
+// deliberately does not set it — most scenarios using that topology assert
+// metadata endpoints are absent/disabled, so this is its own topology
+// rather than a change to the shared one.
+func startAuthClientRegistrySAMLBearer(ctx context.Context, world *support.World) error {
+	clientRegistry, err := startClientRegistryService(ctx)
+	if err != nil {
+		return err
+	}
+	world.Services["client-registry-service"] = clientRegistry
+
+	port, err := support.FreePort()
+	if err != nil {
+		return err
+	}
+	bin, err := support.BuildBinary("auth-server")
+	if err != nil {
+		return err
+	}
+	baseURL := "http://127.0.0.1:" + strconv.Itoa(port)
+	env := []string{
+		"AUTH_SERVER_PORT=" + strconv.Itoa(port),
+		"AUTH_CLIENT_REGISTRY_URL=" + clientRegistry.BaseURL,
+		"AUTH_LOGIN_UI_URL=http://127.0.0.1:1",
+		"AUTH_LOGIN_UI_SERVICE_TOKEN=" + loginUIServiceToken,
+		"AUTH_METADATA_PUBLIC_BASE_URL=" + baseURL,
+	}
+	authServer, err := support.StartService(ctx, "auth-server", bin, port, env)
+	if err != nil {
+		return err
+	}
+	world.Services["auth-server"] = authServer
+	return nil
 }
 
 // startAuthClientRegistryIntrospection layers token-introspection-service

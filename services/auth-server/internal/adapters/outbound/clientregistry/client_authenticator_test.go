@@ -79,6 +79,44 @@ func TestClientAuthenticator_Lookup_CopiesJWKSURI(t *testing.T) {
 	}
 }
 
+// TestClientAuthenticator_Authenticate_PropagatesTrustedIssuerCert covers
+// RFC 7522 (ADR-0026): the client's registered SAML trusted-issuer
+// certificate must reach domain.Client so SAMLBearerStrategy can validate
+// assertion signatures against it.
+func TestClientAuthenticator_Authenticate_PropagatesTrustedIssuerCert(t *testing.T) {
+	const certPEM = "-----BEGIN CERTIFICATE-----\ntest-cert-value\n-----END CERTIFICATE-----"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/clients/validate":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]bool{"valid": true})
+		case "/clients/saml-client":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"client_id":           "saml-client",
+				"name":                "SAML Client",
+				"scopes":              []string{"read"},
+				"redirect_uris":       []string{},
+				"grant_types":         []string{"urn:ietf:params:oauth:grant-type:saml2-bearer"},
+				"active":              true,
+				"trusted_issuer_cert": certPEM,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	auth := clientregistry.NewClientAuthenticator(srv.URL, srv.Client())
+	client, err := auth.Authenticate(context.Background(), "saml-client", "my-secret")
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if client.TrustedIssuerCert != certPEM {
+		t.Errorf("TrustedIssuerCert: got %q, want %q", client.TrustedIssuerCert, certPEM)
+	}
+}
+
 func TestClientAuthenticator_Authenticate_InvalidCredentials(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
