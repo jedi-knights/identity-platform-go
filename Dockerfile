@@ -20,7 +20,14 @@ COPY services/ services/
 COPY test/acceptance/ test/acceptance/
 
 ARG SERVICE_NAME
-RUN go build -o /app/service ./services/${SERVICE_NAME}/cmd
+
+# Cache mounts persist the module download cache and build cache across
+# `docker compose build` invocations, so a proxy.golang.org blip on one
+# service's cold build doesn't force every other service to re-download
+# the same shared dependencies (go-platform, go-logging, etc.) on retry.
+RUN --mount=type=cache,target=/root/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -o /app/service ./services/${SERVICE_NAME}/cmd
 
 # =============================================================================
 # Runtime stage
