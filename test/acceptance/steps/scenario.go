@@ -58,4 +58,5 @@ func InitializeScenario(sctx *godog.ScenarioContext, redisURL func() string) {
 	registerOIDCSteps(sctx, getWorld)
 	registerDynamicClientRegistrationSteps(sctx, getWorld)
 	registerTokenExchangeSteps(sctx, getWorld)
+	registerRichAuthorizationRequestsSteps(sctx, getWorld)
 }
