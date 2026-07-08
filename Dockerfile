@@ -4,8 +4,9 @@
 # Builder stage
 #
 # The whole workspace is copied because go.work uses local `use` directives for
-# every module under services/. Without all modules present, the workspace cannot
-# resolve inter-module dependencies at build time.
+# every module listed in it — currently every module under services/ plus
+# test/acceptance. Without all of them present, the workspace cannot resolve
+# inter-module dependencies at build time.
 #
 # Layer order is intentional: workspace definition → services. A change to one
 # service invalidates the service build layer but not the workspace layer.
@@ -16,9 +17,17 @@ WORKDIR /workspace
 
 COPY go.work go.work.sum ./
 COPY services/ services/
+COPY test/acceptance/ test/acceptance/
 
 ARG SERVICE_NAME
-RUN go build -o /app/service ./services/${SERVICE_NAME}/cmd
+
+# Cache mounts persist the module download cache and build cache across
+# `docker compose build` invocations, so a proxy.golang.org blip on one
+# service's cold build doesn't force every other service to re-download
+# the same shared dependencies (go-platform, go-logging, etc.) on retry.
+RUN --mount=type=cache,target=/root/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -o /app/service ./services/${SERVICE_NAME}/cmd
 
 # =============================================================================
 # Runtime stage
