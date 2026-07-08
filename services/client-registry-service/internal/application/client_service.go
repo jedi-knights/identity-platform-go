@@ -124,6 +124,7 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 		Scopes:       req.Scopes,
 		RedirectURIs: req.RedirectURIs,
 		GrantTypes:   req.GrantTypes,
+		JWKSURI:      req.JWKSURI,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 		Active:       true,
@@ -149,6 +150,7 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 		Scopes:       client.Scopes,
 		RedirectURIs: client.RedirectURIs,
 		GrantTypes:   client.GrantTypes,
+		JWKSURI:      client.JWKSURI,
 	}, nil
 }
 
@@ -222,6 +224,7 @@ func (s *ClientService) GetClient(ctx context.Context, id string) (*domain.GetCl
 		RedirectURIs: client.RedirectURIs,
 		GrantTypes:   client.GrantTypes,
 		Active:       client.Active,
+		JWKSURI:      client.JWKSURI,
 	}, nil
 }
 
@@ -349,6 +352,7 @@ func (s *ClientService) ListClients(ctx context.Context) ([]*domain.GetClientRes
 			RedirectURIs: c.RedirectURIs,
 			GrantTypes:   c.GrantTypes,
 			Active:       c.Active,
+			JWKSURI:      c.JWKSURI,
 		})
 	}
 	return result, nil

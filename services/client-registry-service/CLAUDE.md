@@ -41,6 +41,14 @@ The swap happens in `container.go`. Both implement `domain.ClientRepository`. Th
 
 ---
 
+## JWT-Bearer Client Authentication (ADR-0023)
+
+`OAuthClient.JWKSURI` (RFC 7591 §2 registration metadata) is optional on both `POST /clients` and `POST /register` (`jwks_uri` field). Set means the client can authenticate at auth-server's token endpoint with a signed JWT instead of `client_secret` (RFC 7523); empty means `client_secret` remains its only credential. `GetClient`/`ListClients` echo it back so auth-server's `clientregistry` adapter can resolve it via `Lookup`.
+
+Only `jwks_uri` (a URL) is supported — not an embedded `jwks` document. The RFC 7592 update endpoint does not currently change `jwks_uri` once set on a client; it is create-time only in this reference implementation.
+
+---
+
 ## Relationship to auth-server
 
 auth-server's `clientregistry` outbound adapter calls this service over HTTP. The auth-server `ClientAuthenticator` port abstracts this so the in-memory fallback (used when `AUTH_CLIENT_REGISTRY_URL` is unset) runs locally without the full stack.

@@ -247,3 +247,53 @@ func TestClientRepository_List(t *testing.T) {
 		t.Errorf("List: wanted %d saved clients in result, found %d", len(clients), found)
 	}
 }
+
+// TestClientRepository_SaveAndFindByID_PersistsJWKSURI covers the RFC 7591
+// §2 jwks_uri registration field (ADR-0023) added on top of the base
+// schema this adapter's other tests exercise.
+func TestClientRepository_SaveAndFindByID_PersistsJWKSURI(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	client := sampleClient("jwks-uri-1")
+	client.JWKSURI = "https://client.example.com/.well-known/jwks.json"
+	t.Cleanup(func() { _ = repo.Delete(ctx, client.ID) })
+
+	if err := repo.Save(ctx, client); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := repo.FindByID(ctx, client.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.JWKSURI != client.JWKSURI {
+		t.Errorf("JWKSURI: want %q, got %q", client.JWKSURI, got.JWKSURI)
+	}
+}
+
+func TestClientRepository_List_IncludesJWKSURI(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	client := sampleClient("jwks-uri-list-1")
+	client.JWKSURI = "https://client.example.com/.well-known/jwks.json"
+	t.Cleanup(func() { _ = repo.Delete(ctx, client.ID) })
+	if err := repo.Save(ctx, client); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	clients, err := repo.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var found bool
+	for _, c := range clients {
+		if c.ID == client.ID {
+			found = true
+			if c.JWKSURI != client.JWKSURI {
+				t.Errorf("JWKSURI: want %q, got %q", client.JWKSURI, c.JWKSURI)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("client %q not found in List result", client.ID)
+	}
+}

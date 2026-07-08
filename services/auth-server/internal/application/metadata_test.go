@@ -139,6 +139,16 @@ func TestMetadataBuilder_OAuthMetadata_AdvertisesPushedAuthorizationRequestEndpo
 	}
 }
 
+// TestMetadataBuilder_OAuthMetadata_AdvertisesPrivateKeyJWT covers RFC
+// 7523 §11's registered token_endpoint_auth_method value (ADR-0023).
+func TestMetadataBuilder_OAuthMetadata_AdvertisesPrivateKeyJWT(t *testing.T) {
+	b := newBuilder(t, nil)
+	md := b.OAuthMetadata()
+	if !slices.Contains(md.TokenEndpointAuthMethodsSupported, "private_key_jwt") {
+		t.Errorf("token_endpoint_auth_methods_supported = %v, must include private_key_jwt", md.TokenEndpointAuthMethodsSupported)
+	}
+}
+
 func TestMetadataBuilder_OAuthMetadata_OmitsOIDCFields(t *testing.T) {
 	b := newBuilder(t, func(c *application.MetadataBuilderConfig) {
 		c.OIDCIssuer = "https://oidc.example.com"

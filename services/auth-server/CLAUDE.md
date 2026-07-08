@@ -39,6 +39,18 @@ Both endpoints stay disabled until the matching env vars are set: `/oauth/author
 
 ---
 
+## ADR-0023 — JWT-Bearer Client Authentication (RFC 7521/7523)
+
+`client_credentials`, `refresh_token`, and `authorization_code` accept a `client_assertion` + `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer` form pair as an alternative to `client_secret`. `client_id` is still required and is cross-checked against the assertion's `iss`/`sub` claims after signature verification — it is never derived solely from the assertion (see the ADR's "Alternatives Considered").
+
+A client opts in by registering a `jwks_uri` with client-registry-service (`POST /clients` or `POST /register`, `jwks_uri` field). A client with no `jwks_uri` cannot use this path — `application.ClientAssertionValidator.Authenticate` rejects it before ever attempting to verify a signature.
+
+Verification is RS256-only (RFC 8725 §3.1 algorithm-confusion defence, same stance as ADR-0008) and enforces RFC 7523 §3's claim set: `iss`/`sub` == `client_id`, `aud` contains `AUTH_JWT_ISSUER`, `exp` present and unexpired, `jti` present and not previously seen (`domain.ClientAssertionReplayRepository`, memory or Redis via `AUTH_REDIS_URL` — same dispatch as every other repository in this service).
+
+`application.ClientAssertionValidator` is **not** an adapter — it lives in `internal/application` alongside the grant strategies, depending only on `ports.ClientLookup` and `ports.ClientJWKSFetcher`. This is deliberate: `jwtutil.ParseRS256` cannot be reused here because it hard-enforces the platform's own RFC 9068 `at+jwt` JOSE header, which a third-party client assertion never carries.
+
+---
+
 ## Adding a New Grant Type
 
 1. Add a constant to `internal/domain/grant.go`
@@ -65,6 +77,7 @@ Nothing else changes — `GrantStrategyRegistry.Handle` dispatches via `Supports
 | Client authentication | `ports.ClientAuthenticator` | `adapters/outbound/clientregistry` | `AUTH_CLIENT_REGISTRY_URL` | In-memory client repo |
 | User authentication | `ports.UserAuthenticator` | `adapters/outbound/identityservice` | `AUTH_IDENTITY_SERVICE_URL` | Nil (auth_code stub always errors) |
 | RBAC permissions | `ports.SubjectPermissionsFetcher` | `adapters/outbound/policy` | `AUTH_POLICY_URL` | Nil (tokens issued without roles/permissions) |
+| Client-assertion JWKS resolution | `ports.ClientJWKSFetcher` | `adapters/outbound/jwks` (ADR-0023) | — always wired | Per-client-URI cache; no env var — every client's `jwks_uri` is fetched on demand |
 
 When a URL env var is unset, `container.go` wires the fallback. This allows auth-server to run in isolation during development.
 
