@@ -27,6 +27,8 @@ var topologyStarters = map[string]func(context.Context, *support.World) error{
 	"@topology:auth-metadata":                      startAuthMetadataOnly,
 	"@topology:auth-metadata-full":                 startAuthMetadataFull,
 	"@topology:client-registry-dcr":                startClientRegistryDCR,
+	"@topology:auth-client-registry-short-ttl":     startAuthClientRegistryShortChallengeTTL,
+	"@topology:login-challenge-handoff-e2e":        startLoginChallengeHandoffE2E,
 }
 
 // startTopologyForTags creates this scenario's temp dir and starts
@@ -419,5 +421,113 @@ func startIdentityService(ctx context.Context) (*support.RunningService, error) 
 	}
 	return support.StartService(ctx, "identity-service", bin, port, []string{
 		"IDENTITY_SERVER_PORT=" + strconv.Itoa(port),
+	})
+}
+
+// startAuthClientRegistryShortChallengeTTL is startAuthAndClientRegistryServices
+// with a 1-second login-challenge TTL, so a scenario can observe real expiry
+// (ADR-0011) by sleeping just past it rather than waiting out the 300-second
+// production default. The memory adapter enforces expiry itself on every
+// Get/Consume call — no Redis container is needed to see this behavior.
+func startAuthClientRegistryShortChallengeTTL(ctx context.Context, world *support.World) error {
+	clientRegistry, err := startClientRegistryService(ctx)
+	if err != nil {
+		return err
+	}
+	world.Services["client-registry-service"] = clientRegistry
+
+	authServer, err := startAuthServer(ctx, clientRegistry.BaseURL, "AUTH_LOGIN_CHALLENGE_TTL_SECONDS=1")
+	if err != nil {
+		return err
+	}
+	world.Services["auth-server"] = authServer
+	return nil
+}
+
+// loginUIAuthServerServiceToken is the pre-shared bearer secret login-ui
+// itself presents to auth-server's POST /internal/issue-code in the real
+// end-to-end topology below. Distinct from loginUIServiceToken (which
+// every other topology's bypass-and-call-issue-code-directly steps
+// present) purely to keep the two paths from being confused when reading
+// this file — the value has no special meaning.
+const loginUIAuthServerServiceToken = "acceptance-test-login-ui-e2e-service-token"
+
+// startLoginChallengeHandoffE2E starts the full real ADR-0011 chain:
+// identity-service (real user sign-in), client-registry-service,
+// auth-server (with AUTH_LOGIN_UI_URL pointing at the real login-ui
+// started here, not the dummy unreachable URL every other topology
+// uses), and login-ui itself. Every other feature bypasses login-ui by
+// calling /internal/issue-code directly — this topology exists
+// specifically to prove the real /oauth/authorize → login-ui /sign-in →
+// /internal/issue-code chain works end-to-end, since that chain is
+// exactly what the bypass pattern cannot catch a regression in.
+func startLoginChallengeHandoffE2E(ctx context.Context, world *support.World) error {
+	clientRegistry, err := startClientRegistryService(ctx)
+	if err != nil {
+		return err
+	}
+	world.Services["client-registry-service"] = clientRegistry
+
+	identity, err := startIdentityService(ctx)
+	if err != nil {
+		return err
+	}
+	world.Services["identity-service"] = identity
+
+	authServerPort, loginUIPort, err := freePortPair()
+	if err != nil {
+		return err
+	}
+	loginUIBaseURL := "http://127.0.0.1:" + strconv.Itoa(loginUIPort)
+
+	authServer, err := startAuthServerForHandoffE2E(ctx, authServerPort, clientRegistry.BaseURL, loginUIBaseURL)
+	if err != nil {
+		return err
+	}
+	world.Services["auth-server"] = authServer
+
+	loginUI, err := startLoginUIForHandoffE2E(ctx, loginUIPort, identity.BaseURL, authServer.BaseURL)
+	if err != nil {
+		return err
+	}
+	world.Services["login-ui"] = loginUI
+	return nil
+}
+
+func freePortPair() (int, int, error) {
+	a, err := support.FreePort()
+	if err != nil {
+		return 0, 0, err
+	}
+	b, err := support.FreePort()
+	if err != nil {
+		return 0, 0, err
+	}
+	return a, b, nil
+}
+
+func startAuthServerForHandoffE2E(ctx context.Context, port int, clientRegistryURL, loginUIBaseURL string) (*support.RunningService, error) {
+	bin, err := support.BuildBinary("auth-server")
+	if err != nil {
+		return nil, err
+	}
+	return support.StartService(ctx, "auth-server", bin, port, []string{
+		"AUTH_SERVER_PORT=" + strconv.Itoa(port),
+		"AUTH_CLIENT_REGISTRY_URL=" + clientRegistryURL,
+		"AUTH_LOGIN_UI_URL=" + loginUIBaseURL,
+		"AUTH_LOGIN_UI_SERVICE_TOKEN=" + loginUIAuthServerServiceToken,
+	})
+}
+
+func startLoginUIForHandoffE2E(ctx context.Context, port int, identityServiceURL, authServerURL string) (*support.RunningService, error) {
+	bin, err := support.BuildBinary("login-ui")
+	if err != nil {
+		return nil, err
+	}
+	return support.StartService(ctx, "login-ui", bin, port, []string{
+		"LOGIN_UI_SERVER_PORT=" + strconv.Itoa(port),
+		"LOGIN_UI_IDENTITY_SERVICE_URL=" + identityServiceURL,
+		"LOGIN_UI_AUTH_SERVER_URL=" + authServerURL,
+		"LOGIN_UI_AUTH_SERVER_SERVICE_TOKEN=" + loginUIAuthServerServiceToken,
 	})
 }

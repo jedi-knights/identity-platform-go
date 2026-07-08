@@ -59,6 +59,10 @@ func registerCommonSteps(sctx *godog.ScenarioContext, world func() *support.Worl
 	sctx.Step(`^the client sends a GET request to "([^"]*)"$`, func(ctx context.Context, path string) error {
 		return stepGetPath(ctx, world(), path)
 	})
+
+	sctx.Step(`^the response body contains "([^"]*)"$`, func(want string) error {
+		return stepAssertBodyContains(world(), want)
+	})
 }
 
 func stepAssertStatus(world *support.World, want int) error {
@@ -137,6 +141,16 @@ func stepAssertArrayContains(world *support.World, field, want string) error {
 		}
 	}
 	return fmt.Errorf("field %q: %q not found in %v — body: %s", field, want, items, world.LastBody)
+}
+
+// stepAssertBodyContains checks a raw substring of the response body —
+// for HTML responses (login-ui's sign-in re-render on bad credentials)
+// where there's no JSON field to inspect.
+func stepAssertBodyContains(world *support.World, want string) error {
+	if !strings.Contains(string(world.LastBody), want) {
+		return fmt.Errorf("response body does not contain %q — body: %s", want, world.LastBody)
+	}
+	return nil
 }
 
 func stepAssertHeader(world *support.World, header, want string) error {
