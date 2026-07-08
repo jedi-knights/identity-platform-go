@@ -22,7 +22,11 @@ import (
 // endpoints are not registered (ADR-0012 requires the operator to set
 // AUTH_METADATA_PUBLIC_BASE_URL so the metadata document can carry
 // absolute URLs).
-func NewRouter(h *Handler, jwks *JWKSHandler, userInfo *UserInfoHandler, metadata *MetadataHandler, logger logging.Logger) http.Handler {
+//
+// deviceAuth may be nil — when nil, POST /device_authorization is not
+// registered (ADR-0022 requires AUTH_LOGIN_UI_URL so the endpoint has a
+// verification page to advertise).
+func NewRouter(h *Handler, jwks *JWKSHandler, userInfo *UserInfoHandler, metadata *MetadataHandler, deviceAuth *DeviceAuthorizationHandler, logger logging.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /oauth/token", h.Token)
@@ -40,6 +44,14 @@ func NewRouter(h *Handler, jwks *JWKSHandler, userInfo *UserInfoHandler, metadat
 	mux.Handle("GET /swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),
 	))
+	if deviceAuth != nil {
+		// RFC 8628 §3.1.
+		mux.HandleFunc("POST /device_authorization", deviceAuth.PostDeviceAuthorization)
+		// Service-only; the handler itself returns 404 when the operator
+		// has not configured a service bearer token (ADR-0022, mirrors
+		// /internal/issue-code).
+		mux.HandleFunc("POST /internal/device/decision", deviceAuth.PostDecision)
+	}
 	if jwks != nil {
 		// RFC 7517 §4.1: JWKS lives at /.well-known/jwks.json by convention.
 		mux.HandleFunc("GET /.well-known/jwks.json", jwks.Get)

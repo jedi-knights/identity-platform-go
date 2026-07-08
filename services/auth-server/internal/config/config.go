@@ -10,24 +10,25 @@ import (
 
 // Config holds all auth-server configuration.
 type Config struct {
-	Server            ServerConfig                     `mapstructure:"server"`
-	JWT               JWTConfig                        `mapstructure:"jwt"`
-	Token             TokenConfig                      `mapstructure:"token"`
-	AuthorizationCode AuthorizationCodeConfig          `mapstructure:"authorization_code"`
-	LoginChallenge    LoginChallengeConfig             `mapstructure:"login_challenge"`
-	PAR               PushedAuthorizationRequestConfig `mapstructure:"pushed_authorization_request"`
-	Log               LogConfig                        `mapstructure:"log"`
-	ClientRegistry    ClientRegistryConfig             `mapstructure:"client_registry"`
-	IdentityService   IdentityServiceConfig            `mapstructure:"identity_service"`
-	Redis             RedisConfig                      `mapstructure:"redis"`
-	Policy            PolicyConfig                     `mapstructure:"policy"`
-	Introspection     IntrospectionConfig              `mapstructure:"introspection"`
-	LoginUI           LoginUIConfig                    `mapstructure:"login_ui"`
-	Audit             AuditConfig                      `mapstructure:"audit"`
-	Metadata          MetadataConfig                   `mapstructure:"metadata"`
-	Tracing           TracingConfig                    `mapstructure:"tracing"`
-	DevSeedClients    bool                             `mapstructure:"dev_seed_clients"`
-	DevClientSecret   string                           `mapstructure:"dev_client_secret"` // AUTH_DEV_CLIENT_SECRET; only used when DevSeedClients=true
+	Server              ServerConfig                     `mapstructure:"server"`
+	JWT                 JWTConfig                        `mapstructure:"jwt"`
+	Token               TokenConfig                      `mapstructure:"token"`
+	AuthorizationCode   AuthorizationCodeConfig          `mapstructure:"authorization_code"`
+	LoginChallenge      LoginChallengeConfig             `mapstructure:"login_challenge"`
+	PAR                 PushedAuthorizationRequestConfig `mapstructure:"pushed_authorization_request"`
+	DeviceAuthorization DeviceAuthorizationConfig        `mapstructure:"device_authorization"`
+	Log                 LogConfig                        `mapstructure:"log"`
+	ClientRegistry      ClientRegistryConfig             `mapstructure:"client_registry"`
+	IdentityService     IdentityServiceConfig            `mapstructure:"identity_service"`
+	Redis               RedisConfig                      `mapstructure:"redis"`
+	Policy              PolicyConfig                     `mapstructure:"policy"`
+	Introspection       IntrospectionConfig              `mapstructure:"introspection"`
+	LoginUI             LoginUIConfig                    `mapstructure:"login_ui"`
+	Audit               AuditConfig                      `mapstructure:"audit"`
+	Metadata            MetadataConfig                   `mapstructure:"metadata"`
+	Tracing             TracingConfig                    `mapstructure:"tracing"`
+	DevSeedClients      bool                             `mapstructure:"dev_seed_clients"`
+	DevClientSecret     string                           `mapstructure:"dev_client_secret"` // AUTH_DEV_CLIENT_SECRET; only used when DevSeedClients=true
 }
 
 // TracingConfig configures the OpenTelemetry SDK bootstrap (ADR-0014 /
@@ -177,6 +178,15 @@ type PushedAuthorizationRequestConfig struct {
 	TTLSeconds int `mapstructure:"ttl_seconds"` // AUTH_PAR_TTL_SECONDS
 }
 
+// DeviceAuthorizationConfig holds the lifetime and advertised polling
+// interval for RFC 8628 device authorization requests (ADR-0022). The
+// default 600-second TTL matches RFC 8628 §3.2's example; the 5-second
+// interval is a typical CLI-friendly polling cadence.
+type DeviceAuthorizationConfig struct {
+	TTLSeconds          int `mapstructure:"ttl_seconds"`           // AUTH_DEVICE_AUTHORIZATION_TTL_SECONDS
+	PollIntervalSeconds int `mapstructure:"poll_interval_seconds"` // AUTH_DEVICE_AUTHORIZATION_POLL_INTERVAL_SECONDS
+}
+
 // LoginUIConfig holds the base URL for the login-ui service and the shared
 // bearer token login-ui presents on /internal/issue-code. When URL is empty,
 // /oauth/authorize returns 501 Not Implemented (preserves the pre-ADR-0011
@@ -260,9 +270,11 @@ func Load() (*Config, error) {
 	v.SetDefault("jwt.id_token_ttl_seconds", 300) // AUTH_JWT_ID_TOKEN_TTL_SECONDS (ADR-0010)
 	v.SetDefault("token.ttl_seconds", 300)
 	v.SetDefault("token.refresh_token_ttl_seconds", 604800)
-	v.SetDefault("authorization_code.ttl_seconds", 60)           // ADR-0009 §"Authorization code shape"
-	v.SetDefault("login_challenge.ttl_seconds", 300)             // ADR-0011 §"The login-challenge handoff"
-	v.SetDefault("pushed_authorization_request.ttl_seconds", 90) // ADR-0021, RFC 9126
+	v.SetDefault("authorization_code.ttl_seconds", 60)            // ADR-0009 §"Authorization code shape"
+	v.SetDefault("login_challenge.ttl_seconds", 300)              // ADR-0011 §"The login-challenge handoff"
+	v.SetDefault("pushed_authorization_request.ttl_seconds", 90)  // ADR-0021, RFC 9126
+	v.SetDefault("device_authorization.ttl_seconds", 600)         // ADR-0022 — RFC 8628 §3.2 example
+	v.SetDefault("device_authorization.poll_interval_seconds", 5) // ADR-0022
 	v.SetDefault("login_ui.url", "")
 	v.SetDefault("login_ui.service_token", "")
 	v.SetDefault("policy.url", "")

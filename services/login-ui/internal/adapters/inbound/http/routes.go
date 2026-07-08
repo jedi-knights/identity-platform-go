@@ -17,6 +17,8 @@ func NewRouter(h *Handler, logger logging.Logger) http.Handler {
 	mux.HandleFunc("GET /health", h.Health)
 	mux.HandleFunc("GET /sign-in", h.SignInGet)
 	mux.HandleFunc("POST /sign-in", h.SignInPost)
+	mux.HandleFunc("GET /device", h.DeviceGet)
+	mux.HandleFunc("POST /device", h.DevicePost)
 	mux.HandleFunc("GET /billing/plans", h.PlansGet)
 	mux.HandleFunc("POST /billing/checkout", h.CheckoutPost)
 	mux.HandleFunc("GET /billing/portal", h.PortalGet)
