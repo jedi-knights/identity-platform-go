@@ -11,6 +11,7 @@ import (
 	"context"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/cucumber/godog"
@@ -49,7 +50,7 @@ func TestFeatures(t *testing.T) {
 		},
 		Options: &godog.Options{
 			Format:      format(),
-			Paths:       []string{"features"},
+			Paths:       paths(),
 			TestingT:    t,
 			Concurrency: concurrency(),
 		},
@@ -69,6 +70,21 @@ func format() string {
 		return v
 	}
 	return "pretty"
+}
+
+// paths reads ACCEPTANCE_PATHS (comma-separated, defaulting to the whole
+// features directory) so a single feature file can be run during
+// development, e.g. ACCEPTANCE_PATHS=features/token_revocation.feature —
+// this suite has no domain tags to filter by (see any feature file's
+// header comment: scenarios tag their own @topology, not a shared
+// feature-level tag), so path filtering is the mechanism that actually
+// works here.
+func paths() []string {
+	v := os.Getenv("ACCEPTANCE_PATHS")
+	if v == "" {
+		return []string{"features"}
+	}
+	return strings.Split(v, ",")
 }
 
 // concurrency reads ACCEPTANCE_CONCURRENCY (defaulting to 1) so `task
