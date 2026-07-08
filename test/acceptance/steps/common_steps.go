@@ -2,6 +2,7 @@ package steps
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -63,6 +64,16 @@ func registerCommonSteps(sctx *godog.ScenarioContext, world func() *support.Worl
 	sctx.Step(`^the response body contains "([^"]*)"$`, func(want string) error {
 		return stepAssertBodyContains(world(), want)
 	})
+
+	sctx.Step(`^the "([^"]*)" JWT's "([^"]*)" claim equals the captured "([^"]*)"$`,
+		func(jwtVar, claimPath, capturedVar string) error {
+			return stepAssertJWTClaimEqualsCaptured(world(), jwtVar, claimPath, capturedVar)
+		})
+
+	sctx.Step(`^the "([^"]*)" JWT's "([^"]*)" claim equals "([^"]*)"$`,
+		func(jwtVar, claimPath, want string) error {
+			return stepAssertJWTClaimEquals(world(), jwtVar, claimPath, want)
+		})
 }
 
 func stepAssertStatus(world *support.World, want int) error {
@@ -228,4 +239,78 @@ func captureField(world *support.World, field, key string) error {
 	}
 	world.Vars[key] = v
 	return nil
+}
+
+// stepAssertJWTClaimEqualsCaptured decodes the JWT captured in
+// world.Vars[jwtVar] and compares the claim at claimPath (dot-separated,
+// e.g. "act.sub") against the plain string captured in
+// world.Vars[capturedVar] — used to check a delegated token's sub/act
+// claims against a client_id captured before the client that generated
+// it got overwritten in world.Vars.
+func stepAssertJWTClaimEqualsCaptured(world *support.World, jwtVar, claimPath, capturedVar string) error {
+	want := world.Vars[capturedVar]
+	if want == "" {
+		return fmt.Errorf("captured var %q is empty — was it captured before being overwritten?", capturedVar)
+	}
+	return assertJWTClaimEquals(world, jwtVar, claimPath, want)
+}
+
+// stepAssertJWTClaimEquals is stepAssertJWTClaimEqualsCaptured's
+// literal-value counterpart, for asserting against a fixed expected
+// string written directly in the feature file rather than one captured
+// from an earlier response — e.g. RFC 9068's `scope` claim, which is
+// exactly the space-delimited string the request asked for.
+func stepAssertJWTClaimEquals(world *support.World, jwtVar, claimPath, want string) error {
+	return assertJWTClaimEquals(world, jwtVar, claimPath, want)
+}
+
+func assertJWTClaimEquals(world *support.World, jwtVar, claimPath, want string) error {
+	payload, err := decodeJWTPayload(world.Vars[jwtVar])
+	if err != nil {
+		return fmt.Errorf("decoding %q: %w", jwtVar, err)
+	}
+	claim, err := walkClaimPath(payload, claimPath)
+	if err != nil {
+		return err
+	}
+
+	got, _ := claim.(string)
+	if got != want {
+		return fmt.Errorf("JWT claim %q: want %q, got %v — payload: %v", claimPath, want, claim, payload)
+	}
+	return nil
+}
+
+func decodeJWTPayload(token string) (map[string]any, error) {
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("malformed JWT: want 3 dot-separated parts, got %d", len(parts))
+	}
+	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("decoding payload: %w", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+		return nil, fmt.Errorf("unmarshalling payload: %w", err)
+	}
+	return payload, nil
+}
+
+// walkClaimPath descends a decoded JWT payload map along a dot-separated
+// path (e.g. "act.sub"), returning an error that names the exact segment
+// that failed rather than a generic not-found message.
+func walkClaimPath(payload map[string]any, claimPath string) (any, error) {
+	var cursor any = payload
+	for _, key := range strings.Split(claimPath, ".") {
+		m, ok := cursor.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("claim path %q: %q is not an object", claimPath, key)
+		}
+		cursor, ok = m[key]
+		if !ok {
+			return nil, fmt.Errorf("claim path %q: no %q key in payload: %v", claimPath, key, payload)
+		}
+	}
+	return cursor, nil
 }

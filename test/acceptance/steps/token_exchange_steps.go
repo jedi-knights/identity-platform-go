@@ -2,7 +2,6 @@ package steps
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -78,10 +77,6 @@ func registerTokenExchangeSteps(sctx *godog.ScenarioContext, world func() *suppo
 			})
 		})
 
-	sctx.Step(`^the "([^"]*)" JWT's "([^"]*)" claim equals the captured "([^"]*)"$`,
-		func(jwtVar, claimPath, capturedVar string) error {
-			return stepAssertJWTClaimEqualsCaptured(world(), jwtVar, claimPath, capturedVar)
-		})
 }
 
 // stepRegisterPublicClient calls client-registry-service's POST /clients
@@ -172,65 +167,4 @@ func postTokenExchange(ctx context.Context, world *support.World, p exchangePara
 		form.Set("scope", p.scope)
 	}
 	return postToken(ctx, world, form)
-}
-
-// stepAssertJWTClaimEqualsCaptured decodes the JWT captured in
-// world.Vars[jwtVar] and compares the claim at claimPath (dot-separated,
-// e.g. "act.sub") against the plain string captured in
-// world.Vars[capturedVar] — used to check a delegated token's sub/act
-// claims against a client_id captured before the client that generated
-// it got overwritten in world.Vars.
-func stepAssertJWTClaimEqualsCaptured(world *support.World, jwtVar, claimPath, capturedVar string) error {
-	want := world.Vars[capturedVar]
-	if want == "" {
-		return fmt.Errorf("captured var %q is empty — was it captured before being overwritten?", capturedVar)
-	}
-
-	payload, err := decodeJWTPayload(world.Vars[jwtVar])
-	if err != nil {
-		return fmt.Errorf("decoding %q: %w", jwtVar, err)
-	}
-	claim, err := walkClaimPath(payload, claimPath)
-	if err != nil {
-		return err
-	}
-
-	got, _ := claim.(string)
-	if got != want {
-		return fmt.Errorf("JWT claim %q: want %q, got %v — payload: %v", claimPath, want, claim, payload)
-	}
-	return nil
-}
-
-func decodeJWTPayload(token string) (map[string]any, error) {
-	parts := strings.SplitN(token, ".", 3)
-	if len(parts) != 3 {
-		return nil, fmt.Errorf("malformed JWT: want 3 dot-separated parts, got %d", len(parts))
-	}
-	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return nil, fmt.Errorf("decoding payload: %w", err)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
-		return nil, fmt.Errorf("unmarshalling payload: %w", err)
-	}
-	return payload, nil
-}
-
-// walkClaimPath navigates a dot-separated claim path (e.g. "act.sub")
-// through a decoded JWT payload, descending into nested claim objects.
-func walkClaimPath(payload map[string]any, claimPath string) (any, error) {
-	var cursor any = payload
-	for _, key := range strings.Split(claimPath, ".") {
-		m, ok := cursor.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("claim path %q: %q is not an object", claimPath, key)
-		}
-		cursor, ok = m[key]
-		if !ok {
-			return nil, fmt.Errorf("claim path %q: no %q key in payload: %v", claimPath, key, payload)
-		}
-	}
-	return cursor, nil
 }

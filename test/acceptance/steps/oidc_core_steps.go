@@ -2,8 +2,6 @@ package steps
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -23,28 +21,27 @@ func registerOIDCSteps(sctx *godog.ScenarioContext, world func() *support.World)
 			return stepRegisterOIDCUser(ctx, world(), email, name)
 		})
 
-	sctx.Step(`^a registered confidential OAuth client with scopes "([^"]*)", grant type "([^"]*)", and redirect_uri "([^"]*)"$`,
-		func(ctx context.Context, scopes, grantType, redirectURI string) error {
-			w := world()
-			if err := registerClient(ctx, w, scopes, grantType, []string{redirectURI}); err != nil {
-				return err
-			}
-			w.Vars["redirect_uri"] = redirectURI
-			return nil
-		})
-
-	sctx.Step(`^the client generates a PKCE code_verifier and code_challenge$`, func() error {
-		return stepOIDCGeneratePKCE(world())
-	})
+	// "a registered confidential OAuth client with scopes..." and "the
+	// client generates a PKCE code_verifier..." are deliberately NOT
+	// registered here — registerAuthorizationCodeSteps already registers
+	// both patterns, and every registerXSteps call runs unconditionally
+	// for every scenario (see scenario.go's InitializeScenario), so
+	// registering the identical pattern again here would make it
+	// ambiguous rather than reused. This file used to carry its own
+	// byte-identical copies (stepOIDCGeneratePKCE et al.) that silently
+	// registered ambiguous duplicates — godog's Strict mode was off, so
+	// the ambiguity never surfaced. Fixed by deleting the duplicates and
+	// calling the shared step functions directly instead — same package,
+	// no import needed.
 
 	sctx.Step(`^the client starts an authorization_code flow with redirect_uri "([^"]*)", scope "([^"]*)", and nonce "([^"]*)"$`,
 		func(ctx context.Context, redirectURI, scope, nonce string) error {
 			return stepOIDCStartAuthorize(ctx, world(), redirectURI, scope, nonce)
 		})
 
-	sctx.Step(`^the login_challenge is captured from the redirect$`, func() error {
-		return stepOIDCCaptureLoginChallenge(world())
-	})
+	// "the login_challenge is captured from the redirect" is also
+	// deliberately not registered here — see the comment above; it's
+	// stepCaptureLoginChallenge from authorization_code_steps.go.
 
 	sctx.Step(`^login-ui issues an authorization code for the login_challenge for subject "([^"]*)" with consent "([^"]*)"$`,
 		func(ctx context.Context, subject, consent string) error {
@@ -57,10 +54,9 @@ func registerOIDCSteps(sctx *godog.ScenarioContext, world func() *support.World)
 			return stepOIDCIssueCode(ctx, w, w.Vars["user_id"], consent)
 		})
 
-	sctx.Step(`^the client exchanges the authorization code for a token$`, func(ctx context.Context) error {
-		w := world()
-		return stepOIDCExchangeCode(ctx, w, w.Vars["code"], w.Vars["code_verifier"])
-	})
+	// "the client exchanges the authorization code for a token" is also
+	// deliberately not registered here — see the comment above; it's
+	// stepExchangeCode from authorization_code_steps.go.
 
 	sctx.Step(`^the client calls /userinfo with the access_token$`, func(ctx context.Context) error {
 		w := world()
@@ -123,24 +119,6 @@ func stepRegisterOIDCUser(ctx context.Context, world *support.World, email, name
 	return nil
 }
 
-// stepOIDCGeneratePKCE generates an RFC 7636 §4.1-compliant code_verifier
-// and its S256 code_challenge — every authorization_code grant requires
-// PKCE regardless of OIDC scope (ADR-0009), so OIDC scenarios need this
-// exactly like authorization_code_pkce.feature does.
-func stepOIDCGeneratePKCE(world *support.World) error {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return fmt.Errorf("generating PKCE verifier entropy: %w", err)
-	}
-	verifier := base64.RawURLEncoding.EncodeToString(raw)
-	sum := sha256.Sum256([]byte(verifier))
-	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-
-	world.Vars["code_verifier"] = verifier
-	world.Vars["code_challenge"] = challenge
-	return nil
-}
-
 // stepOIDCStartAuthorize calls auth-server's GET /oauth/authorize with a
 // nonce query param (OIDC Core §3.1.2.1) in addition to the PKCE params
 // every authorization_code request carries, without following the redirect.
@@ -181,23 +159,6 @@ func stepOIDCStartAuthorize(ctx context.Context, world *support.World, redirectU
 
 	world.LastResponse = resp
 	world.LastBody = body
-	return nil
-}
-
-func stepOIDCCaptureLoginChallenge(world *support.World) error {
-	location := world.LastResponse.Header.Get("Location")
-	if location == "" {
-		return fmt.Errorf("no Location header on last response (status %d) — body: %s", world.LastResponse.StatusCode, world.LastBody)
-	}
-	parsed, err := url.Parse(location)
-	if err != nil {
-		return fmt.Errorf("parsing Location header %q: %w", location, err)
-	}
-	challenge := parsed.Query().Get("login_challenge")
-	if challenge == "" {
-		return fmt.Errorf("location header %q has no login_challenge query parameter", location)
-	}
-	world.Vars["login_challenge"] = challenge
 	return nil
 }
 
@@ -250,18 +211,6 @@ func stepOIDCIssueCode(ctx context.Context, world *support.World, subject, conse
 	}
 	world.Vars["code"] = decoded.Code
 	return nil
-}
-
-func stepOIDCExchangeCode(ctx context.Context, world *support.World, code, codeVerifier string) error {
-	form := url.Values{
-		"grant_type":    {"authorization_code"},
-		"code":          {code},
-		"code_verifier": {codeVerifier},
-		"redirect_uri":  {world.Vars["redirect_uri"]},
-		"client_id":     {world.Vars["client_id"]},
-		"client_secret": {world.Vars["client_secret"]},
-	}
-	return postToken(ctx, world, form)
 }
 
 // stepCallUserinfo calls auth-server's GET /userinfo with the given bearer
