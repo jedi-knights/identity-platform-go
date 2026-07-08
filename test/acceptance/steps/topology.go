@@ -174,6 +174,17 @@ func startClientRegistryService(ctx context.Context) (*support.RunningService, e
 	})
 }
 
+// loginUIServiceToken is the pre-shared bearer secret authorization_code_
+// steps.go presents to auth-server's POST /internal/issue-code — the
+// endpoint login-ui would call after a real sign-in. This suite bypasses
+// login-ui entirely (see authorization_code_pkce.feature's header
+// comment for why) and calls issue-code directly, so AUTH_LOGIN_UI_URL
+// below is never actually dereferenced by anything in this topology —
+// its only effect is enabling /oauth/authorize and /internal/issue-code
+// (both 501/404 when unset), which is harmless for every other feature
+// using this topology since none of them call those two endpoints.
+const loginUIServiceToken = "acceptance-test-login-ui-service-token"
+
 func startAuthServer(ctx context.Context, clientRegistryURL string) (*support.RunningService, error) {
 	port, err := support.FreePort()
 	if err != nil {
@@ -186,5 +197,7 @@ func startAuthServer(ctx context.Context, clientRegistryURL string) (*support.Ru
 	return support.StartService(ctx, "auth-server", bin, port, []string{
 		"AUTH_SERVER_PORT=" + strconv.Itoa(port),
 		"AUTH_CLIENT_REGISTRY_URL=" + clientRegistryURL,
+		"AUTH_LOGIN_UI_URL=http://127.0.0.1:1",
+		"AUTH_LOGIN_UI_SERVICE_TOKEN=" + loginUIServiceToken,
 	})
 }
