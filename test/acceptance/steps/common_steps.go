@@ -51,6 +51,14 @@ func registerCommonSteps(sctx *godog.ScenarioContext, world func() *support.Worl
 	sctx.Step(`^the response does not have a "([^"]*)" field$`, func(field string) error {
 		return stepAssertFieldAbsent(world(), field)
 	})
+
+	sctx.Step(`^the response "([^"]*)" array contains "([^"]*)"$`, func(field, want string) error {
+		return stepAssertArrayContains(world(), field, want)
+	})
+
+	sctx.Step(`^the client sends a GET request to "([^"]*)"$`, func(ctx context.Context, path string) error {
+		return stepGetPath(ctx, world(), path)
+	})
 }
 
 func stepAssertStatus(world *support.World, want int) error {
@@ -114,6 +122,23 @@ func stepAssertFieldAbsent(world *support.World, field string) error {
 	return nil
 }
 
+func stepAssertArrayContains(world *support.World, field, want string) error {
+	var decoded map[string]any
+	if err := json.Unmarshal(world.LastBody, &decoded); err != nil {
+		return fmt.Errorf("decoding response body: %w — body: %s", err, world.LastBody)
+	}
+	items, ok := decoded[field].([]any)
+	if !ok {
+		return fmt.Errorf("field %q: want array, got %v — body: %s", field, decoded[field], world.LastBody)
+	}
+	for _, item := range items {
+		if s, ok := item.(string); ok && s == want {
+			return nil
+		}
+	}
+	return fmt.Errorf("field %q: %q not found in %v — body: %s", field, want, items, world.LastBody)
+}
+
 func stepAssertHeader(world *support.World, header, want string) error {
 	got := world.LastResponse.Header.Get(header)
 	if got != want {
@@ -144,6 +169,31 @@ func postForm(ctx context.Context, world *support.World, path string, form url.V
 		return fmt.Errorf("reading auth-server response body: %w", err)
 	}
 
+	world.LastResponse = resp
+	world.LastBody = body
+	return nil
+}
+
+// stepGetPath sends an unauthenticated GET to the given path on auth-server
+// and stores the response for later "Then" assertions — used by endpoints
+// that don't take a body (JWKS, metadata, userinfo-without-token).
+func stepGetPath(ctx context.Context, world *support.World, path string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		world.Services["auth-server"].BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := world.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("calling auth-server: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
 	world.LastResponse = resp
 	world.LastBody = body
 	return nil
