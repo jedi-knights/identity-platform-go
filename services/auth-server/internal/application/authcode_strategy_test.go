@@ -180,6 +180,29 @@ func TestAuthorizationCodeStrategy_Handle_EmbedsAuthorizationDetailsOnToken(t *t
 	}
 }
 
+// TestAuthorizationCodeStrategy_Handle_StampsAcrValuePassword covers
+// ADR-0024 — every authorization_code redemption re-authenticates the
+// user from scratch via login-ui's one authentication method, so the
+// issued token always carries domain.AcrValuePassword.
+func TestAuthorizationCodeStrategy_Handle_StampsAcrValuePassword(t *testing.T) {
+	f := newAuthCodeFixtures(t)
+
+	if _, err := f.strategy.Handle(context.Background(), f.req); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+
+	var saved *domain.Token
+	for _, tok := range f.tokenRepo.tokens {
+		saved = tok
+	}
+	if saved == nil {
+		t.Fatal("expected a token to be saved")
+	}
+	if saved.Acr != domain.AcrValuePassword {
+		t.Errorf("Acr = %q, want %q", saved.Acr, domain.AcrValuePassword)
+	}
+}
+
 func TestAuthorizationCodeStrategy_Handle_MissingCode_InvalidRequest(t *testing.T) {
 	// Arrange
 	f := newAuthCodeFixtures(t)

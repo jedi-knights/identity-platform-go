@@ -489,6 +489,113 @@ func TestRequireScopeMiddleware_ScopeAbsent_IncludesScopeInWWWAuthenticate(t *te
 	}
 }
 
+// --- RequireACRMiddleware (RFC 9470, ADR-0024 in identity-platform-go's auth-server) ---
+
+func TestRequireACRMiddleware_ACRMatches_CallsNext(t *testing.T) {
+	// Arrange
+	var called bool
+	mw := RequireACRMiddleware("pwd")
+	r := httptest.NewRequest(http.MethodGet, "/resources/sensitive", nil)
+	r = r.WithContext(context.WithValue(r.Context(), contextKeyAcr, "pwd"))
+	w := httptest.NewRecorder()
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, r)
+
+	// Assert
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if !called {
+		t.Error("next handler was not called when required acr is present")
+	}
+}
+
+func TestRequireACRMiddleware_ACRAbsent_Returns401WithChallenge(t *testing.T) {
+	// RFC 9470 §5: a token whose authentication context is insufficient
+	// gets a 401 (not 403 — unlike scope, this is about authentication
+	// strength, not authorization) with error="insufficient_user_authentication"
+	// and the acr_values that would satisfy it.
+
+	// Arrange
+	var called bool
+	mw := RequireACRMiddleware("pwd")
+	r := httptest.NewRequest(http.MethodGet, "/resources/sensitive", nil)
+	w := httptest.NewRecorder()
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, r)
+
+	// Assert
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+	if called {
+		t.Error("next handler must not be called when acr is absent")
+	}
+	wwwAuth := w.Header().Get("WWW-Authenticate")
+	if !strings.Contains(wwwAuth, `error="insufficient_user_authentication"`) {
+		t.Errorf("WWW-Authenticate = %q, want it to contain error=\"insufficient_user_authentication\"", wwwAuth)
+	}
+	if !strings.Contains(wwwAuth, `acr_values="pwd"`) {
+		t.Errorf("WWW-Authenticate = %q, want it to contain acr_values=\"pwd\"", wwwAuth)
+	}
+}
+
+func TestRequireACRMiddleware_ACRMismatch_Returns401WithChallenge(t *testing.T) {
+	// Arrange
+	var called bool
+	mw := RequireACRMiddleware("pwd")
+	r := httptest.NewRequest(http.MethodGet, "/resources/sensitive", nil)
+	r = r.WithContext(context.WithValue(r.Context(), contextKeyAcr, "urn:example:some-other-method"))
+	w := httptest.NewRecorder()
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, r)
+
+	// Assert
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+	if called {
+		t.Error("next handler must not be called when acr does not match")
+	}
+}
+
+func TestRequireACRMiddleware_EmptyRequiredACR_Panics(t *testing.T) {
+	// Arrange / Act / Assert
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected RequireACRMiddleware(\"\") to panic, got nil")
+		}
+	}()
+	RequireACRMiddleware("")
+}
+
+func TestIntrospectionAuthMiddleware_PropagatesAcr(t *testing.T) {
+	// ADR-0024: the introspection result's Acr must reach contextKeyAcr so
+	// RequireACRMiddleware can read it.
+
+	// Arrange
+	var gotAcr string
+	introspector := &fakeIntrospector{result: &ports.IntrospectionResult{Active: true, Subject: "user-1", Acr: "pwd"}}
+	mw := IntrospectionAuthMiddleware(introspector, testutil.NewTestLogger(), "")
+	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		gotAcr, _ = r.Context().Value(contextKeyAcr).(string)
+	})
+	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
+	r.Header.Set("Authorization", "Bearer some-token")
+	w := httptest.NewRecorder()
+
+	// Act
+	mw(next).ServeHTTP(w, r)
+
+	// Assert
+	if gotAcr != "pwd" {
+		t.Errorf("contextKeyAcr = %q, want %q", gotAcr, "pwd")
+	}
+}
+
 func TestJWTAuthMiddleware_WithAudience_ValidAudience_CallsNext(t *testing.T) {
 	// Arrange
 	key := []byte("test-signing-key")

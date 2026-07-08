@@ -50,6 +50,13 @@ type AuthorizationServerMetadata struct {
 	ClaimTypesSupported              []string `json:"claim_types_supported,omitempty"`
 	ResponseModesSupported           []string `json:"response_modes_supported,omitempty"`
 
+	// AcrValuesSupported lists the RFC 9470 / OIDC Discovery §3
+	// authentication-context-class-reference values this server can
+	// satisfy (ADR-0024) — today just AcrValuePassword, this platform's
+	// one authentication method. OIDC-only; omitted from the RFC 8414
+	// document like the other OIDC additions above.
+	AcrValuesSupported []string `json:"acr_values_supported,omitempty"`
+
 	// RequestParameterSupported and friends are pointer-bool so the
 	// "false" value is distinguishable from "omitted" — RFC 8414 §2 lets
 	// us emit either, and emitting an explicit false is what every major
