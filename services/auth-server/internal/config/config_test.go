@@ -99,3 +99,59 @@ func TestLoad_RS256WithMalformedPEMRejected(t *testing.T) {
 		t.Fatal("expected error for malformed RSA PEM, got nil")
 	}
 }
+
+func TestLoad_OIDCIssuerReadFromEnv(t *testing.T) {
+	// Arrange — every other jwt.* field has a v.SetDefault call in Load;
+	// oidc_issuer previously had none, which meant viper's AutomaticEnv
+	// never surfaced AUTH_JWT_OIDC_ISSUER through Unmarshal — id_token
+	// issuance was unreachable via env var configuration in practice.
+	t.Setenv("AUTH_JWT_SIGNING_KEY", "")
+	t.Setenv("AUTH_JWT_OIDC_ISSUER", "https://issuer.example.com")
+
+	// Act
+	cfg, err := config.Load()
+
+	// Assert
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.JWT.OIDCIssuer != "https://issuer.example.com" {
+		t.Errorf("OIDCIssuer = %q, want %q", cfg.JWT.OIDCIssuer, "https://issuer.example.com")
+	}
+}
+
+func TestLoad_IDTokenTTLSecondsReadFromEnv(t *testing.T) {
+	// Arrange — same missing-default gap as OIDCIssuer: with no default,
+	// AUTH_JWT_ID_TOKEN_TTL_SECONDS never reached the struct, silently
+	// leaving IDTokenTTLSeconds at its zero value (id_token issued with
+	// exp == iat, i.e. already expired).
+	t.Setenv("AUTH_JWT_SIGNING_KEY", "")
+	t.Setenv("AUTH_JWT_ID_TOKEN_TTL_SECONDS", "600")
+
+	// Act
+	cfg, err := config.Load()
+
+	// Assert
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.JWT.IDTokenTTLSeconds != 600 {
+		t.Errorf("IDTokenTTLSeconds = %d, want 600", cfg.JWT.IDTokenTTLSeconds)
+	}
+}
+
+func TestLoad_IDTokenTTLSecondsDefaultsTo300(t *testing.T) {
+	// Arrange — no AUTH_JWT_ID_TOKEN_TTL_SECONDS set.
+	t.Setenv("AUTH_JWT_SIGNING_KEY", "")
+
+	// Act
+	cfg, err := config.Load()
+
+	// Assert
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.JWT.IDTokenTTLSeconds != 300 {
+		t.Errorf("default IDTokenTTLSeconds = %d, want 300", cfg.JWT.IDTokenTTLSeconds)
+	}
+}

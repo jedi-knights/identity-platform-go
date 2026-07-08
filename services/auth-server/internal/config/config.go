@@ -247,6 +247,8 @@ func Load() (*Config, error) {
 	v.SetDefault("jwt.rsa_private_key_pem_next", "")
 	v.SetDefault("jwt.rsa_private_key_pem_previous", "")
 	v.SetDefault("jwt.issuer", "identity-platform")
+	v.SetDefault("jwt.oidc_issuer", "")           // AUTH_JWT_OIDC_ISSUER (ADR-0010) — empty disables OIDC (id_token, /userinfo)
+	v.SetDefault("jwt.id_token_ttl_seconds", 300) // AUTH_JWT_ID_TOKEN_TTL_SECONDS (ADR-0010)
 	v.SetDefault("token.ttl_seconds", 300)
 	v.SetDefault("token.refresh_token_ttl_seconds", 604800)
 	v.SetDefault("authorization_code.ttl_seconds", 60) // ADR-0009 §"Authorization code shape"
