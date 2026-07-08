@@ -52,4 +52,5 @@ func InitializeScenario(sctx *godog.ScenarioContext, redisURL func() string) {
 	registerRefreshTokenSteps(sctx, getWorld)
 	registerRevocationSteps(sctx, getWorld)
 	registerIntrospectionSteps(sctx, getWorld)
+	registerBearerTokenSteps(sctx, getWorld)
 }
