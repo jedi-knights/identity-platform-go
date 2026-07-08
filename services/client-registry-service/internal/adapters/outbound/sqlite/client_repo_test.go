@@ -373,3 +373,59 @@ func TestConnect_AppliesForeignKeyPragma(t *testing.T) {
 		t.Fatalf("Delete with foreign_keys pragma enabled: %v", err)
 	}
 }
+
+// TestClientRepository_SaveAndFindByID_PersistsJWKSURI covers the RFC 7591
+// §2 jwks_uri registration field (ADR-0023) added on top of the base
+// schema this adapter's other tests exercise.
+func TestClientRepository_SaveAndFindByID_PersistsJWKSURI(t *testing.T) {
+	// Arrange
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	client := sampleClient("jwks-uri-1")
+	client.JWKSURI = "https://client.example.com/.well-known/jwks.json"
+
+	// Act
+	if err := repo.Save(ctx, client); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := repo.FindByID(ctx, client.ID)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.JWKSURI != client.JWKSURI {
+		t.Errorf("JWKSURI: want %q, got %q", client.JWKSURI, got.JWKSURI)
+	}
+}
+
+func TestClientRepository_List_IncludesJWKSURI(t *testing.T) {
+	// Arrange
+	repo := newTestRepo(t)
+	ctx := context.Background()
+	client := sampleClient("jwks-uri-list-1")
+	client.JWKSURI = "https://client.example.com/.well-known/jwks.json"
+	if err := repo.Save(ctx, client); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Act
+	clients, err := repo.List(ctx)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var found bool
+	for _, c := range clients {
+		if c.ID == client.ID {
+			found = true
+			if c.JWKSURI != client.JWKSURI {
+				t.Errorf("JWKSURI: want %q, got %q", client.JWKSURI, c.JWKSURI)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("client %q not found in List result", client.ID)
+	}
+}

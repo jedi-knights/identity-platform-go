@@ -122,6 +122,31 @@ func TestRegister_PersistsClientWithFields(t *testing.T) {
 	}
 }
 
+// TestRegister_PersistsAndReturnsJWKSURI covers the RFC 7591 §2 jwks_uri
+// registration field (ADR-0023) — opts a client into RFC 7523 JWT-bearer
+// client authentication.
+func TestRegister_PersistsAndReturnsJWKSURI(t *testing.T) {
+	svc, repo := newRegSvc(t, application.RegistrationServiceConfig{})
+	resp, err := svc.Register(context.Background(), domain.RegistrationRequest{
+		ClientName:   "JWT-Bearer Connector",
+		RedirectURIs: []string{"https://example.com/callback"},
+		JWKSURI:      "https://client.example.com/.well-known/jwks.json",
+	})
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if resp.JWKSURI != "https://client.example.com/.well-known/jwks.json" {
+		t.Errorf("response JWKSURI = %q", resp.JWKSURI)
+	}
+	stored := repo.clients[resp.ClientID]
+	if stored == nil {
+		t.Fatalf("client not persisted")
+	}
+	if stored.JWKSURI != "https://client.example.com/.well-known/jwks.json" {
+		t.Errorf("stored JWKSURI = %q", stored.JWKSURI)
+	}
+}
+
 func TestRegister_DefaultsClientName(t *testing.T) {
 	svc, _ := newRegSvc(t, application.RegistrationServiceConfig{})
 	resp, err := svc.Register(context.Background(), domain.RegistrationRequest{

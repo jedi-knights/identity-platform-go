@@ -33,6 +33,13 @@ type World struct {
 	// a client_id/client_secret from a "Given a registered client" step
 	// that a later "When" step needs.
 	Vars map[string]string
+
+	// Cleanups runs in Close, in registration order, after every service
+	// process has stopped and TempDir has been removed. For per-scenario
+	// resources Vars can't hold (e.g. an httptest.Server backing a JWT-
+	// bearer client's jwks_uri — see client_assertion_steps.go) — mirrors
+	// t.Cleanup's shape for callers that aren't a *testing.T.
+	Cleanups []func()
 }
 
 // NewWorld constructs an empty World for one scenario.
@@ -44,13 +51,17 @@ func NewWorld() *World {
 	}
 }
 
-// Close stops every service this scenario started and removes its temp
-// directory. Safe to call even if some services were never started.
+// Close stops every service this scenario started, removes its temp
+// directory, and runs every registered Cleanup. Safe to call even if
+// some services were never started.
 func (w *World) Close() {
 	for _, svc := range w.Services {
 		svc.Stop()
 	}
 	if w.TempDir != "" {
 		_ = os.RemoveAll(w.TempDir)
+	}
+	for _, cleanup := range w.Cleanups {
+		cleanup()
 	}
 }

@@ -258,6 +258,12 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request, logger logging.Lo
 		// RFC 8628 §3.4 — the device_code form parameter, populated for
 		// every request but only consumed by DeviceCodeStrategy.
 		DeviceCode: r.FormValue("device_code"),
+		// RFC 7523 §2.2 — populated for every request but only consumed
+		// by strategies that support assertion-based client
+		// authentication; empty for every other request by virtue of
+		// the wire being empty.
+		ClientAssertion:     r.FormValue("client_assertion"),
+		ClientAssertionType: r.FormValue("client_assertion_type"),
 	}, true
 }
 
@@ -267,7 +273,9 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request, logger logging.Lo
 // success; writes an RFC 6749 §5.2 error and returns ok=false otherwise.
 // Token-exchange (ADR-0016) and device_code (ADR-0022) tolerate a missing
 // secret per the public-client carve-out — device flow clients (CLIs, IoT)
-// are frequently public; every other grant type requires it.
+// are frequently public; a request presenting a well-formed RFC 7523
+// JWT-bearer assertion (ADR-0023) tolerates it too. client_id remains
+// required in every case; every other grant type requires the secret too.
 func readGrantClientCredentials(w http.ResponseWriter, r *http.Request, logger logging.Logger, grantType domain.GrantType) (string, string, bool) {
 	clientID, clientSecret, ok := r.BasicAuth()
 	if !ok {
@@ -278,11 +286,19 @@ func readGrantClientCredentials(w http.ResponseWriter, r *http.Request, logger l
 		writeOAuthError(w, logger, "invalid_request", "client_id is required", http.StatusBadRequest)
 		return "", "", false
 	}
-	if clientSecret == "" && grantType != domain.GrantTypeTokenExchange && grantType != domain.GrantTypeDeviceCode {
+	if clientSecret == "" && grantType != domain.GrantTypeTokenExchange && grantType != domain.GrantTypeDeviceCode && !hasJWTBearerAssertion(r) {
 		writeOAuthError(w, logger, "invalid_request", "client_secret is required", http.StatusBadRequest)
 		return "", "", false
 	}
 	return clientID, clientSecret, true
+}
+
+// hasJWTBearerAssertion reports whether the request presents a
+// client_assertion of exactly the RFC 7523 jwt-bearer type. Any other
+// client_assertion_type value (or a missing assertion) does not waive
+// the client_secret requirement.
+func hasJWTBearerAssertion(r *http.Request) bool {
+	return r.FormValue("client_assertion_type") == domain.ClientAssertionTypeJWTBearer && r.FormValue("client_assertion") != ""
 }
 
 // parseExchangeAudience extracts the optional RFC 8693 "audience"
