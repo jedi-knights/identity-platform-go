@@ -49,8 +49,15 @@ func TestFeatures(t *testing.T) {
 			steps.InitializeScenario(sctx, func() string { return sharedRedis.URL })
 		},
 		Options: &godog.Options{
-			Format:      format(),
-			Paths:       paths(),
+			Format: format(),
+			Paths:  paths(),
+			// Strict: false is godog's default and silently treats an
+			// undefined/pending step as a pass (confirmed: an undefined
+			// step exits 0). That defeats the point of an acceptance
+			// suite meant to prove RFC/ADR coverage — a typo'd step
+			// pattern would report green forever. Strict makes any
+			// undefined, pending, or ambiguous step fail the run.
+			Strict:      true,
 			TestingT:    t,
 			Concurrency: concurrency(),
 		},
