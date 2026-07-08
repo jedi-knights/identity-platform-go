@@ -24,6 +24,8 @@ var topologyStarters = map[string]func(context.Context, *support.World) error{
 	"@topology:auth-server-rotating-keys":          startAuthServerRotatingKeys,
 	"@topology:auth-client-registry-oidc":          startAuthClientRegistryOIDC,
 	"@topology:auth-client-registry-identity-oidc": startAuthClientRegistryIdentityOIDC,
+	"@topology:auth-metadata":                      startAuthMetadataOnly,
+	"@topology:auth-metadata-full":                 startAuthMetadataFull,
 }
 
 // startTopologyForTags creates this scenario's temp dir and starts
@@ -307,6 +309,68 @@ func startAuthClientRegistryIdentityOIDC(ctx context.Context, world *support.Wor
 	authServer, err := startAuthServer(ctx, clientRegistry.BaseURL,
 		"AUTH_JWT_OIDC_ISSUER="+oidcIssuer,
 		"AUTH_IDENTITY_SERVICE_URL="+identity.BaseURL,
+	)
+	if err != nil {
+		return err
+	}
+	world.Services["auth-server"] = authServer
+	return nil
+}
+
+// startAuthServerMetadata starts a standalone auth-server (no
+// client-registry-service — the metadata document doesn't depend on any
+// registered client) with AUTH_METADATA_PUBLIC_BASE_URL set to its own
+// freshly-allocated address, since RFC 8414 endpoint URLs are absolute and
+// self-referential. extraEnv layers on the optional signals
+// (AUTH_JWT_OIDC_ISSUER, AUTH_IDENTITY_SERVICE_URL, AUTH_LOGIN_UI_URL,
+// AUTH_METADATA_REGISTRATION_ENDPOINT) that make additional metadata
+// fields appear.
+func startAuthServerMetadata(ctx context.Context, extraEnv ...string) (*support.RunningService, error) {
+	port, err := support.FreePort()
+	if err != nil {
+		return nil, err
+	}
+	bin, err := support.BuildBinary("auth-server")
+	if err != nil {
+		return nil, err
+	}
+	baseURL := "http://127.0.0.1:" + strconv.Itoa(port)
+	env := append([]string{
+		"AUTH_SERVER_PORT=" + strconv.Itoa(port),
+		"AUTH_METADATA_PUBLIC_BASE_URL=" + baseURL,
+	}, extraEnv...)
+	return support.StartService(ctx, "auth-server", bin, port, env)
+}
+
+// startAuthMetadataOnly starts auth-server with only AUTH_METADATA_PUBLIC_BASE_URL
+// set — the minimal config that populates the RFC 8414 document's required
+// fields (issuer, authorization_endpoint, token_endpoint, jwks_uri — RS256
+// is the default signing alg) while leaving every OIDC-only field absent.
+func startAuthMetadataOnly(ctx context.Context, world *support.World) error {
+	authServer, err := startAuthServerMetadata(ctx)
+	if err != nil {
+		return err
+	}
+	world.Services["auth-server"] = authServer
+	return nil
+}
+
+// startAuthMetadataFull layers identity-service, OIDC, login-ui, and a
+// registration_endpoint on top of startAuthMetadataOnly's topology — for
+// scenarios asserting the OIDC discovery document's optional fields
+// (userinfo_endpoint, end_session_endpoint, registration_endpoint) appear.
+func startAuthMetadataFull(ctx context.Context, world *support.World) error {
+	identity, err := startIdentityService(ctx)
+	if err != nil {
+		return err
+	}
+	world.Services["identity-service"] = identity
+
+	authServer, err := startAuthServerMetadata(ctx,
+		"AUTH_LOGIN_UI_URL=http://127.0.0.1:1",
+		"AUTH_JWT_OIDC_ISSUER="+oidcIssuer,
+		"AUTH_IDENTITY_SERVICE_URL="+identity.BaseURL,
+		"AUTH_METADATA_REGISTRATION_ENDPOINT=https://clients.example.com/register",
 	)
 	if err != nil {
 		return err
