@@ -79,6 +79,53 @@ func TestClient_Introspect_PropagatesAcr(t *testing.T) {
 	}
 }
 
+// TestClient_Introspect_PropagatesDPoPConfirmation covers RFC 9449 (ADR-0025
+// in identity-platform-go's auth-server): the nested cnf.jkt claim on the
+// introspection response must reach ports.IntrospectionResult.CNFJKT so
+// RequireDPoPMiddleware can enforce proof-of-possession.
+func TestClient_Introspect_PropagatesDPoPConfirmation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/introspect" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(t, w, map[string]any{
+			"active": true,
+			"sub":    "client-1",
+			"cnf":    map[string]any{"jkt": "test-jkt-value"},
+		})
+	}))
+	defer srv.Close()
+
+	client := introspection.NewClient(srv.URL, srv.Client(), "")
+	result, err := client.Introspect(context.Background(), "some-token")
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if result.CNFJKT != "test-jkt-value" {
+		t.Errorf("CNFJKT: got %q, want %q", result.CNFJKT, "test-jkt-value")
+	}
+}
+
+// TestClient_Introspect_NoConfirmation_LeavesCNFJKTEmpty guards the ordinary
+// bearer-token path — no cnf claim at all must not panic and must leave
+// CNFJKT empty.
+func TestClient_Introspect_NoConfirmation_LeavesCNFJKTEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, map[string]any{"active": true, "sub": "client-1"})
+	}))
+	defer srv.Close()
+
+	client := introspection.NewClient(srv.URL, srv.Client(), "")
+	result, err := client.Introspect(context.Background(), "some-token")
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if result.CNFJKT != "" {
+		t.Errorf("CNFJKT: got %q, want empty", result.CNFJKT)
+	}
+}
+
 func TestClient_Introspect_InactiveToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, map[string]any{"active": false})

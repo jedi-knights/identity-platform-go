@@ -89,6 +89,54 @@ func TestTokenService_Introspect_EchoesAcr(t *testing.T) {
 	}
 }
 
+// TestTokenService_Introspect_EchoesDPoPConfirmation covers RFC 9449 §6.1
+// (ADR-0025): a DPoP-bound token's stored JKT must surface as
+// "cnf":{"jkt":...} on introspection. Only the stored domain.Token carries
+// JKT — the JWT-validated token has no field for it — so this pins the same
+// "use the stored token, not the JWT-validated one" fix Introspect already
+// needs for RFC 9396/ADR-0024-style fields.
+func TestTokenService_Introspect_EchoesDPoPConfirmation(t *testing.T) {
+	tokenRepo := newMockTokenRepo()
+	gen := application.NewJWTTokenGenerator(testSigningKey, "test-issuer", nil)
+
+	domainToken := &domain.Token{
+		ID:        "t-dpop",
+		ClientID:  "client1",
+		Subject:   "client1",
+		Scopes:    []string{"read"},
+		ExpiresAt: time.Now().Add(time.Hour),
+		IssuedAt:  time.Now(),
+		TokenType: domain.TokenTypeDPoP,
+		JKT:       "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+	}
+
+	raw, err := gen.Generate(context.Background(), domainToken)
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+	domainToken.Raw = raw
+	if err := tokenRepo.Save(context.Background(), domainToken); err != nil {
+		t.Fatalf("unexpected save error: %v", err)
+	}
+
+	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo, "")
+	svc := application.NewTokenService(tokenRepo, nil, validator)
+
+	resp, err := svc.Introspect(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.CNF == nil {
+		t.Fatal("expected a non-nil cnf claim for a DPoP-bound token")
+	}
+	if resp.CNF.JKT != domainToken.JKT {
+		t.Errorf("cnf.jkt = %q, want %q", resp.CNF.JKT, domainToken.JKT)
+	}
+	if resp.TokenType != string(domain.TokenTypeDPoP) {
+		t.Errorf("token_type = %q, want %q", resp.TokenType, domain.TokenTypeDPoP)
+	}
+}
+
 func TestTokenService_Introspect_ExpiredToken(t *testing.T) {
 	tokenRepo := newMockTokenRepo()
 	gen := application.NewJWTTokenGenerator(testSigningKey, "test-issuer", nil)

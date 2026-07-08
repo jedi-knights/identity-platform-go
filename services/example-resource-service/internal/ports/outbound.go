@@ -23,6 +23,12 @@ type IntrospectionResult struct {
 	// (client_credentials, refresh_token) and for any token introspected
 	// before this field existed.
 	Acr string
+
+	// CNFJKT is the RFC 9449 §6.1 "cnf".jkt confirmation claim — the RFC
+	// 7638 thumbprint of the DPoP proof key this token is bound to (ADR-0025
+	// in identity-platform-go's auth-server). Empty for ordinary bearer
+	// tokens.
+	CNFJKT string
 }
 
 // TokenIntrospector is the outbound port for validating access tokens.

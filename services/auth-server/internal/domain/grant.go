@@ -87,6 +87,14 @@ type GrantRequest struct {
 	// was absent; strategies that issue tokens propagate the slice
 	// onto the resulting domain.Token unchanged.
 	AuthorizationDetails []AuthorizationDetail
+
+	// DPoPJKT is the RFC 7638 thumbprint of the client's DPoP proof key
+	// (ADR-0025), populated by the HTTP layer only when the caller
+	// presented a valid `DPoP` header at the token endpoint. Empty for
+	// ordinary bearer-token requests. Grant-agnostic — every grant type
+	// that issues an access token stamps it onto the resulting
+	// domain.Token unchanged, the same way AuthorizationDetails does.
+	DPoPJKT string
 }
 
 // GrantResponse contains the issued token information.

@@ -5,6 +5,7 @@ go 1.26
 require (
 	github.com/cucumber/godog v0.15.0
 	github.com/cucumber/messages/go/v21 v21.0.1
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/jedi-knights/go-platform v0.9.0
 	github.com/testcontainers/testcontainers-go/modules/redis v0.43.0
