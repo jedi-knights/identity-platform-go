@@ -50,6 +50,23 @@ tasks:
     cmds:
       - cd test/acceptance && go test -tags acceptance ./... -count=1
 
+  test:smoke:
+    desc: Run @smoke scenarios against the real docker-compose stack (builds images, tears down after)
+    cmds:
+      - |
+        set -euo pipefail
+        envfile=$(mktemp)
+        trap 'docker compose --env-file "$envfile" down -v; rm -f "$envfile"' EXIT
+        {
+          echo "DEV_CLIENT_SECRET=$(openssl rand -hex 16)"
+          echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+          echo "REDIS_PASSWORD=$(openssl rand -hex 16)"
+          echo "LOGIN_UI_SERVICE_TOKEN=$(openssl rand -hex 32)"
+        } > "$envfile"
+        docker compose --env-file "$envfile" up -d --build --wait
+        dev_client_secret=$(grep '^DEV_CLIENT_SECRET=' "$envfile" | cut -d= -f2)
+        (cd test/acceptance && SMOKE_DEV_CLIENT_SECRET="$dev_client_secret" go test -tags smoke ./smoke/... -count=1)
+
   build:
     desc: Build all services
     deps:
