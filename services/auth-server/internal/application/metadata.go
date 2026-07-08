@@ -163,6 +163,12 @@ func (b *MetadataBuilder) base() *domain.AuthorizationServerMetadata {
 		TokenEndpoint:         b.publicBaseURL + "/oauth/token",
 		IntrospectionEndpoint: b.publicBaseURL + "/oauth/introspect",
 		RevocationEndpoint:    b.publicBaseURL + "/oauth/revoke",
+		// RFC 9126 §5, ADR-0021. Advertised unconditionally, matching
+		// AuthorizationEndpoint/TokenEndpoint above — the URL is stable
+		// even in configs where /oauth/par itself would 501 (login-ui
+		// not wired), the same way AuthorizationEndpoint is advertised
+		// even when /oauth/authorize would 501.
+		PushedAuthorizationRequestEndpoint: b.publicBaseURL + "/oauth/par",
 		ResponseTypesSupported: []string{
 			"code",
 		},
