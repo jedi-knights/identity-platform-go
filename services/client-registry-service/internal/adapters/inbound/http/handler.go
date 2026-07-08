@@ -210,15 +210,14 @@ func (h *Handler) ValidateClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate required fields here in addition to the service layer so the HTTP
-	// handler returns a 400 with a descriptive message rather than a 200 with
-	// Valid=false, which would be ambiguous for callers.
+	// Validate the required field here in addition to the service layer so the
+	// HTTP handler returns a 400 with a descriptive message rather than a 200
+	// with Valid=false, which would be ambiguous for callers. client_secret is
+	// NOT required here — a public client has no stored secret and validates
+	// with an empty one (see ClientService.ValidateClient); rejecting it at
+	// this layer would make public clients unable to authenticate at all.
 	if req.ClientID == "" {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "client_id is required"))
-		return
-	}
-	if req.ClientSecret == "" {
-		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "client_secret is required"))
 		return
 	}
 
