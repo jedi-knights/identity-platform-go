@@ -39,6 +39,7 @@ This codebase implements specific RFCs. Understand the semantics before modifyin
 | [RFC 9068](https://datatracker.ietf.org/doc/html/rfc9068) | JWT profile for access tokens — `scope` as space-delimited string, `client_id` claim | `services/auth-server/internal/application/token_service.go` |
 | [RFC 9396](https://datatracker.ietf.org/doc/html/rfc9396) | Rich Authorization Requests — `authorization_details` | `services/auth-server`, [ADR-0017](docs/adr/0017-rich-authorization-requests-rfc-9396.md). Per-type schema validation for `mcp_tool` and `resource`. |
 | [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html) | `id_token`, `/userinfo` endpoint, `nonce`, `openid` scope, authentication context | `services/auth-server`, `services/identity-service`, [ADR-0010](docs/adr/0010-oidc-core.md) |
+| [RFC 9207](https://datatracker.ietf.org/doc/html/rfc9207) | Authorization Server Issuer Identification — `iss` on every authorization response | `services/auth-server`, `services/login-ui`, [ADR-0020](docs/adr/0020-authorization-server-issuer-identification.md). Value is `cfg.JWT.Issuer`, echoed on both the direct error-redirect path and login-ui's post-login success redirect. |
 
 ### Planned (not yet implemented)
 
@@ -56,7 +57,6 @@ These are valid for a complete auth/authz system but have narrower applicability
 | RFC | What it adds | Key design notes |
 |-----|-------------|-----------------|
 | [RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628) | Device Authorization Flow — browserless devices (CLIs, IoT) | Adds a new grant type (`urn:ietf:params:oauth:grant-type:device_code`) and a `POST /device_authorization` endpoint. Follows the same Strategy pattern extension point as other grant types. |
-| [RFC 9207](https://datatracker.ietf.org/doc/html/rfc9207) | Authorization Server Issuer Identification — adds `iss` to authorization responses | Prevents mix-up attacks when a client interacts with multiple authorization servers. Low cost to implement; high value if this platform ever runs multiple issuers. |
 
 ### Out of scope
 

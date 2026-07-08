@@ -30,7 +30,7 @@ func happyPathHandler(t *testing.T) http.HandlerFunc {
 			t.Errorf("body = %v", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"code":"code-xyz","redirect_uri":"https://rp.example.com/cb","state":"state-abc"}`)
+		_, _ = io.WriteString(w, `{"code":"code-xyz","redirect_uri":"https://rp.example.com/cb","state":"state-abc","iss":"https://auth.example.com"}`)
 	}
 }
 
@@ -53,6 +53,9 @@ func TestIssueCodeClient_HappyPath(t *testing.T) {
 	}
 	if resp.Code != "code-xyz" || resp.RedirectURI != "https://rp.example.com/cb" || resp.State != "state-abc" {
 		t.Errorf("resp = %+v", resp)
+	}
+	if resp.Issuer != "https://auth.example.com" {
+		t.Errorf("resp.Issuer = %q, want https://auth.example.com", resp.Issuer)
 	}
 }
 
