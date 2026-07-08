@@ -47,6 +47,10 @@ func registerCommonSteps(sctx *godog.ScenarioContext, world func() *support.Worl
 	sctx.Step(`^the "([^"]*)" from the last response is captured as "([^"]*)"$`, func(field, key string) error {
 		return captureField(world(), field, key)
 	})
+
+	sctx.Step(`^the response does not have a "([^"]*)" field$`, func(field string) error {
+		return stepAssertFieldAbsent(world(), field)
+	})
 }
 
 func stepAssertStatus(world *support.World, want int) error {
@@ -95,6 +99,17 @@ func stepAssertBoolField(world *support.World, field string, want bool) error {
 	}
 	if got != want {
 		return fmt.Errorf("field %q: want %v, got %v", field, want, got)
+	}
+	return nil
+}
+
+func stepAssertFieldAbsent(world *support.World, field string) error {
+	var decoded map[string]any
+	if err := json.Unmarshal(world.LastBody, &decoded); err != nil {
+		return fmt.Errorf("decoding response body: %w — body: %s", err, world.LastBody)
+	}
+	if v, ok := decoded[field]; ok {
+		return fmt.Errorf("field %q: want absent, got %v — body: %s", field, v, world.LastBody)
 	}
 	return nil
 }

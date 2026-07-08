@@ -22,6 +22,8 @@ var topologyStarters = map[string]func(context.Context, *support.World) error{
 	"@topology:auth-client-registry-resource":      startAuthClientRegistryResource,
 	"@topology:auth-server-only":                   startAuthServerOnly,
 	"@topology:auth-server-rotating-keys":          startAuthServerRotatingKeys,
+	"@topology:auth-client-registry-oidc":          startAuthClientRegistryOIDC,
+	"@topology:auth-client-registry-identity-oidc": startAuthClientRegistryIdentityOIDC,
 }
 
 // startTopologyForTags creates this scenario's temp dir and starts
@@ -177,19 +179,20 @@ func startClientRegistryService(ctx context.Context) (*support.RunningService, e
 }
 
 // loginUIServiceToken is the pre-shared bearer secret authorization_code_
-// steps.go presents to auth-server's POST /internal/issue-code — the
-// endpoint login-ui would call after a real sign-in. This suite bypasses
-// login-ui entirely (see authorization_code_pkce.feature's header
-// comment for why) and calls issue-code directly, so AUTH_LOGIN_UI_URL
-// below is never actually dereferenced by anything in this topology —
-// its only effect is enabling /oauth/authorize and /internal/issue-code
-// (both 501/404 when unset), which is harmless for every other feature
-// using this topology since none of them call those two endpoints.
+// steps.go and oidc_core_steps.go present to auth-server's POST
+// /internal/issue-code — the endpoint login-ui would call after a real
+// sign-in (ADR-0011). This suite bypasses login-ui entirely and calls
+// issue-code directly, so AUTH_LOGIN_UI_URL is never actually
+// dereferenced by anything in this topology — its only effect is
+// unlocking /oauth/authorize and /internal/issue-code (both 501/404 when
+// unset), which is harmless for every other feature using this topology
+// since none of them call those two endpoints.
 const loginUIServiceToken = "acceptance-test-login-ui-service-token"
 
 // startAuthServer starts auth-server. extraEnv is appended after the base
 // env, so a caller wiring a rotation keyset (see startAuthServerRotatingKeys)
-// can override the default ephemeral-key behavior.
+// or OIDC (see startAuthClientRegistryOIDC) can add to it without every
+// other caller needing to know about those signals.
 func startAuthServer(ctx context.Context, clientRegistryURL string, extraEnv ...string) (*support.RunningService, error) {
 	port, err := support.FreePort()
 	if err != nil {
@@ -252,4 +255,76 @@ func startAuthServerRotatingKeys(ctx context.Context, world *support.World) erro
 	}
 	world.Services["auth-server"] = authServer
 	return nil
+}
+
+// oidcIssuer is the AUTH_JWT_OIDC_ISSUER value every OIDC-enabled auth-server
+// instance in this suite uses. A shared constant is safe here — it never
+// needs to be unique per scenario, it just needs to be non-empty and RS256
+// mode active for idTokenGeneratorProvider to wire the id-token generator
+// and the /userinfo route (see container.go).
+const oidcIssuer = "https://acceptance-test.identity-platform.local"
+
+// startAuthClientRegistryOIDC starts auth-server + client-registry-service
+// with OIDC enabled (AUTH_JWT_OIDC_ISSUER set) but no identity-service —
+// AUTH_IDENTITY_SERVICE_URL stays unset, so /userinfo's claims fetcher is
+// nil and every /userinfo call 503s. That's the correct topology for
+// scenarios about id_token issuance itself and about /userinfo's
+// auth/scope checks, which don't need real claims.
+func startAuthClientRegistryOIDC(ctx context.Context, world *support.World) error {
+	clientRegistry, err := startClientRegistryService(ctx)
+	if err != nil {
+		return err
+	}
+	world.Services["client-registry-service"] = clientRegistry
+
+	authServer, err := startAuthServer(ctx, clientRegistry.BaseURL,
+		"AUTH_JWT_OIDC_ISSUER="+oidcIssuer,
+	)
+	if err != nil {
+		return err
+	}
+	world.Services["auth-server"] = authServer
+	return nil
+}
+
+// startAuthClientRegistryIdentityOIDC layers identity-service on top of
+// startAuthClientRegistryOIDC's topology, pointing AUTH_IDENTITY_SERVICE_URL
+// at it so /userinfo's claims fetcher is live — for the scenario proving a
+// real end-to-end claims round trip.
+func startAuthClientRegistryIdentityOIDC(ctx context.Context, world *support.World) error {
+	clientRegistry, err := startClientRegistryService(ctx)
+	if err != nil {
+		return err
+	}
+	world.Services["client-registry-service"] = clientRegistry
+
+	identity, err := startIdentityService(ctx)
+	if err != nil {
+		return err
+	}
+	world.Services["identity-service"] = identity
+
+	authServer, err := startAuthServer(ctx, clientRegistry.BaseURL,
+		"AUTH_JWT_OIDC_ISSUER="+oidcIssuer,
+		"AUTH_IDENTITY_SERVICE_URL="+identity.BaseURL,
+	)
+	if err != nil {
+		return err
+	}
+	world.Services["auth-server"] = authServer
+	return nil
+}
+
+func startIdentityService(ctx context.Context) (*support.RunningService, error) {
+	port, err := support.FreePort()
+	if err != nil {
+		return nil, err
+	}
+	bin, err := support.BuildBinary("identity-service")
+	if err != nil {
+		return nil, err
+	}
+	return support.StartService(ctx, "identity-service", bin, port, []string{
+		"IDENTITY_SERVER_PORT=" + strconv.Itoa(port),
+	})
 }
