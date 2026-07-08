@@ -11,11 +11,20 @@ import (
 	"github.com/ocrosby/identity-platform-go/test/acceptance/support"
 )
 
+// topologyStarters maps each `@topology:*` tag to the function that
+// starts its service combination. Add an entry here (and tag the
+// corresponding feature file) as new feature files need a different
+// service combination — this is a lookup, not a switch, so adding
+// topologies never grows startTopologyForTags's own complexity.
+var topologyStarters = map[string]func(context.Context, *support.World) error{
+	"@topology:auth-client-registry":               startAuthAndClientRegistry,
+	"@topology:auth-client-registry-introspection": startAuthClientRegistryIntrospection,
+	"@topology:auth-client-registry-resource":      startAuthClientRegistryResource,
+}
+
 // startTopologyForTags creates this scenario's temp dir and starts
 // exactly the service processes its feature file's `@topology:*` tag
-// declares — not the full platform — so scenarios stay fast. Add a new
-// case here (and tag the corresponding feature file) as new feature
-// files need a different service combination.
+// declares — not the full platform — so scenarios stay fast.
 func startTopologyForTags(ctx context.Context, world *support.World, sc *godog.Scenario, redisURL func() string) error {
 	tempDir, err := os.MkdirTemp("", "acceptance-scenario-")
 	if err != nil {
@@ -24,15 +33,12 @@ func startTopologyForTags(ctx context.Context, world *support.World, sc *godog.S
 	world.TempDir = tempDir
 
 	for _, tag := range sc.Tags {
-		switch tag.Name {
-		case "@topology:auth-client-registry":
-			if err := startAuthAndClientRegistry(ctx, world); err != nil {
-				return err
-			}
-		case "@topology:auth-client-registry-introspection":
-			if err := startAuthClientRegistryIntrospection(ctx, world); err != nil {
-				return err
-			}
+		start, ok := topologyStarters[tag.Name]
+		if !ok {
+			continue
+		}
+		if err := start(ctx, world); err != nil {
+			return fmt.Errorf("starting topology %q: %w", tag.Name, err)
 		}
 	}
 	return nil
@@ -115,6 +121,42 @@ func startTokenIntrospectionService(ctx context.Context, authServerURL string) (
 		"INTROSPECT_SERVER_PORT=" + strconv.Itoa(port),
 		"INTROSPECT_JWT_JWKS_URL=" + authServerURL + "/.well-known/jwks.json",
 		"INTROSPECT_INTROSPECTION_SECRET=" + introspectionSecret,
+	})
+}
+
+// startAuthClientRegistryResource layers example-resource-service on top
+// of the auth+client-registry pair, pointing it at auth-server's JWKS
+// endpoint so RS256AuthMiddleware validates real tokens auth-server
+// issues locally — no introspection or policy service configured, so
+// scope alone gates access (RESOURCE_POLICY_URL unset) and revocation
+// isn't checked here (that's what token_revocation.feature's own
+// introspection-based scenario already covers).
+func startAuthClientRegistryResource(ctx context.Context, world *support.World) error {
+	authServer, err := startAuthAndClientRegistryServices(ctx, world)
+	if err != nil {
+		return err
+	}
+
+	resourceService, err := startExampleResourceService(ctx, authServer.BaseURL)
+	if err != nil {
+		return err
+	}
+	world.Services["example-resource-service"] = resourceService
+	return nil
+}
+
+func startExampleResourceService(ctx context.Context, authServerURL string) (*support.RunningService, error) {
+	port, err := support.FreePort()
+	if err != nil {
+		return nil, err
+	}
+	bin, err := support.BuildBinary("example-resource-service")
+	if err != nil {
+		return nil, err
+	}
+	return support.StartService(ctx, "example-resource-service", bin, port, []string{
+		"RESOURCE_SERVER_PORT=" + strconv.Itoa(port),
+		"RESOURCE_JWT_JWKS_URL=" + authServerURL + "/.well-known/jwks.json",
 	})
 }
 
