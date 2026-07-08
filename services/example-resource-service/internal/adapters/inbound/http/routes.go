@@ -55,6 +55,16 @@ func NewRouter(h *Handler, logger logging.Logger, signingKey []byte, keySource j
 		RequireScopeMiddleware("write")(http.HandlerFunc(h.CreateResource)),
 	))
 
+	// GET /resources/sensitive demonstrates RFC 9470 step-up authentication
+	// (ADR-0024 in identity-platform-go's auth-server): reads the same
+	// resource collection as GET /resources, but additionally requires the
+	// "pwd" authentication-context value. See middleware.go's RequireACRMiddleware
+	// doc comment for why this can't be demonstrated end-to-end against the
+	// real token-introspection-service topology today.
+	mux.Handle("GET /resources/sensitive", authMiddleware(
+		RequireScopeMiddleware("read")(RequireACRMiddleware("pwd")(http.HandlerFunc(h.ListResources))),
+	))
+
 	// TraceIDMiddleware must be outermost so trace IDs are in context when
 	// LoggingMiddleware reads them (it captures ctx before calling next).
 	return httputil.TraceIDMiddleware(

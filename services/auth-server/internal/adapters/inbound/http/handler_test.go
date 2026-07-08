@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1097,6 +1098,31 @@ func TestAuthorize_AuthorizationDetails_PersistedOnChallenge(t *testing.T) {
 	}
 	if repo.lastSaved.AuthorizationDetails[0].Type != domain.AuthorizationDetailTypeMCPTool {
 		t.Errorf("Type = %q, want mcp_tool", repo.lastSaved.AuthorizationDetails[0].Type)
+	}
+}
+
+func TestAuthorize_AcrValues_PersistedOnChallenge(t *testing.T) {
+	// ADR-0024: acr_values is parsed and stored on the LoginChallenge for
+	// protocol completeness, mirroring how prompt/max_age already land
+	// there.
+	repo := &fakeChallengeRepo{}
+	q := validAuthorizeQuery()
+	q.Set("acr_values", "pwd urn:example:mfa")
+	h := newAuthorizeTestHandler(t, newAuthorizeClient(), repo)
+	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil)
+	w := httptest.NewRecorder()
+
+	h.Authorize(w, r)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302; body = %s", w.Code, w.Body.String())
+	}
+	if repo.lastSaved == nil {
+		t.Fatal("expected Save to be invoked")
+	}
+	want := []string{"pwd", "urn:example:mfa"}
+	if !slices.Equal(repo.lastSaved.AcrValues, want) {
+		t.Errorf("AcrValues = %v, want %v", repo.lastSaved.AcrValues, want)
 	}
 }
 

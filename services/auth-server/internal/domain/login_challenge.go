@@ -43,6 +43,15 @@ type LoginChallenge struct {
 	// when the SSO session is older than this.
 	MaxAge int
 
+	// AcrValues is the RFC 9470 / OIDC §3.1.2.1 acr_values parameter,
+	// decomposed into its individual space-delimited values (ADR-0024).
+	// Stored for protocol completeness — this platform has exactly one
+	// authentication method, so it does not branch login-ui's behaviour;
+	// every authorization_code redemption stamps the same platform-wide
+	// ACR value (domain.AcrValuePassword) onto the issued token
+	// regardless of what was requested here.
+	AcrValues []string
+
 	// SessionID is populated by login-ui after a successful sign-in. The
 	// /internal/issue-code handler cross-checks it against the SSO session
 	// cookie carried on the same call to prevent a stolen challenge ID

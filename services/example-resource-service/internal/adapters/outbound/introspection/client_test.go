@@ -51,6 +51,34 @@ func TestClient_Introspect_ActiveToken(t *testing.T) {
 	}
 }
 
+// TestClient_Introspect_PropagatesAcr covers RFC 9470 (ADR-0024 in
+// identity-platform-go's auth-server): the acr field on the introspection
+// response must reach ports.IntrospectionResult so RequireACRMiddleware
+// can enforce step-up.
+func TestClient_Introspect_PropagatesAcr(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/introspect" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(t, w, map[string]any{
+			"active": true,
+			"sub":    "user-1",
+			"acr":    "pwd",
+		})
+	}))
+	defer srv.Close()
+
+	client := introspection.NewClient(srv.URL, srv.Client(), "")
+	result, err := client.Introspect(context.Background(), "some-token")
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if result.Acr != "pwd" {
+		t.Errorf("Acr: got %q, want %q", result.Acr, "pwd")
+	}
+}
+
 func TestClient_Introspect_InactiveToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(t, w, map[string]any{"active": false})
