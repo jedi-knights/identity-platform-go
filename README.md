@@ -475,6 +475,80 @@ task test:unit
 task test:integration
 ```
 
+### Local Acceptance Testing
+
+`test/acceptance` is a separate Go module containing a full [godog](https://github.com/cucumber/godog)/Gherkin BDD suite that exercises the platform's entire *implemented* OAuth 2.0/OIDC surface end-to-end, plus a smaller `@smoke` suite that exercises the real `docker-compose.yml` stack. Both build real service binaries and start containers, so they're excluded from `task test`/`task test:unit`/`task test:integration` by design.
+
+#### Prerequisites
+
+- Docker running — the acceptance suite starts one shared Redis container per run; the smoke suite brings up the full `docker-compose.yml` stack.
+- The Allure command line tool, only if you want to view results as an HTML report instead of plain console pass/fail — consult Allure's own documentation for the install steps on your platform (e.g. Homebrew on macOS).
+
+#### Running the acceptance suite
+
+```bash
+# Single command: run the suite, generate the Allure report, open it in your browser
+task test:acceptance:all
+```
+
+Or run the pieces individually:
+
+```bash
+task test:acceptance          # pretty console output only (default)
+task test:acceptance:allure   # same suite, additionally writes Allure JSON results
+task test:acceptance:report   # runs test:acceptance:allure, then generates + opens the HTML report
+```
+
+Run a single feature file during development. The suite has no domain tags to filter by — each scenario tags its own `@topology:*` internally rather than sharing one feature-level tag — so filter by path instead:
+
+```bash
+ACCEPTANCE_PATHS=features/token_revocation.feature task test:acceptance
+```
+
+Other environment variables the suite reads (all optional):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ACCEPTANCE_FORMAT` | `pretty` | godog output format — set to `allure` to produce Allure JSON results (`test:acceptance:allure` sets this for you) |
+| `ACCEPTANCE_CONCURRENCY` | `1` | Number of scenarios to run in parallel — every scenario builds a fully isolated `World`, so this is safe at any value |
+| `ACCEPTANCE_PATHS` | `features` (the whole directory) | Comma-separated feature file(s) or directory to run |
+
+#### What's covered
+
+Each feature file's header comment names the RFC(s) and ADR(s) it exercises — the same comment becomes every scenario's description in the Allure report, so the report doubles as a compliance matrix.
+
+| Feature file | RFC / ADR |
+|---|---|
+| `client_credentials.feature` | RFC 6749 §4.4 |
+| `authorization_code_pkce.feature` | RFC 6749 §4.1, RFC 7636, [ADR-0009](docs/adr/0009-authorization-code-pkce.md) |
+| `refresh_token_rotation.feature` | RFC 6749 §6, [ADR-0014](docs/adr/0014-refresh-token-rotation-replay.md) |
+| `token_revocation.feature` | RFC 7009 |
+| `token_introspection.feature` | RFC 7662 |
+| `bearer_token_usage.feature` | RFC 6750 |
+| `jwks_key_rotation.feature` | RFC 7517, RFC 7518, [ADR-0008](docs/adr/0008-rs256-jwks-token-signing.md) |
+| `oidc_core.feature` | OpenID Connect Core 1.0, [ADR-0010](docs/adr/0010-oidc-core.md) |
+| `as_metadata.feature` | RFC 8414, OpenID Connect Discovery 1.0, [ADR-0012](docs/adr/0012-authorization-server-metadata.md) |
+| `dynamic_client_registration.feature` | RFC 7591, RFC 7592, [ADR-0013](docs/adr/0013-dynamic-client-registration.md) |
+| `token_exchange.feature` | RFC 8693, [ADR-0016](docs/adr/0016-token-exchange-rfc-8693.md) |
+| `rich_authorization_requests.feature` | RFC 9396, [ADR-0017](docs/adr/0017-rich-authorization-requests-rfc-9396.md) |
+| `login_challenge_handoff.feature` | [ADR-0011](docs/adr/0011-login-ui-service.md) |
+
+See [Architecture Decision Records](#architecture-decision-records) for the full ADR index.
+
+#### Smoke tests against the real Docker images
+
+The acceptance suite above builds each service as an in-process/subprocess binary — it never touches the actual `Dockerfile` or `docker-compose.yml` wiring. The `@smoke` suite in `test/acceptance/smoke/` covers exactly that gap by driving the real `docker-compose.yml` stack over its real container network.
+
+```bash
+task test:smoke
+```
+
+This generates fresh secrets, brings the full stack up (building images), runs the smoke scenarios, and tears the stack down afterward regardless of pass or fail. It needs Docker running and no other setup.
+
+#### Adding new scenarios
+
+Every scenario must be fully independent — safe to run in any order, at any concurrency, forever. The rule that makes this possible: **never hardcode a fixture ID** (a client, user, or resource name). Always mint a fresh one per scenario — see `support/fixtures.go`. This is what makes the shared Redis container safe under `ACCEPTANCE_CONCURRENCY` > 1.
+
 ### Other Task Commands
 
 ```bash
