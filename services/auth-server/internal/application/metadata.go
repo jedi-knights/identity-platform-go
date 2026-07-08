@@ -210,7 +210,7 @@ func (b *MetadataBuilder) base() *domain.AuthorizationServerMetadata {
 // The RFC 8693 token-exchange URN is always advertised because the
 // strategy is unconditionally registered (ADR-0016).
 func grantTypesSupported(hasLoginUI bool) []string {
-	out := []string{"client_credentials", "refresh_token", string(domain.GrantTypeTokenExchange)}
+	out := []string{"client_credentials", "refresh_token", string(domain.GrantTypeTokenExchange), string(domain.GrantTypeSAML2Bearer)}
 	if hasLoginUI {
 		out = append(out, "authorization_code", string(domain.GrantTypeDeviceCode))
 	}

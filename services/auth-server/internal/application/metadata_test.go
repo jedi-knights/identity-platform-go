@@ -90,6 +90,19 @@ func TestMetadataBuilder_OAuthMetadata_GrantsIncludeAuthorizationCodeWithLoginUI
 	}
 }
 
+// TestMetadataBuilder_OAuthMetadata_AdvertisesSAML2Bearer covers RFC 7522
+// (ADR-0026): the grant is unconditionally advertised, like token_exchange
+// — it doesn't depend on login-ui.
+func TestMetadataBuilder_OAuthMetadata_AdvertisesSAML2Bearer(t *testing.T) {
+	b := newBuilder(t, func(c *application.MetadataBuilderConfig) {
+		c.HasLoginUI = false
+	})
+	md := b.OAuthMetadata()
+	if !slices.Contains(md.GrantTypesSupported, "urn:ietf:params:oauth:grant-type:saml2-bearer") {
+		t.Errorf("grant_types_supported = %v, missing saml2-bearer", md.GrantTypesSupported)
+	}
+}
+
 func TestMetadataBuilder_OAuthMetadata_OmitsRegistrationByDefault(t *testing.T) {
 	b := newBuilder(t, nil)
 	md := b.OAuthMetadata()

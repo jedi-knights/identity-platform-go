@@ -283,6 +283,56 @@ func TestToken_NoDPoPHeader_IssuesOrdinaryRequest(t *testing.T) {
 	}
 }
 
+// TestToken_SAMLAssertionParameter_Base64URLDecoded covers RFC 7522 §3
+// (ADR-0026): the assertion form parameter is base64url-encoded on the
+// wire and must be decoded before reaching domain.GrantRequest.SAMLAssertion.
+func TestToken_SAMLAssertionParameter_Base64URLDecoded(t *testing.T) {
+	// Arrange
+	const rawAssertion = `<Assertion>test-content</Assertion>`
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(rawAssertion))
+	issuer := &fakeIssuer{resp: &domain.GrantResponse{AccessToken: "tok.abc", TokenType: "Bearer", ExpiresIn: 3600}}
+	h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
+	w := postForm(t, h.Token, url.Values{
+		"grant_type":    {"urn:ietf:params:oauth:grant-type:saml2-bearer"},
+		"client_id":     {"c1"},
+		"client_secret": {"s1"},
+		"assertion":     {encoded},
+	})
+
+	// Assert
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+	if issuer.lastReq.SAMLAssertion != rawAssertion {
+		t.Errorf("SAMLAssertion = %q, want %q", issuer.lastReq.SAMLAssertion, rawAssertion)
+	}
+}
+
+func TestToken_MalformedBase64SAMLAssertion_Returns400(t *testing.T) {
+	// Arrange
+	issuer := &fakeIssuer{}
+	h := newTestHandler(t, issuer, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
+	w := postForm(t, h.Token, url.Values{
+		"grant_type":    {"urn:ietf:params:oauth:grant-type:saml2-bearer"},
+		"client_id":     {"c1"},
+		"client_secret": {"s1"},
+		"assertion":     {"not-valid-base64url!!!"},
+	})
+
+	// Assert
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", w.Code, w.Body.String())
+	}
+	body := decodeOAuthError(t, w)
+	if body["error"] != "invalid_request" {
+		t.Errorf(`error = %q, want "invalid_request"`, body["error"])
+	}
+}
+
 func TestToken_SuccessfulIssuance_Returns200WithAccessToken(t *testing.T) {
 	// Arrange
 	issuer := &fakeIssuer{resp: &domain.GrantResponse{

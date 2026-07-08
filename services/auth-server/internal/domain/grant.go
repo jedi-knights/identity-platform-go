@@ -19,6 +19,13 @@ const (
 	// are polling the token endpoint while a user approves the request on
 	// a separate, browser-capable device.
 	GrantTypeDeviceCode GrantType = "urn:ietf:params:oauth:grant-type:device_code"
+
+	// GrantTypeSAML2Bearer is the RFC 7522 §2.1 SAML 2.0 Bearer Assertion
+	// Grant per ADR-0026 — a SAML assertion identifying the resource owner
+	// is exchanged for an access token. Scoped to the assertion-as-grant
+	// use case only; RFC 7522 §2.2 (SAML for client authentication) is not
+	// implemented.
+	GrantTypeSAML2Bearer GrantType = "urn:ietf:params:oauth:grant-type:saml2-bearer"
 )
 
 // ClientAssertionTypeJWTBearer is the RFC 7523 §2.2 client_assertion_type
@@ -95,6 +102,11 @@ type GrantRequest struct {
 	// that issues an access token stamps it onto the resulting
 	// domain.Token unchanged, the same way AuthorizationDetails does.
 	DPoPJKT string
+
+	// SAMLAssertion is the RFC 7522 §3 raw assertion XML, populated by the
+	// HTTP layer only when GrantType == GrantTypeSAML2Bearer (base64url-decoded
+	// from the `assertion` form parameter); ignored by every other strategy.
+	SAMLAssertion string
 }
 
 // GrantResponse contains the issued token information.
