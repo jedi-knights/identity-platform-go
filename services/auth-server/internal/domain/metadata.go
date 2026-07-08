@@ -17,6 +17,7 @@ type AuthorizationServerMetadata struct {
 	RevocationEndpoint                        string   `json:"revocation_endpoint,omitempty"`
 	JWKSURI                                   string   `json:"jwks_uri,omitempty"`
 	RegistrationEndpoint                      string   `json:"registration_endpoint,omitempty"`
+	PushedAuthorizationRequestEndpoint        string   `json:"pushed_authorization_request_endpoint,omitempty"`
 	ScopesSupported                           []string `json:"scopes_supported,omitempty"`
 	ResponseTypesSupported                    []string `json:"response_types_supported"`
 	GrantTypesSupported                       []string `json:"grant_types_supported,omitempty"`
