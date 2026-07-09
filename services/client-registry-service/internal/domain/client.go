@@ -68,6 +68,13 @@ type OAuthClient struct {
 	// carry a non-empty hash.
 	RegistrationAccessTokenHash string
 
+	// JWKSURI is the RFC 7591 §2 registration field advertising where
+	// this client publishes its public signing key(s), for RFC 7523
+	// JWT-bearer client authentication (ADR-0023). Empty means the
+	// client has not opted in — client_secret remains its only
+	// credential at the token endpoint.
+	JWKSURI string
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	Active    bool
@@ -94,6 +101,10 @@ type CreateClientRequest struct {
 	Scopes       []string `json:"scopes"`
 	RedirectURIs []string `json:"redirect_uris"`
 	GrantTypes   []string `json:"grant_types"`
+	// JWKSURI opts this client into RFC 7523 JWT-bearer client
+	// authentication (ADR-0023). Optional — empty means client_secret
+	// remains the client's only credential.
+	JWKSURI string `json:"jwks_uri,omitempty"`
 }
 
 // CreateClientResponse contains the newly created client's credentials.
@@ -107,6 +118,7 @@ type CreateClientResponse struct {
 	Scopes       []string `json:"scopes"`
 	RedirectURIs []string `json:"redirect_uris"`
 	GrantTypes   []string `json:"grant_types"`
+	JWKSURI      string   `json:"jwks_uri,omitempty"`
 }
 
 // GetClientResponse contains client details (secret excluded).
@@ -119,6 +131,7 @@ type GetClientResponse struct {
 	RedirectURIs []string `json:"redirect_uris"`
 	GrantTypes   []string `json:"grant_types"`
 	Active       bool     `json:"active"`
+	JWKSURI      string   `json:"jwks_uri,omitempty"`
 }
 
 // ValidateClientRequest contains credentials to validate.

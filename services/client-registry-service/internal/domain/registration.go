@@ -27,6 +27,11 @@ type RegistrationRequest struct {
 	SoftwareID              string   `json:"software_id,omitempty"`
 	SoftwareVersion         string   `json:"software_version,omitempty"`
 	SoftwareStatement       string   `json:"software_statement,omitempty"`
+	// JWKSURI opts this client into RFC 7523 JWT-bearer client
+	// authentication (ADR-0023). Set at registration time only — the
+	// companion RFC 7592 update endpoint does not currently change it
+	// once set (see ADR-0023's stated scope).
+	JWKSURI string `json:"jwks_uri,omitempty"`
 }
 
 // RegistrationResponse is the RFC 7591 §3.2.1 success response. It
@@ -50,6 +55,7 @@ type RegistrationResponse struct {
 	ResponseTypes           []string `json:"response_types"`
 	TokenEndpointAuthMethod string   `json:"token_endpoint_auth_method"`
 	Scope                   string   `json:"scope,omitempty"`
+	JWKSURI                 string   `json:"jwks_uri,omitempty"`
 }
 
 // RFC 7591 §3.2.2 closed error code set. Internal failures are mapped

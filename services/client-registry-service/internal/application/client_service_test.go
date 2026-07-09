@@ -181,6 +181,70 @@ func TestClientService_GetClient_NotFound(t *testing.T) {
 	}
 }
 
+// TestClientService_CreateClient_PersistsJWKSURI verifies the RFC 7591 §2
+// jwks_uri registration field (ADR-0023) round-trips through CreateClient
+// into both the response and the stored record — RFC 7523 client-assertion
+// verification reads it back via GetClient.
+func TestClientService_CreateClient_PersistsJWKSURI(t *testing.T) {
+	repo := newFakeClientRepo()
+	svc := newSvc(t, repo)
+
+	resp, err := svc.CreateClient(context.Background(), domain.CreateClientRequest{
+		Name:       "JWT-Bearer App",
+		GrantTypes: []string{"client_credentials"},
+		JWKSURI:    "https://client.example.com/.well-known/jwks.json",
+	})
+	if err != nil {
+		t.Fatalf("CreateClient: %v", err)
+	}
+	if resp.JWKSURI != "https://client.example.com/.well-known/jwks.json" {
+		t.Errorf("response JWKSURI = %q", resp.JWKSURI)
+	}
+
+	stored, err := repo.FindByID(context.Background(), resp.ClientID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if stored.JWKSURI != "https://client.example.com/.well-known/jwks.json" {
+		t.Errorf("stored JWKSURI = %q", stored.JWKSURI)
+	}
+}
+
+func TestClientService_GetClient_ReturnsJWKSURI(t *testing.T) {
+	repo := newFakeClientRepo()
+	repo.clients["existing-id"] = &domain.OAuthClient{
+		ID:        "existing-id",
+		Name:      "Existing Client",
+		Active:    true,
+		CreatedAt: time.Now(),
+		JWKSURI:   "https://client.example.com/.well-known/jwks.json",
+	}
+
+	svc := application.NewClientService(repo)
+	resp, err := svc.GetClient(context.Background(), "existing-id")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.JWKSURI != "https://client.example.com/.well-known/jwks.json" {
+		t.Errorf("GetClient JWKSURI = %q", resp.JWKSURI)
+	}
+}
+
+func TestClientService_CreateClient_JWKSURIOptional(t *testing.T) {
+	svc := newSvc(t, newFakeClientRepo())
+
+	resp, err := svc.CreateClient(context.Background(), domain.CreateClientRequest{
+		Name:       "Secret-Only App",
+		GrantTypes: []string{"client_credentials"},
+	})
+	if err != nil {
+		t.Fatalf("CreateClient: %v", err)
+	}
+	if resp.JWKSURI != "" {
+		t.Errorf("JWKSURI = %q, want empty when not supplied", resp.JWKSURI)
+	}
+}
+
 func TestClientService_ValidateClient_Valid(t *testing.T) {
 	repo := newFakeClientRepo()
 	repo.clients["my-client"] = &domain.OAuthClient{

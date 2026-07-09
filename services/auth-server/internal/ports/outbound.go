@@ -6,6 +6,7 @@ package ports
 
 import (
 	"context"
+	"crypto/rsa"
 
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/domain"
 )
@@ -74,4 +75,18 @@ type UserClaims struct {
 // and /userinfo returns the platform's minimum (sub only).
 type UserClaimsFetcher interface {
 	GetUserClaims(ctx context.Context, subjectID string) (*UserClaims, error)
+}
+
+// ClientJWKSFetcher is the outbound port for resolving an RFC 7523
+// client-assertion signing key (ADR-0023). Unlike this platform's own
+// JWKS (one document, fixed at process startup — see
+// example-resource-service's jwks.Fetcher), the caller supplies a
+// different jwksURI per lookup, since each client registers its own key
+// endpoint. Implementations cache per-URI to avoid a network round trip
+// on every token request.
+type ClientJWKSFetcher interface {
+	// FetchKey returns the RSA public key identified by kid at jwksURI.
+	// Returns an error if the document cannot be fetched/parsed or kid is
+	// not present in it.
+	FetchKey(ctx context.Context, jwksURI, kid string) (*rsa.PublicKey, error)
 }

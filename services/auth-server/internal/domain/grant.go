@@ -21,6 +21,12 @@ const (
 	GrantTypeDeviceCode GrantType = "urn:ietf:params:oauth:grant-type:device_code"
 )
 
+// ClientAssertionTypeJWTBearer is the RFC 7523 §2.2 client_assertion_type
+// value this server accepts (ADR-0023). Any other client_assertion_type
+// value (e.g. RFC 7522's SAML2 URN) is not supported — the token endpoint
+// falls back to requiring client_secret in that case.
+const ClientAssertionTypeJWTBearer = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+
 // RFC 8693 token type URN values. Initially only the access_token URN
 // is supported on both input and output — the platform issues JWTs and
 // validates JWTs minted by itself. Other URNs (ID-token, JWT, SAML 2.0,
@@ -49,6 +55,17 @@ type GrantRequest struct {
 	// by the HTTP layer only when GrantType == GrantTypeDeviceCode; ignored
 	// by every other strategy.
 	DeviceCode string
+
+	// ClientAssertion and ClientAssertionType are the RFC 7523 §2.2
+	// JWT-bearer client authentication parameters (ADR-0023). Populated by
+	// the HTTP layer for every grant type; a strategy that supports
+	// assertion-based auth checks ClientAssertion != "" before falling
+	// back to ClientSecret. client_id is still required and is verified
+	// against the assertion's iss/sub claims after signature verification
+	// — see ADR-0023 "Alternatives Considered" for why client_id is not
+	// derived solely from the assertion.
+	ClientAssertion     string
+	ClientAssertionType string
 
 	// Token-exchange (RFC 8693 §2.1) parameters. Populated by the HTTP
 	// layer only when GrantType == GrantTypeTokenExchange; ignored by

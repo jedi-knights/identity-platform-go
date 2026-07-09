@@ -124,7 +124,7 @@ func TestClientCredentialsStrategy_Handle_Success(t *testing.T) {
 		[]domain.GrantType{domain.GrantTypeClientCredentials},
 	)
 
-	strategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	strategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour, nil)
 
 	resp, err := strategy.Handle(context.Background(), domain.GrantRequest{
 		GrantType:    domain.GrantTypeClientCredentials,
@@ -158,7 +158,7 @@ func TestClientCredentialsStrategy_Handle_IssuesRefreshToken(t *testing.T) {
 		[]domain.GrantType{domain.GrantTypeClientCredentials},
 	)
 
-	strategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	strategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour, nil)
 
 	resp, err := strategy.Handle(context.Background(), domain.GrantRequest{
 		GrantType:    domain.GrantTypeClientCredentials,
@@ -189,7 +189,7 @@ func TestClientCredentialsStrategy_Handle_WrongSecret(t *testing.T) {
 		[]domain.GrantType{domain.GrantTypeClientCredentials},
 	)
 
-	strategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	strategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour, nil)
 
 	_, err := strategy.Handle(context.Background(), domain.GrantRequest{
 		GrantType:    domain.GrantTypeClientCredentials,
@@ -208,7 +208,7 @@ func TestClientCredentialsStrategy_Handle_ClientNotFound(t *testing.T) {
 	refreshTokenRepo := newMockRefreshTokenRepo()
 	tokenGen := &mockTokenGen{}
 
-	strategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	strategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour, nil)
 
 	_, err := strategy.Handle(context.Background(), domain.GrantRequest{
 		GrantType:    domain.GrantTypeClientCredentials,
@@ -233,7 +233,7 @@ func TestClientCredentialsStrategy_Handle_ScopeNotAllowed(t *testing.T) {
 		[]domain.GrantType{domain.GrantTypeClientCredentials},
 	)
 
-	strategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	strategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour, nil)
 
 	_, err := strategy.Handle(context.Background(), domain.GrantRequest{
 		GrantType:    domain.GrantTypeClientCredentials,
@@ -267,7 +267,7 @@ func seedRefreshToken(t *testing.T, repo *mockRefreshTokenRepo, raw, clientID, s
 }
 
 func newRefreshTokenStrategy(auth *mockClientAuthenticator, tokenRepo *mockTokenRepo, refreshRepo *mockRefreshTokenRepo) *application.RefreshTokenStrategy {
-	return application.NewRefreshTokenStrategy(auth, tokenRepo, refreshRepo, &mockTokenGen{}, nil, time.Hour, 7*24*time.Hour)
+	return application.NewRefreshTokenStrategy(auth, tokenRepo, refreshRepo, &mockTokenGen{}, nil, time.Hour, 7*24*time.Hour, nil)
 }
 
 func TestRefreshTokenStrategy_Handle_Success(t *testing.T) {
@@ -431,7 +431,7 @@ func TestGrantStrategyRegistry_Handle_Routes(t *testing.T) {
 		[]domain.GrantType{domain.GrantTypeClientCredentials},
 	)
 
-	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour, nil)
 	registry := application.NewGrantStrategyRegistry(ccStrategy)
 
 	resp, err := registry.Handle(context.Background(), domain.GrantRequest{
@@ -462,7 +462,7 @@ func TestGrantStrategyRegistry_Handle_EmitsTokenIssued(t *testing.T) {
 		[]domain.GrantType{domain.GrantTypeClientCredentials},
 	)
 
-	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour, nil)
 	captured := &captureSink{}
 	registry := application.
 		NewGrantStrategyRegistry(ccStrategy).
@@ -526,7 +526,7 @@ func TestGrantStrategyRegistry_Handle_FailsWhenAuditFails(t *testing.T) {
 		[]domain.GrantType{domain.GrantTypeClientCredentials},
 	)
 
-	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour, nil)
 	registry := application.
 		NewGrantStrategyRegistry(ccStrategy).
 		WithAudit(audit.New(&captureSink{err: errAuditFailure}), "auth-server")
@@ -561,7 +561,7 @@ func TestGrantStrategyRegistry_Handle_EmitsAgentActorType(t *testing.T) {
 	agentClient.ActorType = domain.ActorTypeAgent
 	auth.clients["agent-claude"] = agentClient
 
-	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour, nil)
 	captured := &captureSink{}
 	registry := application.
 		NewGrantStrategyRegistry(ccStrategy).
@@ -606,7 +606,7 @@ func TestGrantStrategyRegistry_Handle_LegacyEmptyActorTypeFailsClosed(t *testing
 	// ActorType deliberately not set (pre-ADR-0015 record).
 	auth.clients["legacy-c1"] = legacy
 
-	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour, nil)
 	captured := &captureSink{}
 	registry := application.
 		NewGrantStrategyRegistry(ccStrategy).
@@ -658,7 +658,7 @@ func TestClientCredentialsStrategy_Supports(t *testing.T) {
 	refreshTokenRepo := newMockRefreshTokenRepo()
 	tokenGen := &mockTokenGen{}
 
-	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour)
+	ccStrategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour, nil)
 
 	if !ccStrategy.Supports(domain.GrantTypeClientCredentials) {
 		t.Error("expected client_credentials to be supported")

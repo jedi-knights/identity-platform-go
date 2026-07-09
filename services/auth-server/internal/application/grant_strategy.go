@@ -42,6 +42,25 @@ var (
 	ErrUnauthorizedClient = errors.New("unauthorized_client")
 )
 
+// authenticateClient resolves the calling client via either a
+// client_secret (the default) or an RFC 7523 JWT-bearer assertion
+// (ADR-0023). Shared by every strategy that supports both, so the
+// dispatch rule lives in one place. A GrantRequest carrying a non-empty
+// ClientAssertion always uses the assertion path — there is no fallback
+// to ClientSecret once a client presents one. assertionAuth may be nil
+// (JWT-bearer support not wired for this strategy or deployment); a
+// request presenting an assertion in that case is rejected rather than
+// silently falling back to secret-based auth.
+func authenticateClient(ctx context.Context, secretAuth ports.ClientAuthenticator, assertionAuth *ClientAssertionValidator, req domain.GrantRequest) (*domain.Client, error) {
+	if req.ClientAssertion != "" {
+		if assertionAuth == nil {
+			return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "client assertion authentication is not configured")
+		}
+		return assertionAuth.Authenticate(ctx, req.ClientID, req.ClientAssertion)
+	}
+	return secretAuth.Authenticate(ctx, req.ClientID, req.ClientSecret)
+}
+
 // GrantStrategy defines the interface for handling grant types (Strategy pattern).
 type GrantStrategy interface {
 	Handle(ctx context.Context, req domain.GrantRequest) (*domain.GrantResponse, error)
@@ -180,10 +199,16 @@ type ClientCredentialsStrategy struct {
 	permsFetcher     ports.SubjectPermissionsFetcher // nil = no roles/permissions in JWT
 	ttl              time.Duration
 	refreshTTL       time.Duration
+	// assertionAuth handles RFC 7523 JWT-bearer client authentication
+	// (ADR-0023) when the request carries a client_assertion. Nil =
+	// JWT-bearer support not wired; such a request is then rejected
+	// rather than silently falling back to client_secret.
+	assertionAuth *ClientAssertionValidator
 }
 
 // NewClientCredentialsStrategy creates a ClientCredentialsStrategy.
 // permsFetcher may be nil — when nil, tokens are issued without roles/permissions claims.
+// assertionAuth may be nil — when nil, this strategy accepts client_secret only.
 func NewClientCredentialsStrategy(
 	clientAuth ports.ClientAuthenticator,
 	tokenRepo domain.TokenRepository,
@@ -192,6 +217,7 @@ func NewClientCredentialsStrategy(
 	permsFetcher ports.SubjectPermissionsFetcher,
 	ttl time.Duration,
 	refreshTTL time.Duration,
+	assertionAuth *ClientAssertionValidator,
 ) *ClientCredentialsStrategy {
 	return &ClientCredentialsStrategy{
 		clientAuth:       clientAuth,
@@ -201,6 +227,7 @@ func NewClientCredentialsStrategy(
 		permsFetcher:     permsFetcher,
 		ttl:              ttl,
 		refreshTTL:       refreshTTL,
+		assertionAuth:    assertionAuth,
 	}
 }
 
@@ -210,7 +237,7 @@ func (s *ClientCredentialsStrategy) Supports(gt domain.GrantType) bool {
 }
 
 func (s *ClientCredentialsStrategy) validateClient(ctx context.Context, req domain.GrantRequest) (*domain.Client, error) {
-	client, err := s.clientAuth.Authenticate(ctx, req.ClientID, req.ClientSecret)
+	client, err := authenticateClient(ctx, s.clientAuth, s.assertionAuth, req)
 	if err != nil {
 		// Preserve the specific error code from the authenticator (Unauthorized vs Internal).
 		return nil, err
@@ -347,11 +374,16 @@ type RefreshTokenStrategy struct {
 	permsFetcher     ports.SubjectPermissionsFetcher
 	ttl              time.Duration
 	refreshTTL       time.Duration
+	// assertionAuth handles RFC 7523 JWT-bearer client authentication
+	// (ADR-0023) when the request carries a client_assertion. Nil = not
+	// wired; such a request is then rejected.
+	assertionAuth *ClientAssertionValidator
 }
 
 // NewRefreshTokenStrategy creates a RefreshTokenStrategy.
 // permsFetcher may be nil — when nil, the re-issued token carries the same scopes
-// as the original refresh token but no RBAC claims.
+// as the original refresh token but no RBAC claims. assertionAuth may be
+// nil — when nil, this strategy accepts client_secret only.
 func NewRefreshTokenStrategy(
 	clientAuth ports.ClientAuthenticator,
 	tokenRepo domain.TokenRepository,
@@ -360,6 +392,7 @@ func NewRefreshTokenStrategy(
 	permsFetcher ports.SubjectPermissionsFetcher,
 	ttl time.Duration,
 	refreshTTL time.Duration,
+	assertionAuth *ClientAssertionValidator,
 ) *RefreshTokenStrategy {
 	return &RefreshTokenStrategy{
 		clientAuth:       clientAuth,
@@ -369,6 +402,7 @@ func NewRefreshTokenStrategy(
 		permsFetcher:     permsFetcher,
 		ttl:              ttl,
 		refreshTTL:       refreshTTL,
+		assertionAuth:    assertionAuth,
 	}
 }
 
@@ -397,7 +431,7 @@ func (s *RefreshTokenStrategy) checkExpiry(ctx context.Context, raw string, rt *
 // (ADR-0015) onto the rotated access token. Extracted from Handle to keep
 // complexity bounded.
 func (s *RefreshTokenStrategy) validateRefreshToken(ctx context.Context, req domain.GrantRequest) (*domain.RefreshToken, *domain.Client, error) {
-	client, err := s.clientAuth.Authenticate(ctx, req.ClientID, req.ClientSecret)
+	client, err := authenticateClient(ctx, s.clientAuth, s.assertionAuth, req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("authenticating client: %w", err)
 	}
@@ -552,6 +586,10 @@ type AuthorizationCodeStrategy struct {
 	ttl              time.Duration
 	refreshTTL       time.Duration
 	idTokenTTL       time.Duration
+	// assertionAuth handles RFC 7523 JWT-bearer client authentication
+	// (ADR-0023) when the request carries a client_assertion. Nil = not
+	// wired; such a request is then rejected.
+	assertionAuth *ClientAssertionValidator
 }
 
 // NewAuthorizationCodeStrategy wires the strategy with every collaborator
@@ -560,6 +598,8 @@ type AuthorizationCodeStrategy struct {
 // existing client_credentials behaviour. claimsFetcher and idTokenGen may
 // be nil — the openid scope is then silently dropped from the response and
 // no id_token is issued, matching the legacy OAuth-only behaviour.
+// assertionAuth may be nil — when nil, this strategy accepts client_secret
+// only.
 func NewAuthorizationCodeStrategy(
 	clientAuth ports.ClientAuthenticator,
 	codeRepo domain.AuthorizationCodeRepository,
@@ -570,6 +610,7 @@ func NewAuthorizationCodeStrategy(
 	claimsFetcher ports.UserClaimsFetcher,
 	idTokenGen *IDTokenGenerator,
 	ttl, refreshTTL, idTokenTTL time.Duration,
+	assertionAuth *ClientAssertionValidator,
 ) *AuthorizationCodeStrategy {
 	return &AuthorizationCodeStrategy{
 		clientAuth:       clientAuth,
@@ -583,6 +624,7 @@ func NewAuthorizationCodeStrategy(
 		ttl:              ttl,
 		refreshTTL:       refreshTTL,
 		idTokenTTL:       idTokenTTL,
+		assertionAuth:    assertionAuth,
 	}
 }
 
@@ -600,7 +642,7 @@ func (s *AuthorizationCodeStrategy) Handle(ctx context.Context, req domain.Grant
 	if err := validateAuthCodeRequestFields(req); err != nil {
 		return nil, err
 	}
-	client, err := s.clientAuth.Authenticate(ctx, req.ClientID, req.ClientSecret)
+	client, err := authenticateClient(ctx, s.clientAuth, s.assertionAuth, req)
 	if err != nil {
 		return nil, err
 	}

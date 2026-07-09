@@ -46,6 +46,12 @@ type Client struct {
 	Scopes       []string
 	RedirectURIs []string
 	GrantTypes   []GrantType
+
+	// JWKSURI is the RFC 7591 §2 registration field advertising where this
+	// client publishes its public signing key(s), for RFC 7523 JWT-bearer
+	// client authentication (ADR-0023). Empty means the client has not
+	// opted in — Secret remains its only credential at the token endpoint.
+	JWKSURI string
 }
 
 // ResolvedActorType returns the client's ActorType normalised against the

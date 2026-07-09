@@ -48,6 +48,37 @@ func TestClientAuthenticator_Authenticate_Success(t *testing.T) {
 	}
 }
 
+// TestClientAuthenticator_Lookup_CopiesJWKSURI covers the RFC 7591 §2
+// jwks_uri field (ADR-0023) — Lookup is the path application.ClientAssertionValidator
+// uses to resolve where a client's public key lives.
+func TestClientAuthenticator_Lookup_CopiesJWKSURI(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/clients/jwt-bearer-client" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"client_id":     "jwt-bearer-client",
+			"name":          "JWT-Bearer Client",
+			"grant_types":   []string{"client_credentials"},
+			"active":        true,
+			"jwks_uri":      "https://client.example.com/.well-known/jwks.json",
+			"redirect_uris": []string{},
+		})
+	}))
+	defer srv.Close()
+
+	auth := clientregistry.NewClientAuthenticator(srv.URL, srv.Client())
+	client, err := auth.Lookup(context.Background(), "jwt-bearer-client")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if client.JWKSURI != "https://client.example.com/.well-known/jwks.json" {
+		t.Errorf("JWKSURI = %q", client.JWKSURI)
+	}
+}
+
 func TestClientAuthenticator_Authenticate_InvalidCredentials(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
