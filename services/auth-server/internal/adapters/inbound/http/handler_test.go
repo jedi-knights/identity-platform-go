@@ -63,11 +63,18 @@ func (f *fakeRevoker) Revoke(_ context.Context, _ string) error {
 
 type fakeClientAuth struct {
 	err error
+	// client overrides the returned client's metadata (e.g. RedirectURIs,
+	// Scopes) — nil keeps the original minimal default so every existing
+	// caller of this fake is unaffected.
+	client *domain.Client
 }
 
 func (f *fakeClientAuth) Authenticate(_ context.Context, _, _ string) (*domain.Client, error) {
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.client != nil {
+		return f.client, nil
 	}
 	return &domain.Client{ID: "c1"}, nil
 }
@@ -1422,6 +1429,290 @@ func TestAuthorize_NilConfig_StillReturnsNotImplemented(t *testing.T) {
 	// Assert
 	if w.Code != http.StatusNotImplemented {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusNotImplemented)
+	}
+}
+
+// --- POST /oauth/par (RFC 9126) ---
+
+// fakePARRepo is a minimal domain.PushedAuthorizationRequestRepository
+// double: Save records the last saved request, Consume returns whatever
+// the test configured.
+type fakePARRepo struct {
+	mu          sync.Mutex
+	lastSaved   *domain.PushedAuthorizationRequest
+	saveErr     error
+	consumeResp *domain.PushedAuthorizationRequest
+	consumeErr  error
+}
+
+func (f *fakePARRepo) Save(_ context.Context, req *domain.PushedAuthorizationRequest) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+	f.lastSaved = req
+	return nil
+}
+
+func (f *fakePARRepo) Consume(_ context.Context, _ string) (*domain.PushedAuthorizationRequest, error) {
+	if f.consumeErr != nil {
+		return nil, f.consumeErr
+	}
+	return f.consumeResp, nil
+}
+
+func parClient() *domain.Client {
+	return &domain.Client{
+		ID:           "client-a",
+		Type:         domain.ClientTypeConfidential,
+		RedirectURIs: []string{"https://rp.example.com/cb"},
+		Scopes:       []string{"read", "write"},
+		GrantTypes:   []domain.GrantType{domain.GrantTypeAuthorizationCode},
+	}
+}
+
+func newPARTestHandler(t *testing.T, clientAuth *fakeClientAuth, parRepo *fakePARRepo) *authhttp.Handler {
+	t.Helper()
+	logger := logging.New(logging.Config{Output: io.Discard})
+	return authhttp.NewHandler(
+		&fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{}, clientAuth,
+		logger, "",
+		&authhttp.AuthorizeConfig{
+			ClientLookup: &fakeClientLookup{clients: map[string]*domain.Client{"client-a": parClient()}},
+			PARRepo:      parRepo,
+			PARTTL:       90 * time.Second,
+		},
+	)
+}
+
+func postPAR(t *testing.T, h *authhttp.Handler, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/oauth/par", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.PushAuthorize(w, r)
+	return w
+}
+
+func validPARForm() url.Values {
+	return url.Values{
+		"response_type":         {"code"},
+		"client_id":             {"client-a"},
+		"client_secret":         {"whatever"},
+		"redirect_uri":          {"https://rp.example.com/cb"},
+		"scope":                 {"read"},
+		"state":                 {"state-xyz"},
+		"code_challenge":        {"challenge-value"},
+		"code_challenge_method": {"S256"},
+	}
+}
+
+func TestPushAuthorize_HappyPath_Returns201WithRequestURI(t *testing.T) {
+	// Arrange
+	repo := &fakePARRepo{}
+	h := newPARTestHandler(t, &fakeClientAuth{client: parClient()}, repo)
+
+	// Act
+	w := postPAR(t, h, validPARForm())
+
+	// Assert
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	requestURI, _ := resp["request_uri"].(string)
+	if !strings.HasPrefix(requestURI, "urn:ietf:params:oauth:request_uri:") {
+		t.Errorf("request_uri = %q, want urn:ietf:params:oauth:request_uri: prefix", requestURI)
+	}
+	if resp["expires_in"] != float64(90) {
+		t.Errorf("expires_in = %v, want 90", resp["expires_in"])
+	}
+	if repo.lastSaved == nil {
+		t.Fatal("Save was not called")
+	}
+	if repo.lastSaved.ClientID != "client-a" || repo.lastSaved.RedirectURI != "https://rp.example.com/cb" {
+		t.Errorf("saved request = %+v", repo.lastSaved)
+	}
+}
+
+func TestPushAuthorize_InvalidClient_Returns401(t *testing.T) {
+	// Arrange
+	repo := &fakePARRepo{}
+	h := newPARTestHandler(t, &fakeClientAuth{err: apperrors.New(apperrors.ErrCodeUnauthorized, "bad secret")}, repo)
+
+	// Act
+	w := postPAR(t, h, validPARForm())
+
+	// Assert
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+	if repo.lastSaved != nil {
+		t.Error("Save was invoked despite failed client authentication")
+	}
+}
+
+func TestPushAuthorize_MissingPKCE_Returns400(t *testing.T) {
+	// Arrange
+	repo := &fakePARRepo{}
+	h := newPARTestHandler(t, &fakeClientAuth{client: parClient()}, repo)
+	form := validPARForm()
+	form.Del("code_challenge")
+
+	// Act
+	w := postPAR(t, h, form)
+
+	// Assert
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if resp["error"] != "invalid_request" {
+		t.Errorf("error = %q, want invalid_request", resp["error"])
+	}
+	if repo.lastSaved != nil {
+		t.Error("Save was invoked despite missing code_challenge")
+	}
+}
+
+func TestPushAuthorize_UnregisteredRedirectURI_Returns400(t *testing.T) {
+	// Arrange
+	repo := &fakePARRepo{}
+	h := newPARTestHandler(t, &fakeClientAuth{client: parClient()}, repo)
+	form := validPARForm()
+	form.Set("redirect_uri", "https://attacker.example.com/cb")
+
+	// Act
+	w := postPAR(t, h, form)
+
+	// Assert
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", w.Code, w.Body.String())
+	}
+	if repo.lastSaved != nil {
+		t.Error("Save was invoked despite an unregistered redirect_uri")
+	}
+}
+
+func TestPushAuthorize_NilConfig_Returns501(t *testing.T) {
+	// Arrange
+	h := newTestHandler(t, &fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{})
+
+	// Act
+	w := postPAR(t, h, validPARForm())
+
+	// Assert
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusNotImplemented)
+	}
+}
+
+// --- GET /oauth/authorize?request_uri=... (RFC 9126 §4) ---
+
+func TestAuthorize_WithRequestURI_HappyPath_RedirectsToLoginUIWithChallenge(t *testing.T) {
+	// Arrange
+	challengeRepo := &fakeChallengeRepo{}
+	parRepo := &fakePARRepo{consumeResp: &domain.PushedAuthorizationRequest{
+		RequestURI:          "urn:ietf:params:oauth:request_uri:abc",
+		ClientID:            "client-a",
+		ResponseType:        "code",
+		RedirectURI:         "https://rp.example.com/cb",
+		Scope:               "read",
+		State:               "state-xyz",
+		CodeChallenge:       "challenge-value",
+		CodeChallengeMethod: "S256",
+	}}
+	logger := logging.New(logging.Config{Output: io.Discard})
+	h := authhttp.NewHandler(
+		&fakeIssuer{}, &fakeIntrospector{}, &fakeRevoker{}, &fakeClientAuth{},
+		logger, "",
+		&authhttp.AuthorizeConfig{
+			ClientLookup:  &fakeClientLookup{clients: map[string]*domain.Client{"client-a": parClient()}},
+			ChallengeRepo: challengeRepo,
+			LoginUIURL:    "https://login.example.com",
+			ChallengeTTL:  5 * time.Minute,
+			PARRepo:       parRepo,
+			PARTTL:        90 * time.Second,
+		},
+	)
+	r := httptest.NewRequest(http.MethodGet,
+		"/oauth/authorize?request_uri=urn:ietf:params:oauth:request_uri:abc&client_id=client-a", nil)
+	w := httptest.NewRecorder()
+
+	// Act
+	h.Authorize(w, r)
+
+	// Assert
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302; body = %s", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	if !strings.HasPrefix(loc, "https://login.example.com/sign-in?login_challenge=") {
+		t.Errorf("Location = %q, want redirect to login-ui", loc)
+	}
+	if challengeRepo.lastSaved == nil {
+		t.Fatal("LoginChallenge was not saved")
+	}
+	if challengeRepo.lastSaved.RedirectURI != "https://rp.example.com/cb" || challengeRepo.lastSaved.State != "state-xyz" {
+		t.Errorf("saved challenge = %+v, want fields sourced from the pushed request", challengeRepo.lastSaved)
+	}
+}
+
+func TestAuthorize_WithRequestURI_UnknownRequestURI_Returns400(t *testing.T) {
+	// Arrange
+	parRepo := &fakePARRepo{consumeErr: domain.ErrPushedAuthorizationRequestNotFound}
+	h := newPARTestHandler(t, &fakeClientAuth{}, parRepo)
+	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize?request_uri=urn:unknown&client_id=client-a", nil)
+	w := httptest.NewRecorder()
+
+	// Act
+	h.Authorize(w, r)
+
+	// Assert
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestAuthorize_WithRequestURI_ClientIDMismatch_Returns400(t *testing.T) {
+	// Arrange — RFC 9126 §4's anti-injection binding: the query's client_id
+	// must match the client_id the request_uri was pushed under.
+	parRepo := &fakePARRepo{consumeResp: &domain.PushedAuthorizationRequest{
+		RequestURI: "urn:ietf:params:oauth:request_uri:abc",
+		ClientID:   "client-a",
+	}}
+	h := newPARTestHandler(t, &fakeClientAuth{}, parRepo)
+	r := httptest.NewRequest(http.MethodGet,
+		"/oauth/authorize?request_uri=urn:ietf:params:oauth:request_uri:abc&client_id=client-b", nil)
+	w := httptest.NewRecorder()
+
+	// Act
+	h.Authorize(w, r)
+
+	// Assert
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+func TestAuthorize_WithRequestURI_MissingClientID_Returns400(t *testing.T) {
+	// Arrange
+	parRepo := &fakePARRepo{}
+	h := newPARTestHandler(t, &fakeClientAuth{}, parRepo)
+	r := httptest.NewRequest(http.MethodGet, "/oauth/authorize?request_uri=urn:ietf:params:oauth:request_uri:abc", nil)
+	w := httptest.NewRecorder()
+
+	// Act
+	h.Authorize(w, r)
+
+	// Assert
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
 	}
 }
 

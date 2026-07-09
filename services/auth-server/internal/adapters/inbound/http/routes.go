@@ -27,6 +27,10 @@ func NewRouter(h *Handler, jwks *JWKSHandler, userInfo *UserInfoHandler, metadat
 
 	mux.HandleFunc("POST /oauth/token", h.Token)
 	mux.HandleFunc("GET /oauth/authorize", h.Authorize)
+	// /oauth/par is RFC 9126 (ADR-0021); the handler itself returns 501
+	// when the authorize subsystem (AuthorizeConfig) is not configured,
+	// mirroring /oauth/authorize's own nil-config behavior.
+	mux.HandleFunc("POST /oauth/par", h.PushAuthorize)
 	mux.HandleFunc("POST /oauth/introspect", h.Introspect)
 	mux.HandleFunc("POST /oauth/revoke", h.Revoke)
 	// /internal/issue-code is service-only; the handler itself returns 404

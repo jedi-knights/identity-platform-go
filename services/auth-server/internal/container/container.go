@@ -70,6 +70,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, authorizationCodeRepositoryProvider)
 	platform.Register(c, authorizationCodeIssuerProvider)
 	platform.Register(c, loginChallengeRepositoryProvider)
+	platform.Register(c, pushedAuthorizationRequestRepositoryProvider)
 	platform.Register(c, clientWiringProvider)
 	platform.Register(c, userAuthenticatorProvider)
 	platform.Register(c, userClaimsFetcherProvider)
@@ -205,6 +206,24 @@ func loginChallengeRepositoryProvider(ctx context.Context, c *platform.Container
 		return nil, fmt.Errorf("connecting to Redis for login challenges: %w", err)
 	}
 	return redisadapter.NewLoginChallengeRepository(client), nil
+}
+
+// pushedAuthorizationRequestRepositoryProvider wires the PAR store (RFC
+// 9126, ADR-0021). Mirrors authorizationCodeRepositoryProvider exactly:
+// Redis when AUTH_REDIS_URL is set, the in-memory adapter otherwise.
+func pushedAuthorizationRequestRepositoryProvider(ctx context.Context, c *platform.Container) (domain.PushedAuthorizationRequestRepository, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if cfg.Redis.URL == "" {
+		log.Info("using in-memory pushed-authorization-request store (AUTH_REDIS_URL not set)")
+		return memory.NewPushedAuthorizationRequestRepository(), nil
+	}
+	log.Info("using Redis pushed-authorization-request store")
+	client, err := redisadapter.NewClient(cfg.Redis.URL)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to Redis for pushed authorization requests: %w", err)
+	}
+	return redisadapter.NewPushedAuthorizationRequestRepository(client), nil
 }
 
 // authorizationCodeIssuerProvider wires the application-layer issuer that
@@ -482,11 +501,12 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	tokens := platform.MustResolve[*application.TokenService](ctx, c)
 	challengeRepo := platform.MustResolve[domain.LoginChallengeRepository](ctx, c)
 	codeIssuer := platform.MustResolve[ports.AuthorizationCodeIssuer](ctx, c)
+	parRepo := platform.MustResolve[domain.PushedAuthorizationRequestRepository](ctx, c)
 
 	issuer := inboundhttp.NewTokenIssuerAdapter(grants)
 	introspector := inboundhttp.NewTokenIntrospectorAdapter(tokens)
 	revoker := inboundhttp.NewTokenRevokerAdapter(tokens)
-	authorizeCfg := authorizeConfigFor(cfg, cw, challengeRepo, codeIssuer)
+	authorizeCfg := authorizeConfigFor(cfg, cw, challengeRepo, codeIssuer, parRepo)
 	emitter := platform.MustResolve[audit.Emitter](ctx, c)
 	return inboundhttp.NewHandler(issuer, introspector, revoker, cw.authenticator, log, cfg.Introspection.Secret, authorizeCfg).
 		WithAudit(emitter, "auth-server"), nil
@@ -503,6 +523,7 @@ func authorizeConfigFor(
 	cw *clientWiring,
 	repo domain.LoginChallengeRepository,
 	codeIssuer ports.AuthorizationCodeIssuer,
+	parRepo domain.PushedAuthorizationRequestRepository,
 ) *inboundhttp.AuthorizeConfig {
 	if cfg.LoginUI.URL == "" {
 		return nil
@@ -519,6 +540,8 @@ func authorizeConfigFor(
 		AuthCodeIssuer:  codeIssuer,
 		IssueCodeBearer: cfg.LoginUI.ServiceToken,
 		Issuer:          cfg.JWT.Issuer,
+		PARRepo:         parRepo,
+		PARTTL:          time.Duration(cfg.PAR.TTLSeconds) * time.Second,
 	}
 }
 
