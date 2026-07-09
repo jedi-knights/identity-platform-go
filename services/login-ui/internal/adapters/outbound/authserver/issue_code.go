@@ -43,6 +43,7 @@ type issueCodeResponseDTO struct {
 	Code        string `json:"code"`
 	RedirectURI string `json:"redirect_uri"`
 	State       string `json:"state"`
+	Issuer      string `json:"iss"`
 }
 
 // IssueCode POSTs to auth-server with the bearer service token and returns
@@ -91,5 +92,6 @@ func parseIssueCodeResponse(resp *http.Response) (*ports.IssueCodeResponse, erro
 		Code:        dto.Code,
 		RedirectURI: dto.RedirectURI,
 		State:       dto.State,
+		Issuer:      dto.Issuer,
 	}, nil
 }

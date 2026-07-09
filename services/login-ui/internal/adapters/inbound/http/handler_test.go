@@ -174,6 +174,7 @@ func TestSignInPost_HappyPath_RedirectsToRPWithCodeAndState(t *testing.T) {
 		Code:        "code-xyz",
 		RedirectURI: "https://rp.example.com/cb",
 		State:       "state-abc",
+		Issuer:      "https://auth.example.com",
 	}}
 	h := newSignInHandler(t, ua, ci)
 	values := url.Values{
@@ -217,6 +218,17 @@ func assertSignInRedirect(t *testing.T, w *httptest.ResponseRecorder) {
 	}
 	if got := parsed.Query().Get("state"); got != "state-abc" {
 		t.Errorf("state query = %q, want state-abc", got)
+	}
+	assertSignInRedirectIssuer(t, parsed)
+}
+
+// assertSignInRedirectIssuer checks the RFC 9207 §2 `iss` parameter.
+// Extracted from assertSignInRedirect to keep its cyclomatic complexity
+// within the project's cap of 7.
+func assertSignInRedirectIssuer(t *testing.T, parsed *url.URL) {
+	t.Helper()
+	if got := parsed.Query().Get("iss"); got != "https://auth.example.com" {
+		t.Errorf("iss query = %q, want https://auth.example.com — RFC 9207 §2", got)
 	}
 }
 

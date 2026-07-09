@@ -48,6 +48,10 @@ type AuthorizeConfig struct {
 	IDGenerator     func() (string, error)
 	AuthCodeIssuer  ports.AuthorizationCodeIssuer
 	IssueCodeBearer string
+	// Issuer is echoed as `iss` on every authorization response (RFC 9207
+	// §2), so a client talking to more than one AS can detect a mix-up
+	// attack. Empty means the response omits `iss` entirely.
+	Issuer string
 }
 
 // Handler holds all HTTP handler dependencies.
@@ -362,7 +366,7 @@ func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if code, desc := validateAuthorizeParams(req, client); code != "" {
-		redirectAuthorizeError(w, r, req.RedirectURI, req.State, code, desc)
+		redirectAuthorizeError(w, r, req.RedirectURI, req.State, code, desc, h.authorize.Issuer)
 		return
 	}
 	details, err := domain.ParseAuthorizationDetails(req.AuthorizationDetails)
@@ -371,7 +375,7 @@ func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 		// malformed, the AS returns invalid_authorization_details via
 		// the same error channel as the other authorize-time errors,
 		// i.e. a redirect back to the client.
-		redirectAuthorizeError(w, r, req.RedirectURI, req.State, "invalid_authorization_details", err.Error())
+		redirectAuthorizeError(w, r, req.RedirectURI, req.State, "invalid_authorization_details", err.Error(), h.authorize.Issuer)
 		return
 	}
 	h.persistChallengeAndRedirect(w, r, req, details)
@@ -453,6 +457,10 @@ type issueCodeResponse struct {
 	Code        string `json:"code"`
 	RedirectURI string `json:"redirect_uri"`
 	State       string `json:"state"`
+	// Issuer becomes the `iss` query parameter on login-ui's redirect back
+	// to the relying party (RFC 9207 §2). Empty when AuthorizeConfig.Issuer
+	// is unset.
+	Issuer string `json:"iss,omitempty"`
 }
 
 func (h *Handler) verifyServiceBearer(r *http.Request) bool {
@@ -507,6 +515,7 @@ func (h *Handler) mintAndRespond(w http.ResponseWriter, r *http.Request, challen
 		Code:        code,
 		RedirectURI: challenge.RedirectURI,
 		State:       challenge.State,
+		Issuer:      h.authorize.Issuer,
 	})
 }
 
@@ -661,10 +670,10 @@ func (h *Handler) generateChallengeID() (string, error) {
 }
 
 // redirectAuthorizeError sends a 302 back to the client redirect_uri with
-// ?error=&error_description=&state= per RFC 6749 §4.1.2.1. The redirect URI
-// has already been validated against the client's registered list, so this
-// path is safe to take.
-func redirectAuthorizeError(w http.ResponseWriter, r *http.Request, redirectURI, state, code, description string) {
+// ?error=&error_description=&state=&iss= per RFC 6749 §4.1.2.1 and RFC 9207
+// §2. The redirect URI has already been validated against the client's
+// registered list, so this path is safe to take.
+func redirectAuthorizeError(w http.ResponseWriter, r *http.Request, redirectURI, state, code, description, issuer string) {
 	target, err := url.Parse(redirectURI)
 	if err != nil {
 		// Defense in depth: a redirect_uri that matched the registered set but
@@ -680,6 +689,9 @@ func redirectAuthorizeError(w http.ResponseWriter, r *http.Request, redirectURI,
 	}
 	if state != "" {
 		q.Set("state", state)
+	}
+	if issuer != "" {
+		q.Set("iss", issuer)
 	}
 	target.RawQuery = q.Encode()
 	http.Redirect(w, r, target.String(), http.StatusFound)
