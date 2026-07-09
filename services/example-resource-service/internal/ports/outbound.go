@@ -16,6 +16,13 @@ type IntrospectionResult struct {
 	Audience    []string // RFC 7662 §2.2: aud claim from the token; nil when not set
 	Roles       []string // RBAC roles from JWT claims; nil when not present
 	Permissions []string // resolved permissions ("resource:action"); nil when not present
+
+	// Acr is the RFC 9470 authentication-context-class-reference value
+	// satisfied when the token was issued (ADR-0024 in identity-platform-go's
+	// auth-server). Empty for tokens with no user behind them
+	// (client_credentials, refresh_token) and for any token introspected
+	// before this field existed.
+	Acr string
 }
 
 // TokenIntrospector is the outbound port for validating access tokens.

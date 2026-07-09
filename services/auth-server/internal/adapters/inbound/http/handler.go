@@ -620,6 +620,10 @@ type authorizeRequest struct {
 	CodeChallengeMethod string
 	Prompt              string
 	MaxAge              string
+	// AcrValues is the RFC 9470 / OIDC §3.1.2.1 acr_values query
+	// parameter (ADR-0024) — space-delimited, decomposed onto the
+	// LoginChallenge in persistChallengeAndRedirect.
+	AcrValues string
 	// AuthorizationDetails is the raw RFC 9396 `authorization_details`
 	// query parameter (a JSON-encoded array). Parsed and validated by
 	// [domain.ParseAuthorizationDetails] in the Authorize handler before
@@ -652,6 +656,7 @@ func parseAuthorizeRequestFrom(get func(string) string) authorizeRequest {
 		CodeChallengeMethod:  get("code_challenge_method"),
 		Prompt:               get("prompt"),
 		MaxAge:               get("max_age"),
+		AcrValues:            get("acr_values"),
 		AuthorizationDetails: get("authorization_details"),
 	}
 }
@@ -659,7 +664,10 @@ func parseAuthorizeRequestFrom(get func(string) string) authorizeRequest {
 // authorizeRequestFromPAR rebuilds an authorizeRequest from a consumed
 // PushedAuthorizationRequest (RFC 9126 §4) — the fields are the same set
 // parseAuthorizeRequestFrom populates, just sourced from the store instead
-// of the current request.
+// of the current request. AcrValues is not carried through PAR today —
+// domain.PushedAuthorizationRequest predates ADR-0024 and has no field for
+// it; a request pushed via POST /oauth/par simply arrives with an empty
+// AcrValues, the same as any other request that omits the parameter.
 func authorizeRequestFromPAR(par *domain.PushedAuthorizationRequest) authorizeRequest {
 	return authorizeRequest{
 		ResponseType:         par.ResponseType,
@@ -761,6 +769,7 @@ func (h *Handler) persistChallengeAndRedirect(
 		CodeChallengeMethod:  req.CodeChallengeMethod,
 		Prompt:               parseScopes(req.Prompt),
 		MaxAge:               maxAge,
+		AcrValues:            parseScopes(req.AcrValues),
 		AuthorizationDetails: details,
 		CreatedAt:            now,
 		ExpiresAt:            now.Add(h.authorize.ChallengeTTL),

@@ -130,8 +130,12 @@ func (s *TokenService) Introspect(ctx context.Context, raw string) (*domain.Intr
 		return &domain.IntrospectResponse{Active: false}, nil
 	}
 
-	// Check the token store — if not present, the token was revoked.
-	if _, err := s.tokenRepo.FindByRaw(ctx, raw); err != nil {
+	// Check the token store — if not present, the token was revoked. The
+	// stored record (not the validator's JWT-derived one) is also the
+	// source for domain.Token.Acr (ADR-0024): Acr is never lifted onto
+	// the JWT itself, so it only exists server-side.
+	stored, err := s.tokenRepo.FindByRaw(ctx, raw)
+	if err != nil {
 		if errors.Is(err, domain.ErrTokenNotFound) {
 			return &domain.IntrospectResponse{Active: false}, nil
 		}
@@ -152,6 +156,7 @@ func (s *TokenService) Introspect(ctx context.Context, raw string) (*domain.Intr
 		JTI:                  token.ID,
 		Audience:             token.Audience,
 		AuthorizationDetails: domain.AuthorizationDetailsToRaw(token.AuthorizationDetails),
+		Acr:                  stored.Acr,
 	}, nil
 }
 

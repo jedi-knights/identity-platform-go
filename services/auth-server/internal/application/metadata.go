@@ -145,6 +145,7 @@ func (b *MetadataBuilder) OIDCMetadata() *domain.AuthorizationServerMetadata {
 	md.ClaimsSupported = DefaultClaims
 	md.ClaimTypesSupported = []string{"normal"}
 	md.ResponseModesSupported = []string{"query"}
+	md.AcrValuesSupported = []string{domain.AcrValuePassword}
 	f := false
 	md.RequestParameterSupported = &f
 	md.RequestURIParameterSupported = &f
