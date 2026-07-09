@@ -143,7 +143,8 @@ func (r *ClientRepository) FindByID(ctx context.Context, id string) (*domain.OAu
 	const q = `
 		SELECT id, secret, name, client_type, actor_type,
 		       token_endpoint_auth_method, registration_access_token_hash,
-		       active, created_at, updated_at, jwks_uri
+		       jwks_uri, trusted_issuer_cert,
+		       active, created_at, updated_at
 		FROM oauth_clients
 		WHERE id = $1`
 
@@ -152,7 +153,8 @@ func (r *ClientRepository) FindByID(ctx context.Context, id string) (*domain.OAu
 	err := r.pool.QueryRow(ctx, q, id).Scan(
 		&c.ID, &c.Secret, &c.Name, &clientType, &actorType,
 		&c.TokenEndpointAuthMethod, &c.RegistrationAccessTokenHash,
-		&c.Active, &c.CreatedAt, &c.UpdatedAt, &c.JWKSURI,
+		&c.JWKSURI, &c.TrustedIssuerCert,
+		&c.Active, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperrors.New(apperrors.ErrCodeNotFound, "client not found")
@@ -222,13 +224,15 @@ func (r *ClientRepository) Save(ctx context.Context, client *domain.OAuthClient)
 		INSERT INTO oauth_clients (
 			id, secret, name, client_type, actor_type,
 			token_endpoint_auth_method, registration_access_token_hash,
-			active, created_at, updated_at, jwks_uri
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+			jwks_uri, trusted_issuer_cert,
+			active, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 
 	_, err = tx.Exec(ctx, insertClient,
 		client.ID, client.Secret, client.Name, string(client.Type), string(client.ActorType),
 		client.TokenEndpointAuthMethod, client.RegistrationAccessTokenHash,
-		client.Active, client.CreatedAt, client.UpdatedAt, client.JWKSURI,
+		client.JWKSURI, client.TrustedIssuerCert,
+		client.Active, client.CreatedAt, client.UpdatedAt,
 	)
 	if isUniqueViolation(err) {
 		return apperrors.New(apperrors.ErrCodeConflict, "client already exists")
@@ -310,7 +314,8 @@ func (r *ClientRepository) List(ctx context.Context) ([]*domain.OAuthClient, err
 		SELECT
 			c.id, c.secret, c.name, c.client_type, c.actor_type,
 			c.token_endpoint_auth_method, c.registration_access_token_hash,
-			c.active, c.created_at, c.updated_at, c.jwks_uri,
+			c.jwks_uri, c.trusted_issuer_cert,
+			c.active, c.created_at, c.updated_at,
 			COALESCE(array_agg(DISTINCT cs.scope)        FILTER (WHERE cs.scope IS NOT NULL),        '{}') AS scopes,
 			COALESCE(array_agg(DISTINCT cg.grant_type)   FILTER (WHERE cg.grant_type IS NOT NULL),   '{}') AS grant_types,
 			COALESCE(array_agg(DISTINCT cr.redirect_uri) FILTER (WHERE cr.redirect_uri IS NOT NULL), '{}') AS redirect_uris
@@ -320,7 +325,8 @@ func (r *ClientRepository) List(ctx context.Context) ([]*domain.OAuthClient, err
 		LEFT JOIN client_redirect_uris cr ON cr.client_id = c.id
 		GROUP BY c.id, c.secret, c.name, c.client_type, c.actor_type,
 		         c.token_endpoint_auth_method, c.registration_access_token_hash,
-		         c.active, c.created_at, c.updated_at, c.jwks_uri
+		         c.jwks_uri, c.trusted_issuer_cert,
+		         c.active, c.created_at, c.updated_at
 		ORDER BY c.created_at`
 
 	rows, err := r.pool.Query(ctx, q)
@@ -336,7 +342,8 @@ func (r *ClientRepository) List(ctx context.Context) ([]*domain.OAuthClient, err
 		if err = rows.Scan(
 			&c.ID, &c.Secret, &c.Name, &clientType, &actorType,
 			&c.TokenEndpointAuthMethod, &c.RegistrationAccessTokenHash,
-			&c.Active, &c.CreatedAt, &c.UpdatedAt, &c.JWKSURI,
+			&c.JWKSURI, &c.TrustedIssuerCert,
+			&c.Active, &c.CreatedAt, &c.UpdatedAt,
 			&c.Scopes, &c.GrantTypes, &c.RedirectURIs,
 		); err != nil {
 			return nil, fmt.Errorf("scanning client row: %w", err)

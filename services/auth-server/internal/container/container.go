@@ -91,6 +91,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, refreshTokenStrategyProvider)
 	platform.Register(c, tokenExchangeStrategyProvider)
 	platform.Register(c, deviceCodeStrategyProvider)
+	platform.Register(c, samlBearerStrategyProvider)
 	platform.Register(c, grantRegistryProvider)
 	platform.Register(c, tokenServiceProvider)
 	platform.Register(c, handlerProvider)
@@ -601,14 +602,39 @@ func deviceCodeStrategyProvider(ctx context.Context, c *platform.Container) (*ap
 	return application.NewDeviceCodeStrategy(cw.authenticator, deviceAuthRepo, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL), nil
 }
 
+// samlBearerStrategyProvider wires the RFC 7522 grant (ADR-0026).
+// tokenEndpointURL is a static configured value, unlike DPoP's htu (checked
+// against the live *http.Request inside Handler.Token) — grant strategies
+// are called via ports.TokenIssuer.IssueToken(ctx, req) with no request in
+// hand, so the expected audience/recipient must be known at wiring time.
+// Empty AUTH_METADATA_PUBLIC_BASE_URL means no assertion can ever match
+// (self-documenting: the grant is inert, not broken) rather than a
+// container-startup failure.
+func samlBearerStrategyProvider(ctx context.Context, c *platform.Container) (*application.SAMLBearerStrategy, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	cw := platform.MustResolve[*clientWiring](ctx, c)
+	repos, err := platform.Resolve[*tokenRepositories](ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	gen := platform.MustResolve[application.TokenGenerator](ctx, c)
+	ttl, _ := tokenTTLs(cfg)
+	tokenEndpointURL := strings.TrimRight(cfg.Metadata.PublicBaseURL, "/") + "/oauth/token"
+	return application.NewSAMLBearerStrategy(
+		cw.authenticator, repos.token, repos.refresh, gen,
+		application.NewSAMLBearerValidator(), tokenEndpointURL, ttl,
+	), nil
+}
+
 func grantRegistryProvider(ctx context.Context, c *platform.Container) (*application.GrantStrategyRegistry, error) {
 	cc := platform.MustResolve[*application.ClientCredentialsStrategy](ctx, c)
 	ac := platform.MustResolve[*application.AuthorizationCodeStrategy](ctx, c)
 	rt := platform.MustResolve[*application.RefreshTokenStrategy](ctx, c)
 	te := platform.MustResolve[*application.TokenExchangeStrategy](ctx, c)
 	dc := platform.MustResolve[*application.DeviceCodeStrategy](ctx, c)
+	sb := platform.MustResolve[*application.SAMLBearerStrategy](ctx, c)
 	emitter := platform.MustResolve[audit.Emitter](ctx, c)
-	return application.NewGrantStrategyRegistry(cc, ac, rt, te, dc).WithAudit(emitter, "auth-server"), nil
+	return application.NewGrantStrategyRegistry(cc, ac, rt, te, dc, sb).WithAudit(emitter, "auth-server"), nil
 }
 
 func tokenServiceProvider(ctx context.Context, c *platform.Container) (*application.TokenService, error) {

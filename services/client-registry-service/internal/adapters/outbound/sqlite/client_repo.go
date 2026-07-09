@@ -250,7 +250,8 @@ func (r *ClientRepository) FindByID(ctx context.Context, id string) (*domain.OAu
 	const q = `
 		SELECT id, secret, name, client_type, actor_type,
 		       token_endpoint_auth_method, registration_access_token_hash,
-		       active, created_at, updated_at, jwks_uri
+		       jwks_uri, trusted_issuer_cert,
+		       active, created_at, updated_at
 		FROM oauth_clients
 		WHERE id = ?`
 
@@ -259,7 +260,8 @@ func (r *ClientRepository) FindByID(ctx context.Context, id string) (*domain.OAu
 	err := r.db.QueryRowContext(ctx, q, id).Scan(
 		&c.ID, &c.Secret, &c.Name, &clientType, &actorType,
 		&c.TokenEndpointAuthMethod, &c.RegistrationAccessTokenHash,
-		&c.Active, &createdAt, &updatedAt, &c.JWKSURI,
+		&c.JWKSURI, &c.TrustedIssuerCert,
+		&c.Active, &createdAt, &updatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apperrors.New(apperrors.ErrCodeNotFound, "client not found")
@@ -333,13 +335,15 @@ func (r *ClientRepository) Save(ctx context.Context, client *domain.OAuthClient)
 		INSERT INTO oauth_clients (
 			id, secret, name, client_type, actor_type,
 			token_endpoint_auth_method, registration_access_token_hash,
-			active, created_at, updated_at, jwks_uri
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			jwks_uri, trusted_issuer_cert,
+			active, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err = tx.ExecContext(ctx, insertClient,
 		client.ID, client.Secret, client.Name, string(client.Type), string(client.ActorType),
 		client.TokenEndpointAuthMethod, client.RegistrationAccessTokenHash,
-		client.Active, timeToText(client.CreatedAt), timeToText(client.UpdatedAt), client.JWKSURI,
+		client.JWKSURI, client.TrustedIssuerCert,
+		client.Active, timeToText(client.CreatedAt), timeToText(client.UpdatedAt),
 	)
 	if isUniqueViolation(err) {
 		return apperrors.New(apperrors.ErrCodeConflict, "client already exists")
@@ -440,7 +444,8 @@ func (r *ClientRepository) List(ctx context.Context) ([]*domain.OAuthClient, err
 	const q = `
 		SELECT id, secret, name, client_type, actor_type,
 		       token_endpoint_auth_method, registration_access_token_hash,
-		       active, created_at, updated_at, jwks_uri
+		       jwks_uri, trusted_issuer_cert,
+		       active, created_at, updated_at
 		FROM oauth_clients
 		ORDER BY created_at`
 
@@ -479,7 +484,8 @@ func scanClientRow(rows *sql.Rows) (*domain.OAuthClient, error) {
 	if err := rows.Scan(
 		&c.ID, &c.Secret, &c.Name, &clientType, &actorType,
 		&c.TokenEndpointAuthMethod, &c.RegistrationAccessTokenHash,
-		&c.Active, &createdAt, &updatedAt, &c.JWKSURI,
+		&c.JWKSURI, &c.TrustedIssuerCert,
+		&c.Active, &createdAt, &updatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("scanning client row: %w", err)
 	}

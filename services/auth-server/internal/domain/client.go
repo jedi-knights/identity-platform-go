@@ -52,6 +52,11 @@ type Client struct {
 	// client authentication (ADR-0023). Empty means the client has not
 	// opted in — Secret remains its only credential at the token endpoint.
 	JWKSURI string
+
+	// TrustedIssuerCert is the PEM-encoded X.509 certificate of the SAML
+	// IdP this client trusts assertions from, per ADR-0026 (RFC 7522).
+	// Empty for clients that don't use the saml2-bearer grant.
+	TrustedIssuerCert string
 }
 
 // ResolvedActorType returns the client's ActorType normalised against the
