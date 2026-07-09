@@ -518,6 +518,7 @@ func authorizeConfigFor(
 		ChallengeTTL:    time.Duration(cfg.LoginChallenge.TTLSeconds) * time.Second,
 		AuthCodeIssuer:  codeIssuer,
 		IssueCodeBearer: cfg.LoginUI.ServiceToken,
+		Issuer:          cfg.JWT.Issuer,
 	}
 }
 
