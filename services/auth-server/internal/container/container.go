@@ -23,6 +23,7 @@ import (
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/clientregistry"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/identityservice"
+	jwksadapter "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/jwks"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/memory"
 	policyadapter "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/policyservice"
 	redisadapter "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/redis"
@@ -72,6 +73,8 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, loginChallengeRepositoryProvider)
 	platform.Register(c, pushedAuthorizationRequestRepositoryProvider)
 	platform.Register(c, deviceAuthorizationRepositoryProvider)
+	platform.Register(c, clientAssertionReplayRepositoryProvider)
+	platform.Register(c, clientJWKSFetcherProvider)
 	platform.Register(c, clientWiringProvider)
 	platform.Register(c, userAuthenticatorProvider)
 	platform.Register(c, userClaimsFetcherProvider)
@@ -80,6 +83,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, signingKeySetProvider)
 	platform.Register(c, tokenGeneratorProvider)
 	platform.Register(c, tokenValidatorProvider)
+	platform.Register(c, clientAssertionValidatorProvider)
 	platform.Register(c, clientCredentialsStrategyProvider)
 	platform.Register(c, authorizationCodeStrategyProvider)
 	platform.Register(c, refreshTokenStrategyProvider)
@@ -246,6 +250,55 @@ func deviceAuthorizationRepositoryProvider(ctx context.Context, c *platform.Cont
 		return nil, fmt.Errorf("connecting to Redis for device authorizations: %w", err)
 	}
 	return redisadapter.NewDeviceAuthorizationRepository(client), nil
+}
+
+// clientAssertionReplayRepositoryProvider wires the RFC 7523 client-
+// assertion jti replay-protection store (ADR-0023). Mirrors every other
+// repository in this container: Redis when AUTH_REDIS_URL is set, the
+// in-memory adapter otherwise.
+func clientAssertionReplayRepositoryProvider(ctx context.Context, c *platform.Container) (domain.ClientAssertionReplayRepository, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if cfg.Redis.URL == "" {
+		log.Info("using in-memory client-assertion replay store (AUTH_REDIS_URL not set)")
+		return memory.NewClientAssertionReplayRepository(), nil
+	}
+	log.Info("using Redis client-assertion replay store")
+	client, err := redisadapter.NewClient(cfg.Redis.URL)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to Redis for client-assertion replay: %w", err)
+	}
+	return redisadapter.NewClientAssertionReplayRepository(client), nil
+}
+
+// clientJWKSFetcherProvider wires the per-client JWKS fetcher RFC 7523
+// client-assertion verification uses to resolve each client's own
+// registered signing key (ADR-0023) — distinct from this platform's own
+// single-URL JWKS fetchers in example-resource-service /
+// token-introspection-service, which verify tokens *this* platform
+// issued rather than third-party client assertions.
+func clientJWKSFetcherProvider(ctx context.Context, c *platform.Container) (ports.ClientJWKSFetcher, error) {
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	return jwksadapter.NewPerClientFetcher(httpClient), nil
+}
+
+// clientAssertionValidatorProvider wires the RFC 7523 JWT-bearer client-
+// assertion validator (ADR-0023) shared by every grant strategy that
+// supports it. Resolves nil when the wired ClientAuthenticator does not
+// also implement ports.ClientLookup — in practice this never happens
+// today (both the memory and clientregistry adapters implement both),
+// but mirrors authorizeConfigFor's existing defensive type-assertion
+// pattern rather than assuming the interface pairing holds forever.
+func clientAssertionValidatorProvider(ctx context.Context, c *platform.Container) (*application.ClientAssertionValidator, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	cw := platform.MustResolve[*clientWiring](ctx, c)
+	lookup, ok := cw.authenticator.(ports.ClientLookup)
+	if !ok {
+		return nil, nil //nolint:nilnil // documented degradation path
+	}
+	fetcher := platform.MustResolve[ports.ClientJWKSFetcher](ctx, c)
+	replayRepo := platform.MustResolve[domain.ClientAssertionReplayRepository](ctx, c)
+	return application.NewClientAssertionValidator(lookup, fetcher, replayRepo, cfg.JWT.Issuer), nil
 }
 
 // authorizationCodeIssuerProvider wires the application-layer issuer that
@@ -436,8 +489,9 @@ func clientCredentialsStrategyProvider(ctx context.Context, c *platform.Containe
 	}
 	gen := platform.MustResolve[application.TokenGenerator](ctx, c)
 	fetcher := platform.MustResolve[ports.SubjectPermissionsFetcher](ctx, c)
+	assertionAuth := platform.MustResolve[*application.ClientAssertionValidator](ctx, c)
 	ttl, refreshTTL := tokenTTLs(cfg)
-	return application.NewClientCredentialsStrategy(cw.authenticator, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL), nil
+	return application.NewClientCredentialsStrategy(cw.authenticator, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL, assertionAuth), nil
 }
 
 func authorizationCodeStrategyProvider(ctx context.Context, c *platform.Container) (*application.AuthorizationCodeStrategy, error) {
@@ -456,8 +510,9 @@ func authorizationCodeStrategyProvider(ctx context.Context, c *platform.Containe
 	// issuance regardless of the openid scope, matching the legacy OAuth shape.
 	claimsFetcher, _ := platform.Resolve[ports.UserClaimsFetcher](ctx, c)
 	idTokenGen, _ := platform.Resolve[*application.IDTokenGenerator](ctx, c)
+	assertionAuth := platform.MustResolve[*application.ClientAssertionValidator](ctx, c)
 	idTokenTTL := time.Duration(cfg.JWT.IDTokenTTLSeconds) * time.Second
-	return application.NewAuthorizationCodeStrategy(cw.authenticator, codeRepo, repos.token, repos.refresh, gen, fetcher, claimsFetcher, idTokenGen, ttl, refreshTTL, idTokenTTL), nil
+	return application.NewAuthorizationCodeStrategy(cw.authenticator, codeRepo, repos.token, repos.refresh, gen, fetcher, claimsFetcher, idTokenGen, ttl, refreshTTL, idTokenTTL, assertionAuth), nil
 }
 
 func refreshTokenStrategyProvider(ctx context.Context, c *platform.Container) (*application.RefreshTokenStrategy, error) {
@@ -469,8 +524,9 @@ func refreshTokenStrategyProvider(ctx context.Context, c *platform.Container) (*
 	}
 	gen := platform.MustResolve[application.TokenGenerator](ctx, c)
 	fetcher := platform.MustResolve[ports.SubjectPermissionsFetcher](ctx, c)
+	assertionAuth := platform.MustResolve[*application.ClientAssertionValidator](ctx, c)
 	ttl, refreshTTL := tokenTTLs(cfg)
-	return application.NewRefreshTokenStrategy(cw.authenticator, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL), nil
+	return application.NewRefreshTokenStrategy(cw.authenticator, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL, assertionAuth), nil
 }
 
 // tokenExchangeStrategyProvider wires the RFC 8693 token-exchange

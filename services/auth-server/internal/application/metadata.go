@@ -173,9 +173,15 @@ func (b *MetadataBuilder) base() *domain.AuthorizationServerMetadata {
 		ResponseTypesSupported: []string{
 			"code",
 		},
-		ScopesSupported:                           b.scopes,
-		GrantTypesSupported:                       grantTypesSupported(b.hasLoginUI),
-		TokenEndpointAuthMethodsSupported:         []string{"client_secret_basic", "client_secret_post", "none"},
+		ScopesSupported:     b.scopes,
+		GrantTypesSupported: grantTypesSupported(b.hasLoginUI),
+		// private_key_jwt is RFC 7523 §11's registered value for
+		// JWT-bearer client authentication (ADR-0023) — advertised
+		// unconditionally, matching the other three values, since the
+		// ClientAssertionValidator is wired whenever the container's
+		// ClientAuthenticator also implements ports.ClientLookup (true
+		// for both adapters this platform ships).
+		TokenEndpointAuthMethodsSupported:         []string{"client_secret_basic", "client_secret_post", "none", "private_key_jwt"},
 		IntrospectionEndpointAuthMethodsSupported: []string{"client_secret_basic", "client_secret_post", "bearer"},
 		RevocationEndpointAuthMethodsSupported:    []string{"client_secret_basic", "client_secret_post"},
 		CodeChallengeMethodsSupported:             []string{"S256"},

@@ -36,6 +36,7 @@ type getClientResponse struct {
 	RedirectURIs []string `json:"redirect_uris"`
 	GrantTypes   []string `json:"grant_types"`
 	Active       bool     `json:"active"`
+	JWKSURI      string   `json:"jwks_uri,omitempty"`
 }
 
 // ClientAuthenticator implements ports.ClientAuthenticator by calling
@@ -172,5 +173,6 @@ func toClient(cr *getClientResponse) *domain.Client {
 		Scopes:       cr.Scopes,
 		RedirectURIs: cr.RedirectURIs,
 		GrantTypes:   grantTypes,
+		JWKSURI:      cr.JWKSURI,
 	}
 }

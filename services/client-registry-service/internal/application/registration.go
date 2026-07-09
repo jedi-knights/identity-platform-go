@@ -185,6 +185,7 @@ func (s *RegistrationService) Register(ctx context.Context, req domain.Registrat
 		GrantTypes:                  grantTypes,
 		TokenEndpointAuthMethod:     authMethod,
 		RegistrationAccessTokenHash: regTokenHash,
+		JWKSURI:                     req.JWKSURI,
 		CreatedAt:                   now,
 		UpdatedAt:                   now,
 		Active:                      true,
@@ -232,6 +233,7 @@ func (s *RegistrationService) Register(ctx context.Context, req domain.Registrat
 		ResponseTypes:           responseTypes,
 		TokenEndpointAuthMethod: authMethod,
 		Scope:                   strings.Join(scopes, " "),
+		JWKSURI:                 client.JWKSURI,
 	}, nil
 }
 
@@ -702,5 +704,6 @@ func (s *RegistrationService) toResponse(c *domain.OAuthClient, clientSecret, re
 		ResponseTypes:           []string{"code"},
 		TokenEndpointAuthMethod: c.TokenEndpointAuthMethod,
 		Scope:                   strings.Join(c.Scopes, " "),
+		JWKSURI:                 c.JWKSURI,
 	}
 }
