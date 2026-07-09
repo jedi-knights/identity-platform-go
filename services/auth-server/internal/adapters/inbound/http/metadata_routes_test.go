@@ -26,7 +26,7 @@ func newRouterMetadataHandler(t *testing.T, oidc bool) *authhttp.MetadataHandler
 }
 
 func TestNewRouter_MetadataRoutes_RegisteredWhenHandlerNonNil(t *testing.T) {
-	router := authhttp.NewRouter(&authhttp.Handler{}, nil, nil, newRouterMetadataHandler(t, true), quietLogger())
+	router := authhttp.NewRouter(&authhttp.Handler{}, nil, nil, newRouterMetadataHandler(t, true), nil, quietLogger())
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 
@@ -46,7 +46,7 @@ func TestNewRouter_MetadataRoutes_RegisteredWhenHandlerNonNil(t *testing.T) {
 }
 
 func TestNewRouter_MetadataRoutes_404WhenHandlerNil(t *testing.T) {
-	router := authhttp.NewRouter(&authhttp.Handler{}, nil, nil, nil, quietLogger())
+	router := authhttp.NewRouter(&authhttp.Handler{}, nil, nil, nil, nil, quietLogger())
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 

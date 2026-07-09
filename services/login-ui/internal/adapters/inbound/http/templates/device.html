@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Device authorization</title>
+</head>
+<body>
+  <h1>Device authorization</h1>
+  {{if .Message}}
+  <p data-testid="message">{{.Message}}</p>
+  {{else}}
+  {{if .Error}}<p role="alert" data-testid="error">{{.Error}}</p>{{end}}
+  <form method="POST" action="/device">
+    <label>Code <input type="text" name="user_code" value="{{.UserCode}}" required></label>
+    <label>Email <input type="email" name="email" autocomplete="username"></label>
+    <label>Password <input type="password" name="password" autocomplete="current-password"></label>
+    <button type="submit" name="decision" value="approve">Approve</button>
+    <button type="submit" name="decision" value="deny">Deny</button>
+  </form>
+  {{end}}
+</body>
+</html>

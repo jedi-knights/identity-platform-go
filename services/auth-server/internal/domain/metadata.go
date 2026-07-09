@@ -10,9 +10,14 @@ package domain
 // the portfolio advertises (cached via omitempty for forward compatibility
 // with ADR-0013 once dynamic client registration ships).
 type AuthorizationServerMetadata struct {
-	Issuer                                    string   `json:"issuer"`
-	AuthorizationEndpoint                     string   `json:"authorization_endpoint"`
-	TokenEndpoint                             string   `json:"token_endpoint"`
+	Issuer                string `json:"issuer"`
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+	// DeviceAuthorizationEndpoint is the RFC 8628 §4 metadata field.
+	// Advertised unconditionally, like AuthorizationEndpoint and
+	// TokenEndpoint (ADR-0022) — the URL is stable regardless of whether
+	// login-ui is wired to actually approve requests.
+	DeviceAuthorizationEndpoint               string   `json:"device_authorization_endpoint,omitempty"`
 	IntrospectionEndpoint                     string   `json:"introspection_endpoint,omitempty"`
 	RevocationEndpoint                        string   `json:"revocation_endpoint,omitempty"`
 	JWKSURI                                   string   `json:"jwks_uri,omitempty"`

@@ -255,6 +255,9 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request, logger logging.Lo
 		RequestedTokenType:   r.FormValue("requested_token_type"),
 		Audience:             parseExchangeAudience(r),
 		AuthorizationDetails: authzDetails,
+		// RFC 8628 §3.4 — the device_code form parameter, populated for
+		// every request but only consumed by DeviceCodeStrategy.
+		DeviceCode: r.FormValue("device_code"),
 	}, true
 }
 
@@ -262,8 +265,9 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request, logger logging.Lo
 // preferring HTTP Basic Auth per RFC 6749 §2.3.1 and falling back to
 // form-body parameters. Returns (clientID, clientSecret, true) on
 // success; writes an RFC 6749 §5.2 error and returns ok=false otherwise.
-// Token-exchange (ADR-0016) tolerates a missing secret per the
-// public-client carve-out; every other grant type requires it.
+// Token-exchange (ADR-0016) and device_code (ADR-0022) tolerate a missing
+// secret per the public-client carve-out — device flow clients (CLIs, IoT)
+// are frequently public; every other grant type requires it.
 func readGrantClientCredentials(w http.ResponseWriter, r *http.Request, logger logging.Logger, grantType domain.GrantType) (string, string, bool) {
 	clientID, clientSecret, ok := r.BasicAuth()
 	if !ok {
@@ -274,7 +278,7 @@ func readGrantClientCredentials(w http.ResponseWriter, r *http.Request, logger l
 		writeOAuthError(w, logger, "invalid_request", "client_id is required", http.StatusBadRequest)
 		return "", "", false
 	}
-	if clientSecret == "" && grantType != domain.GrantTypeTokenExchange {
+	if clientSecret == "" && grantType != domain.GrantTypeTokenExchange && grantType != domain.GrantTypeDeviceCode {
 		writeOAuthError(w, logger, "invalid_request", "client_secret is required", http.StatusBadRequest)
 		return "", "", false
 	}
@@ -296,25 +300,48 @@ func parseExchangeAudience(r *http.Request) []string {
 	return append([]string(nil), values...)
 }
 
+// writeSentinelTokenError handles the application-layer sentinel errors
+// (ADR-0009, ADR-0022) that map to a specific OAuth2 error code rather than
+// falling through to the generic apperrors-based mapping. Returns true when
+// it wrote a response. Extracted from writeTokenError to keep both
+// functions' cyclomatic complexity within bounds.
+func writeSentinelTokenError(w http.ResponseWriter, logger logging.Logger, err error) bool {
+	if errors.Is(err, application.ErrUnsupportedGrantType) {
+		writeOAuthError(w, logger, "unsupported_grant_type", "grant type not supported", http.StatusBadRequest)
+		return true
+	}
+	if errors.Is(err, application.ErrInvalidRequest) {
+		writeOAuthError(w, logger, "invalid_request", err.Error(), http.StatusBadRequest)
+		return true
+	}
+	// *DevicePollError must be checked via errors.As before the generic
+	// ErrInvalidGrant branch below — it wraps ErrInvalidGrant (so
+	// errors.Is would also match there), but RFC 8628 §3.5's specific
+	// codes (authorization_pending / access_denied / expired_token) must
+	// reach the client verbatim; the generic branch would flatten them
+	// all to "invalid_grant" and break the client's poll/stop decision.
+	var pollErr *application.DevicePollError
+	if errors.As(err, &pollErr) {
+		writeOAuthError(w, logger, oauthErrorCode(pollErr.Code), "", http.StatusBadRequest)
+		return true
+	}
+	if errors.Is(err, application.ErrInvalidGrant) {
+		writeOAuthError(w, logger, "invalid_grant", err.Error(), http.StatusBadRequest)
+		return true
+	}
+	if errors.Is(err, application.ErrUnauthorizedClient) {
+		writeOAuthError(w, logger, "unauthorized_client", err.Error(), http.StatusBadRequest)
+		return true
+	}
+	return false
+}
+
 // writeTokenError maps an application error to an RFC 6749-compliant OAuth2 error response.
 // Order matters: more-specific sentinels (ADR-0009) are checked before the
 // apperrors fallbacks so a sentinel-wrapped Unauthorized is not silently
 // remapped by the IsUnauthorized branch.
 func writeTokenError(w http.ResponseWriter, logger logging.Logger, err error) {
-	if errors.Is(err, application.ErrUnsupportedGrantType) {
-		writeOAuthError(w, logger, "unsupported_grant_type", "grant type not supported", http.StatusBadRequest)
-		return
-	}
-	if errors.Is(err, application.ErrInvalidRequest) {
-		writeOAuthError(w, logger, "invalid_request", err.Error(), http.StatusBadRequest)
-		return
-	}
-	if errors.Is(err, application.ErrInvalidGrant) {
-		writeOAuthError(w, logger, "invalid_grant", err.Error(), http.StatusBadRequest)
-		return
-	}
-	if errors.Is(err, application.ErrUnauthorizedClient) {
-		writeOAuthError(w, logger, "unauthorized_client", err.Error(), http.StatusBadRequest)
+	if writeSentinelTokenError(w, logger, err) {
 		return
 	}
 	if apperrors.IsUnauthorized(err) {
