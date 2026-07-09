@@ -52,6 +52,11 @@ type AuthorizeConfig struct {
 	// §2), so a client talking to more than one AS can detect a mix-up
 	// attack. Empty means the response omits `iss` entirely.
 	Issuer string
+	// PARRepo and PARTTL back POST /oauth/par (RFC 9126, ADR-0021) and
+	// /oauth/authorize's request_uri parameter. Nil PARRepo makes
+	// PushAuthorize behave like the rest of this config being nil (501).
+	PARRepo domain.PushedAuthorizationRequestRepository
+	PARTTL  time.Duration
 }
 
 // Handler holds all HTTP handler dependencies.
@@ -351,11 +356,50 @@ func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not yet implemented", http.StatusNotImplemented)
 		return
 	}
+	q := r.URL.Query()
+	if requestURI := q.Get("request_uri"); requestURI != "" {
+		h.authorizeFromPushedRequest(w, r, requestURI, q.Get("client_id"))
+		return
+	}
 	req := parseAuthorizeRequest(r)
 	if req.ClientID == "" {
 		writeOAuthError(w, h.logger, "invalid_request", "client_id is required", http.StatusBadRequest)
 		return
 	}
+	h.validateAndPersistChallenge(w, r, req)
+}
+
+// authorizeFromPushedRequest handles /oauth/authorize?request_uri=...
+// (RFC 9126 §4). client_id is required alongside request_uri and must
+// match the client_id the request was pushed under — the anti-injection
+// binding that stops one client's authorization request from being
+// redeemable by presenting another client's request_uri. Both failure
+// cases render directly rather than redirecting: there is no validated
+// redirect_uri to redirect to yet.
+func (h *Handler) authorizeFromPushedRequest(w http.ResponseWriter, r *http.Request, requestURI, clientID string) {
+	if clientID == "" {
+		writeOAuthError(w, h.logger, "invalid_request", "client_id is required alongside request_uri", http.StatusBadRequest)
+		return
+	}
+	par, err := h.authorize.PARRepo.Consume(r.Context(), requestURI)
+	if err != nil {
+		writeOAuthError(w, h.logger, "invalid_request", "unknown or expired request_uri", http.StatusBadRequest)
+		return
+	}
+	if par.ClientID != clientID {
+		writeOAuthError(w, h.logger, "invalid_request", "client_id does not match the pushed request", http.StatusBadRequest)
+		return
+	}
+	h.validateAndPersistChallenge(w, r, authorizeRequestFromPAR(par))
+}
+
+// validateAndPersistChallenge runs the parameter validation and
+// LoginChallenge persistence shared by both entry points into the
+// authorize flow — a direct query-string request and a consumed pushed
+// request — so there is exactly one implementation of "turn a validated
+// authorizeRequest into a LoginChallenge and redirect to login-ui"
+// regardless of how the request arrived.
+func (h *Handler) validateAndPersistChallenge(w http.ResponseWriter, r *http.Request, req authorizeRequest) {
 	client, err := h.authorize.ClientLookup.Lookup(r.Context(), req.ClientID)
 	if err != nil {
 		writeOAuthError(w, h.logger, "invalid_request", "unknown client", http.StatusBadRequest)
@@ -541,19 +585,51 @@ type authorizeRequest struct {
 }
 
 func parseAuthorizeRequest(r *http.Request) authorizeRequest {
-	q := r.URL.Query()
+	return parseAuthorizeRequestFrom(r.URL.Query().Get)
+}
+
+// parsePARRequest reads the identical set of fields from a POST /oauth/par
+// form body instead of a query string — RFC 9126 §2.1's request is "the
+// same request parameters that... would [be] use[d] in an authorization
+// request." Sharing parseAuthorizeRequestFrom means the field list exists
+// in exactly one place regardless of transport.
+func parsePARRequest(r *http.Request) authorizeRequest {
+	return parseAuthorizeRequestFrom(r.FormValue)
+}
+
+func parseAuthorizeRequestFrom(get func(string) string) authorizeRequest {
 	return authorizeRequest{
-		ResponseType:         q.Get("response_type"),
-		ClientID:             q.Get("client_id"),
-		RedirectURI:          q.Get("redirect_uri"),
-		Scope:                q.Get("scope"),
-		State:                q.Get("state"),
-		Nonce:                q.Get("nonce"),
-		CodeChallenge:        q.Get("code_challenge"),
-		CodeChallengeMethod:  q.Get("code_challenge_method"),
-		Prompt:               q.Get("prompt"),
-		MaxAge:               q.Get("max_age"),
-		AuthorizationDetails: q.Get("authorization_details"),
+		ResponseType:         get("response_type"),
+		ClientID:             get("client_id"),
+		RedirectURI:          get("redirect_uri"),
+		Scope:                get("scope"),
+		State:                get("state"),
+		Nonce:                get("nonce"),
+		CodeChallenge:        get("code_challenge"),
+		CodeChallengeMethod:  get("code_challenge_method"),
+		Prompt:               get("prompt"),
+		MaxAge:               get("max_age"),
+		AuthorizationDetails: get("authorization_details"),
+	}
+}
+
+// authorizeRequestFromPAR rebuilds an authorizeRequest from a consumed
+// PushedAuthorizationRequest (RFC 9126 §4) — the fields are the same set
+// parseAuthorizeRequestFrom populates, just sourced from the store instead
+// of the current request.
+func authorizeRequestFromPAR(par *domain.PushedAuthorizationRequest) authorizeRequest {
+	return authorizeRequest{
+		ResponseType:         par.ResponseType,
+		ClientID:             par.ClientID,
+		RedirectURI:          par.RedirectURI,
+		Scope:                par.Scope,
+		State:                par.State,
+		Nonce:                par.Nonce,
+		CodeChallenge:        par.CodeChallenge,
+		CodeChallengeMethod:  par.CodeChallengeMethod,
+		Prompt:               par.Prompt,
+		MaxAge:               par.MaxAge,
+		AuthorizationDetails: par.AuthorizationDetails,
 	}
 }
 
@@ -623,7 +699,7 @@ func (h *Handler) persistChallengeAndRedirect(
 	req authorizeRequest,
 	details []domain.AuthorizationDetail,
 ) {
-	id, err := h.generateChallengeID()
+	id, err := h.generateOpaqueID()
 	if err != nil {
 		h.logger.Error("authorize: generate challenge id", "error", err)
 		writeOAuthError(w, h.logger, "server_error", "internal server error", http.StatusInternalServerError)
@@ -655,10 +731,12 @@ func (h *Handler) persistChallengeAndRedirect(
 	http.Redirect(w, r, target, http.StatusFound)
 }
 
-// generateChallengeID returns 32 bytes of CSPRNG entropy hex-encoded, or the
+// generateOpaqueID returns 32 bytes of CSPRNG entropy hex-encoded, or the
 // IDGenerator override when the AuthorizeConfig supplies one. 64 hex chars
-// give 256 bits of entropy — collision-resistant well past the 5-minute TTL.
-func (h *Handler) generateChallengeID() (string, error) {
+// give 256 bits of entropy — collision-resistant well past the 5-minute
+// TTL. Shared by the login-challenge ID and the PAR request_uri suffix
+// (RFC 9126) — both need the same "opaque, unguessable token" property.
+func (h *Handler) generateOpaqueID() (string, error) {
 	if h.authorize.IDGenerator != nil {
 		return h.authorize.IDGenerator()
 	}
@@ -667,6 +745,129 @@ func (h *Handler) generateChallengeID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// PushAuthorize handles POST /oauth/par per RFC 9126 and ADR-0021. It
+// authenticates the client exactly as /oauth/token does, runs the same
+// parameter validation /oauth/authorize runs, and — on success — stores
+// the request and returns an opaque request_uri the client presents to
+// /oauth/authorize in place of the parameters themselves.
+//
+// @Summary      Pushed authorization request endpoint
+// @Description  Accepts an authorization request via the back channel (RFC 9126, ADR-0021)
+// @Tags         oauth
+// @Accept       application/x-www-form-urlencoded
+// @Produce      json
+// @Success      201  {object}  map[string]interface{}
+// @Router       /oauth/par [post]
+func (h *Handler) PushAuthorize(w http.ResponseWriter, r *http.Request) {
+	if h.authorize == nil {
+		http.Error(w, "not yet implemented", http.StatusNotImplemented)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := r.ParseForm(); err != nil {
+		writeOAuthError(w, h.logger, "invalid_request", "invalid form data", http.StatusBadRequest)
+		return
+	}
+	clientID, clientSecret := readPARClientCredentials(r)
+	if clientID == "" {
+		writeOAuthError(w, h.logger, "invalid_request", "client_id is required", http.StatusBadRequest)
+		return
+	}
+	client, err := h.clientAuth.Authenticate(r.Context(), clientID, clientSecret)
+	if err != nil {
+		writeOAuthError(w, h.logger, "invalid_client", "client authentication failed", http.StatusUnauthorized)
+		return
+	}
+
+	req := parsePARRequest(r)
+	req.ClientID = clientID // the authenticated identity is authoritative, not whatever the form claimed
+	if !h.validatePARRequest(w, req, client) {
+		return
+	}
+	h.savePARAndRespond(w, r, req)
+}
+
+// validatePARRequest runs the same parameter checks /oauth/authorize runs
+// on the query-string path, writing the appropriate error response and
+// returning false on the first failure. Extracted from PushAuthorize to
+// keep its cyclomatic complexity within the project's cap of 7.
+func (h *Handler) validatePARRequest(w http.ResponseWriter, req authorizeRequest, client *domain.Client) bool {
+	if !redirectURIMatches(client.RedirectURIs, req.RedirectURI) {
+		writeOAuthError(w, h.logger, "invalid_request", "redirect_uri not registered for client", http.StatusBadRequest)
+		return false
+	}
+	if code, desc := validateAuthorizeParams(req, client); code != "" {
+		writeOAuthError(w, h.logger, oauthErrorCode(code), desc, http.StatusBadRequest)
+		return false
+	}
+	if _, err := domain.ParseAuthorizationDetails(req.AuthorizationDetails); err != nil {
+		writeOAuthError(w, h.logger, "invalid_authorization_details", err.Error(), http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
+// readPARClientCredentials extracts client_id/client_secret the same two
+// ways the token endpoint does (Basic auth, then form fields) but — unlike
+// readGrantClientCredentials — never rejects an empty secret itself. PAR
+// must accept public clients (client_id alone, per ADR-0009), and the
+// accept/reject decision belongs entirely to clientAuth.Authenticate,
+// which already knows how to treat a registered public client correctly.
+func readPARClientCredentials(r *http.Request) (clientID, clientSecret string) {
+	if id, secret, ok := r.BasicAuth(); ok {
+		return id, secret
+	}
+	return r.FormValue("client_id"), r.FormValue("client_secret")
+}
+
+// savePARAndRespond generates the request_uri, persists the request, and
+// writes the 201 response. Extracted from PushAuthorize to keep its
+// cyclomatic complexity within bounds.
+func (h *Handler) savePARAndRespond(w http.ResponseWriter, r *http.Request, req authorizeRequest) {
+	id, err := h.generateOpaqueID()
+	if err != nil {
+		h.logger.Error("par: generate request_uri", "error", err)
+		writeOAuthError(w, h.logger, "server_error", "internal server error", http.StatusInternalServerError)
+		return
+	}
+	requestURI := "urn:ietf:params:oauth:request_uri:" + id
+
+	now := time.Now()
+	par := &domain.PushedAuthorizationRequest{
+		RequestURI:           requestURI,
+		ClientID:             req.ClientID,
+		ResponseType:         req.ResponseType,
+		RedirectURI:          req.RedirectURI,
+		Scope:                req.Scope,
+		State:                req.State,
+		Nonce:                req.Nonce,
+		CodeChallenge:        req.CodeChallenge,
+		CodeChallengeMethod:  req.CodeChallengeMethod,
+		Prompt:               req.Prompt,
+		MaxAge:               req.MaxAge,
+		AuthorizationDetails: req.AuthorizationDetails,
+		CreatedAt:            now,
+		ExpiresAt:            now.Add(h.authorize.PARTTL),
+	}
+	if err := h.authorize.PARRepo.Save(r.Context(), par); err != nil {
+		h.logger.Error("par: save pushed authorization request", "error", err)
+		writeOAuthError(w, h.logger, "server_error", "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	httputil.WriteJSON(w, http.StatusCreated, pushAuthorizeResponse{
+		RequestURI: requestURI,
+		ExpiresIn:  int(h.authorize.PARTTL.Seconds()),
+	})
+}
+
+// pushAuthorizeResponse is POST /oauth/par's success body (RFC 9126 §2.2).
+type pushAuthorizeResponse struct {
+	RequestURI string `json:"request_uri"`
+	ExpiresIn  int    `json:"expires_in"`
 }
 
 // redirectAuthorizeError sends a 302 back to the client redirect_uri with

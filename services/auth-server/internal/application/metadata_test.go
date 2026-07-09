@@ -122,6 +122,23 @@ func TestMetadataBuilder_OAuthMetadata_StableInvariants(t *testing.T) {
 	}
 }
 
+func TestMetadataBuilder_OAuthMetadata_AdvertisesPushedAuthorizationRequestEndpoint(t *testing.T) {
+	// Arrange — RFC 9126 §5, ADR-0021. Advertised unconditionally like
+	// AuthorizationEndpoint/TokenEndpoint, not gated behind a "hasPAR"
+	// flag — the URL is stable even in a deployment where /oauth/par
+	// itself would 501 (login-ui not wired).
+	b := newBuilder(t, nil)
+
+	// Act
+	md := b.OAuthMetadata()
+
+	// Assert
+	want := "https://auth.example.com/oauth/par"
+	if md.PushedAuthorizationRequestEndpoint != want {
+		t.Errorf("pushed_authorization_request_endpoint = %q, want %q", md.PushedAuthorizationRequestEndpoint, want)
+	}
+}
+
 func TestMetadataBuilder_OAuthMetadata_OmitsOIDCFields(t *testing.T) {
 	b := newBuilder(t, func(c *application.MetadataBuilderConfig) {
 		c.OIDCIssuer = "https://oidc.example.com"
