@@ -742,9 +742,15 @@ func (s *AuthorizationCodeStrategy) issueTokens(ctx context.Context, client *dom
 		// onto the token so RAR-aware resource servers see the same
 		// per-call permissions the user approved at /oauth/authorize.
 		AuthorizationDetails: code.AuthorizationDetails,
-		ExpiresAt:            now.Add(s.ttl),
-		IssuedAt:             now,
-		TokenType:            domain.TokenTypeBearer,
+		// ADR-0024: every authorization_code redemption re-authenticates
+		// the user from scratch via login-ui's one authentication
+		// method, so the issued token always satisfies this value —
+		// regardless of what acr_values the original /oauth/authorize
+		// request asked for (see ADR-0024's stated scope).
+		Acr:       domain.AcrValuePassword,
+		ExpiresAt: now.Add(s.ttl),
+		IssuedAt:  now,
+		TokenType: domain.TokenTypeBearer,
 	}
 	raw, err := s.tokenGen.Generate(ctx, token)
 	if err != nil {

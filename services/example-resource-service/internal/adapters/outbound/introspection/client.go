@@ -25,6 +25,7 @@ type introspectResponse struct {
 	Audience    []string `json:"aud"`
 	Roles       []string `json:"roles"`
 	Permissions []string `json:"permissions"`
+	Acr         string   `json:"acr"`
 }
 
 // Client implements ports.TokenIntrospector by calling token-introspection-service.
@@ -94,5 +95,6 @@ func (c *Client) Introspect(ctx context.Context, raw string) (_ *ports.Introspec
 		Audience:    ir.Audience,
 		Roles:       ir.Roles,
 		Permissions: ir.Permissions,
+		Acr:         ir.Acr,
 	}, nil
 }

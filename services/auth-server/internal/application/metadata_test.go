@@ -188,6 +188,27 @@ func TestMetadataBuilder_OIDCMetadata_OverridesIssuerAndIncludesOIDCFields(t *te
 	}
 }
 
+// TestMetadataBuilder_OIDCMetadata_AdvertisesAcrValuesSupported covers
+// RFC 9470 / OIDC Discovery's acr_values_supported (ADR-0024) — this
+// platform's single authentication method.
+func TestMetadataBuilder_OIDCMetadata_AdvertisesAcrValuesSupported(t *testing.T) {
+	b := newBuilder(t, func(c *application.MetadataBuilderConfig) {
+		c.OIDCIssuer = "https://oidc.example.com"
+	})
+	md := b.OIDCMetadata()
+	if !slices.Contains(md.AcrValuesSupported, "pwd") {
+		t.Errorf("acr_values_supported = %v, must include pwd", md.AcrValuesSupported)
+	}
+}
+
+func TestMetadataBuilder_OAuthMetadata_OmitsAcrValuesSupported(t *testing.T) {
+	b := newBuilder(t, nil)
+	md := b.OAuthMetadata()
+	if len(md.AcrValuesSupported) != 0 {
+		t.Errorf("acr_values_supported = %v, must be empty on RFC 8414 doc", md.AcrValuesSupported)
+	}
+}
+
 func TestMetadataBuilder_OIDCMetadata_OmitsUserInfoWhenDisabled(t *testing.T) {
 	b := newBuilder(t, func(c *application.MetadataBuilderConfig) {
 		c.OIDCIssuer = "https://oidc.example.com"

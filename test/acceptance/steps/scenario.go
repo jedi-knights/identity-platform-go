@@ -63,4 +63,5 @@ func InitializeScenario(sctx *godog.ScenarioContext, redisURL func() string) {
 	registerPushedAuthorizationRequestSteps(sctx, getWorld)
 	registerDeviceAuthorizationSteps(sctx, getWorld)
 	registerClientAssertionSteps(sctx, getWorld)
+	registerStepUpAuthenticationSteps(sctx, getWorld)
 }

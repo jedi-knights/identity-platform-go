@@ -23,6 +23,14 @@ const (
 	TokenTypeOpaque TokenType = "opaque"
 )
 
+// AcrValuePassword is the only RFC 9470 / OIDC "acr" value this platform's
+// single authentication method (login-ui's password form) can ever satisfy
+// (ADR-0024). Stamped unconditionally onto every token an authorization_code
+// redemption issues; absent from client_credentials/refresh_token/
+// token_exchange tokens, which have no user behind them for an
+// authentication-context claim to describe.
+const AcrValuePassword = "pwd"
+
 // Token represents an issued OAuth token.
 //
 // ActorType + AgentID (ADR-0015) classify the principal kind on the
@@ -55,6 +63,15 @@ type Token struct {
 	// the issued JWT and the introspection projection surfaces it for
 	// resource servers that opt into the richer enforcement model.
 	AuthorizationDetails []AuthorizationDetail
+
+	// Acr is the RFC 9470 / OIDC authentication-context-class-reference
+	// value satisfied when this token was issued (ADR-0024). Set to
+	// AcrValuePassword by AuthorizationCodeStrategy; empty for every
+	// other grant. Deliberately NOT lifted onto the issued JWT itself
+	// (go-platform/jwtutil's Claims has no acr field, and this repo does
+	// not own that module) — surfaced only via IntrospectResponse.Acr,
+	// which this repo does own.
+	Acr string
 
 	ExpiresAt time.Time
 	IssuedAt  time.Time
@@ -151,4 +168,9 @@ type IntrospectResponse struct {
 	// array. Omitted when empty so RAR-unaware resource servers see
 	// the same shape they always have.
 	AuthorizationDetails []json.RawMessage `json:"authorization_details,omitempty"`
+
+	// Acr echoes domain.Token.Acr — the RFC 9470 / OIDC authentication-
+	// context-class-reference value satisfied at issuance (ADR-0024).
+	// Omitted when empty (every grant except authorization_code).
+	Acr string `json:"acr,omitempty"`
 }

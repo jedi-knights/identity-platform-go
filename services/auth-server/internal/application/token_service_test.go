@@ -49,6 +49,46 @@ func TestTokenService_Introspect_ValidToken(t *testing.T) {
 	}
 }
 
+// TestTokenService_Introspect_EchoesAcr covers ADR-0024: the acr value
+// stamped on the stored domain.Token (never lifted onto the JWT itself)
+// must still surface in the introspection response, sourced from the
+// token store rather than the JWT-validated claims.
+func TestTokenService_Introspect_EchoesAcr(t *testing.T) {
+	tokenRepo := newMockTokenRepo()
+	gen := application.NewJWTTokenGenerator(testSigningKey, "test-issuer", nil)
+
+	domainToken := &domain.Token{
+		ID:        "t1",
+		ClientID:  "client1",
+		Subject:   "user1",
+		Scopes:    []string{"read"},
+		Acr:       domain.AcrValuePassword,
+		ExpiresAt: time.Now().Add(time.Hour),
+		IssuedAt:  time.Now(),
+		TokenType: domain.TokenTypeBearer,
+	}
+
+	raw, err := gen.Generate(context.Background(), domainToken)
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+	domainToken.Raw = raw
+	if err := tokenRepo.Save(context.Background(), domainToken); err != nil {
+		t.Fatalf("unexpected save error: %v", err)
+	}
+
+	validator := application.NewJWTTokenValidator(testSigningKey, tokenRepo, "")
+	svc := application.NewTokenService(tokenRepo, nil, validator)
+
+	resp, err := svc.Introspect(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Acr != domain.AcrValuePassword {
+		t.Errorf("Acr = %q, want %q", resp.Acr, domain.AcrValuePassword)
+	}
+}
+
 func TestTokenService_Introspect_ExpiredToken(t *testing.T) {
 	tokenRepo := newMockTokenRepo()
 	gen := application.NewJWTTokenGenerator(testSigningKey, "test-issuer", nil)
