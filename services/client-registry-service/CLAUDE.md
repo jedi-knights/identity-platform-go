@@ -52,3 +52,9 @@ Only `jwks_uri` (a URL) is supported — not an embedded `jwks` document. The RF
 ## Relationship to auth-server
 
 auth-server's `clientregistry` outbound adapter calls this service over HTTP. The auth-server `ClientAuthenticator` port abstracts this so the in-memory fallback (used when `AUTH_CLIENT_REGISTRY_URL` is unset) runs locally without the full stack.
+
+---
+
+## Optional Trust Fields
+
+`OAuthClient.TrustedIssuerCert` (RFC 7522, ADR-0026 in auth-server) is the PEM-encoded X.509 certificate of the SAML IdP a client trusts assertions from — set only at creation via `POST /clients`'s `trusted_issuer_cert` field; empty for clients that don't use the `saml2-bearer` grant. Set only at creation — mirrors how `jwks_uri` (RFC 7521/7523) is handled: not mutable via the RFC 7592 update endpoint.

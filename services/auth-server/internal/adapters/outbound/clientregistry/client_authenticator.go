@@ -28,15 +28,16 @@ type validateResponse struct {
 
 // getClientResponse mirrors client-registry-service's domain.GetClientResponse.
 type getClientResponse struct {
-	ClientID     string   `json:"client_id"`
-	Name         string   `json:"name"`
-	ClientType   string   `json:"client_type"`
-	ActorType    string   `json:"actor_type"`
-	Scopes       []string `json:"scopes"`
-	RedirectURIs []string `json:"redirect_uris"`
-	GrantTypes   []string `json:"grant_types"`
-	Active       bool     `json:"active"`
-	JWKSURI      string   `json:"jwks_uri,omitempty"`
+	ClientID          string   `json:"client_id"`
+	Name              string   `json:"name"`
+	ClientType        string   `json:"client_type"`
+	ActorType         string   `json:"actor_type"`
+	Scopes            []string `json:"scopes"`
+	RedirectURIs      []string `json:"redirect_uris"`
+	GrantTypes        []string `json:"grant_types"`
+	Active            bool     `json:"active"`
+	JWKSURI           string   `json:"jwks_uri,omitempty"`
+	TrustedIssuerCert string   `json:"trusted_issuer_cert,omitempty"`
 }
 
 // ClientAuthenticator implements ports.ClientAuthenticator by calling
@@ -166,13 +167,14 @@ func toClient(cr *getClientResponse) *domain.Client {
 		grantTypes[i] = domain.GrantType(gt)
 	}
 	return &domain.Client{
-		ID:           cr.ClientID,
-		Name:         cr.Name,
-		Type:         domain.ClientType(cr.ClientType),
-		ActorType:    domain.ActorType(cr.ActorType),
-		Scopes:       cr.Scopes,
-		RedirectURIs: cr.RedirectURIs,
-		GrantTypes:   grantTypes,
-		JWKSURI:      cr.JWKSURI,
+		ID:                cr.ClientID,
+		Name:              cr.Name,
+		Type:              domain.ClientType(cr.ClientType),
+		ActorType:         domain.ActorType(cr.ActorType),
+		Scopes:            cr.Scopes,
+		RedirectURIs:      cr.RedirectURIs,
+		GrantTypes:        grantTypes,
+		JWKSURI:           cr.JWKSURI,
+		TrustedIssuerCert: cr.TrustedIssuerCert,
 	}
 }

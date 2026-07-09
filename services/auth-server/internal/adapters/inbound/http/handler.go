@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -248,6 +249,14 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request, logger logging.Lo
 		return domain.GrantRequest{}, false
 	}
 
+	// RFC 7522 §3 (ADR-0026) — assertion is base64url-encoded on the wire.
+	// Reject only when supplied and malformed, same pattern as
+	// authorization_details above.
+	samlAssertion, ok := decodeSAMLAssertion(w, r, logger)
+	if !ok {
+		return domain.GrantRequest{}, false
+	}
+
 	return domain.GrantRequest{
 		GrantType:    grantType,
 		ClientID:     clientID,
@@ -279,7 +288,25 @@ func parseGrantRequest(w http.ResponseWriter, r *http.Request, logger logging.Lo
 		// the wire being empty.
 		ClientAssertion:     r.FormValue("client_assertion"),
 		ClientAssertionType: r.FormValue("client_assertion_type"),
+		SAMLAssertion:       samlAssertion,
 	}, true
+}
+
+// decodeSAMLAssertion base64url-decodes the assertion form parameter per
+// RFC 7522 §3. Absent parameter decodes to "" successfully — only a
+// present-but-malformed value is rejected, matching how
+// domain.ParseAuthorizationDetails treats an absent parameter.
+func decodeSAMLAssertion(w http.ResponseWriter, r *http.Request, logger logging.Logger) (string, bool) {
+	raw := r.FormValue("assertion")
+	if raw == "" {
+		return "", true
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		writeOAuthError(w, logger, "invalid_request", "assertion is not valid base64url", http.StatusBadRequest)
+		return "", false
+	}
+	return string(decoded), true
 }
 
 // readGrantClientCredentials extracts the OAuth client credentials,

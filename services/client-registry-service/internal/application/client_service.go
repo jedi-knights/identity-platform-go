@@ -116,18 +116,19 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 
 	now := time.Now()
 	client := &domain.OAuthClient{
-		ID:           id,
-		Secret:       storedSecret,
-		Name:         req.Name,
-		Type:         clientType,
-		ActorType:    actorType,
-		Scopes:       req.Scopes,
-		RedirectURIs: req.RedirectURIs,
-		GrantTypes:   req.GrantTypes,
-		JWKSURI:      req.JWKSURI,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-		Active:       true,
+		ID:                id,
+		Secret:            storedSecret,
+		Name:              req.Name,
+		Type:              clientType,
+		ActorType:         actorType,
+		Scopes:            req.Scopes,
+		RedirectURIs:      req.RedirectURIs,
+		GrantTypes:        req.GrantTypes,
+		JWKSURI:           req.JWKSURI,
+		TrustedIssuerCert: req.TrustedIssuerCert,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		Active:            true,
 	}
 
 	if err := s.repo.Save(ctx, client); err != nil {
@@ -142,15 +143,16 @@ func (s *ClientService) CreateClient(ctx context.Context, req domain.CreateClien
 	// storage. Public clients receive an empty ClientSecret (omitempty in
 	// the response struct strips it from the JSON).
 	return &domain.CreateClientResponse{
-		ClientID:     client.ID,
-		ClientSecret: plainSecret,
-		Name:         client.Name,
-		ClientType:   string(client.Type),
-		ActorType:    string(client.ActorType),
-		Scopes:       client.Scopes,
-		RedirectURIs: client.RedirectURIs,
-		GrantTypes:   client.GrantTypes,
-		JWKSURI:      client.JWKSURI,
+		ClientID:          client.ID,
+		ClientSecret:      plainSecret,
+		Name:              client.Name,
+		ClientType:        string(client.Type),
+		ActorType:         string(client.ActorType),
+		Scopes:            client.Scopes,
+		RedirectURIs:      client.RedirectURIs,
+		GrantTypes:        client.GrantTypes,
+		JWKSURI:           client.JWKSURI,
+		TrustedIssuerCert: client.TrustedIssuerCert,
 	}, nil
 }
 
@@ -216,15 +218,16 @@ func (s *ClientService) GetClient(ctx context.Context, id string) (*domain.GetCl
 	}
 
 	return &domain.GetClientResponse{
-		ClientID:     client.ID,
-		Name:         client.Name,
-		ClientType:   normalizeClientType(client.Type),
-		ActorType:    normalizeActorType(client.ActorType),
-		Scopes:       client.Scopes,
-		RedirectURIs: client.RedirectURIs,
-		GrantTypes:   client.GrantTypes,
-		Active:       client.Active,
-		JWKSURI:      client.JWKSURI,
+		ClientID:          client.ID,
+		Name:              client.Name,
+		ClientType:        normalizeClientType(client.Type),
+		ActorType:         normalizeActorType(client.ActorType),
+		Scopes:            client.Scopes,
+		RedirectURIs:      client.RedirectURIs,
+		GrantTypes:        client.GrantTypes,
+		Active:            client.Active,
+		JWKSURI:           client.JWKSURI,
+		TrustedIssuerCert: client.TrustedIssuerCert,
 	}, nil
 }
 
@@ -345,14 +348,15 @@ func (s *ClientService) ListClients(ctx context.Context) ([]*domain.GetClientRes
 	result := make([]*domain.GetClientResponse, 0, len(clients))
 	for _, c := range clients {
 		result = append(result, &domain.GetClientResponse{
-			ClientID:     c.ID,
-			Name:         c.Name,
-			ClientType:   normalizeClientType(c.Type),
-			Scopes:       c.Scopes,
-			RedirectURIs: c.RedirectURIs,
-			GrantTypes:   c.GrantTypes,
-			Active:       c.Active,
-			JWKSURI:      c.JWKSURI,
+			ClientID:          c.ID,
+			Name:              c.Name,
+			ClientType:        normalizeClientType(c.Type),
+			Scopes:            c.Scopes,
+			RedirectURIs:      c.RedirectURIs,
+			GrantTypes:        c.GrantTypes,
+			Active:            c.Active,
+			JWKSURI:           c.JWKSURI,
+			TrustedIssuerCert: c.TrustedIssuerCert,
 		})
 	}
 	return result, nil

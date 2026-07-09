@@ -73,6 +73,30 @@ func TestClientRepository_SaveAndFindByID(t *testing.T) {
 	}
 }
 
+// TestClientRepository_SaveAndFindByID_TrustedIssuerCert covers RFC 7522
+// (ADR-0026): the trusted_issuer_cert column added by migration 000006
+// must round-trip through Save/FindByID against a real Postgres instance.
+func TestClientRepository_SaveAndFindByID_TrustedIssuerCert(t *testing.T) {
+	repo := newTestRepo(t)
+	ctx := context.Background()
+
+	const certPEM = "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----"
+	client := sampleClient("trusted-issuer-cert-1")
+	client.TrustedIssuerCert = certPEM
+	if err := repo.Save(ctx, client); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Delete(ctx, client.ID) })
+
+	got, err := repo.FindByID(ctx, client.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if got.TrustedIssuerCert != certPEM {
+		t.Errorf("TrustedIssuerCert: want %q, got %q", certPEM, got.TrustedIssuerCert)
+	}
+}
+
 func TestClientRepository_Save_Conflict(t *testing.T) {
 	repo := newTestRepo(t)
 	ctx := context.Background()

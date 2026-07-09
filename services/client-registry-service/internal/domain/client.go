@@ -75,6 +75,13 @@ type OAuthClient struct {
 	// credential at the token endpoint.
 	JWKSURI string
 
+	// TrustedIssuerCert is the PEM-encoded X.509 certificate of the SAML
+	// IdP this client trusts assertions from, per ADR-0026 (RFC 7522).
+	// Empty for clients that don't use the saml2-bearer grant. Set only at
+	// creation — RFC 7592's update endpoint intentionally does not support
+	// changing it post-creation, mirroring how jwks_uri is handled.
+	TrustedIssuerCert string
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	Active    bool
@@ -105,33 +112,39 @@ type CreateClientRequest struct {
 	// authentication (ADR-0023). Optional — empty means client_secret
 	// remains the client's only credential.
 	JWKSURI string `json:"jwks_uri,omitempty"`
+
+	// TrustedIssuerCert is the optional RFC 7522 (ADR-0026) SAML IdP
+	// certificate this client trusts assertions from. PEM-encoded.
+	TrustedIssuerCert string `json:"trusted_issuer_cert,omitempty"`
 }
 
 // CreateClientResponse contains the newly created client's credentials.
 // ClientSecret is omitted for public clients (no secret to return).
 type CreateClientResponse struct {
-	ClientID     string   `json:"client_id"`
-	ClientSecret string   `json:"client_secret,omitempty"`
-	Name         string   `json:"name"`
-	ClientType   string   `json:"client_type"`
-	ActorType    string   `json:"actor_type"`
-	Scopes       []string `json:"scopes"`
-	RedirectURIs []string `json:"redirect_uris"`
-	GrantTypes   []string `json:"grant_types"`
-	JWKSURI      string   `json:"jwks_uri,omitempty"`
+	ClientID          string   `json:"client_id"`
+	ClientSecret      string   `json:"client_secret,omitempty"`
+	Name              string   `json:"name"`
+	ClientType        string   `json:"client_type"`
+	ActorType         string   `json:"actor_type"`
+	Scopes            []string `json:"scopes"`
+	RedirectURIs      []string `json:"redirect_uris"`
+	GrantTypes        []string `json:"grant_types"`
+	JWKSURI           string   `json:"jwks_uri,omitempty"`
+	TrustedIssuerCert string   `json:"trusted_issuer_cert,omitempty"`
 }
 
 // GetClientResponse contains client details (secret excluded).
 type GetClientResponse struct {
-	ClientID     string   `json:"client_id"`
-	Name         string   `json:"name"`
-	ClientType   string   `json:"client_type"`
-	ActorType    string   `json:"actor_type"`
-	Scopes       []string `json:"scopes"`
-	RedirectURIs []string `json:"redirect_uris"`
-	GrantTypes   []string `json:"grant_types"`
-	Active       bool     `json:"active"`
-	JWKSURI      string   `json:"jwks_uri,omitempty"`
+	ClientID          string   `json:"client_id"`
+	Name              string   `json:"name"`
+	ClientType        string   `json:"client_type"`
+	ActorType         string   `json:"actor_type"`
+	Scopes            []string `json:"scopes"`
+	RedirectURIs      []string `json:"redirect_uris"`
+	GrantTypes        []string `json:"grant_types"`
+	Active            bool     `json:"active"`
+	JWKSURI           string   `json:"jwks_uri,omitempty"`
+	TrustedIssuerCert string   `json:"trusted_issuer_cert,omitempty"`
 }
 
 // ValidateClientRequest contains credentials to validate.

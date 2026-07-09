@@ -65,4 +65,5 @@ func InitializeScenario(sctx *godog.ScenarioContext, redisURL func() string) {
 	registerClientAssertionSteps(sctx, getWorld)
 	registerStepUpAuthenticationSteps(sctx, getWorld)
 	registerDPoPSteps(sctx, getWorld)
+	registerSAMLBearerSteps(sctx, getWorld)
 }

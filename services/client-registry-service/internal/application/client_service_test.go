@@ -152,6 +152,36 @@ func TestClientService_CreateClient_SecretRoundTrip(t *testing.T) {
 	}
 }
 
+// TestClientService_CreateClient_PropagatesTrustedIssuerCert covers RFC
+// 7522 (ADR-0026): the optional trusted_issuer_cert field must flow from
+// CreateClientRequest through to both the create response and a
+// subsequent GetClient lookup.
+func TestClientService_CreateClient_PropagatesTrustedIssuerCert(t *testing.T) {
+	const certPEM = "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----"
+	repo := newFakeClientRepo()
+	svc := newSvc(t, repo)
+
+	created, err := svc.CreateClient(context.Background(), domain.CreateClientRequest{
+		Name:              "SAML App",
+		GrantTypes:        []string{"urn:ietf:params:oauth:grant-type:saml2-bearer"},
+		TrustedIssuerCert: certPEM,
+	})
+	if err != nil {
+		t.Fatalf("CreateClient: %v", err)
+	}
+	if created.TrustedIssuerCert != certPEM {
+		t.Errorf("create response TrustedIssuerCert = %q, want %q", created.TrustedIssuerCert, certPEM)
+	}
+
+	got, err := svc.GetClient(context.Background(), created.ClientID)
+	if err != nil {
+		t.Fatalf("GetClient: %v", err)
+	}
+	if got.TrustedIssuerCert != certPEM {
+		t.Errorf("get response TrustedIssuerCert = %q, want %q", got.TrustedIssuerCert, certPEM)
+	}
+}
+
 func TestClientService_GetClient_Success(t *testing.T) {
 	repo := newFakeClientRepo()
 	repo.clients["existing-id"] = &domain.OAuthClient{
