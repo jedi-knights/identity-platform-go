@@ -32,6 +32,13 @@ const (
 	// it (see the ADR's Context section). Absent from context, not just
 	// empty-string, for any request those two middlewares authenticated.
 	contextKeyAcr
+	// contextKeyCNFJKT holds the RFC 9449 DPoP confirmation thumbprint
+	// (ADR-0025 in identity-platform-go's auth-server). Populated only by
+	// IntrospectionAuthMiddleware from ports.IntrospectionResult.CNFJKT —
+	// JWTAuthMiddleware never sets it (no local source for cnf.jkt).
+	// Empty for ordinary bearer tokens; RequireDPoPMiddleware treats empty
+	// as not DPoP-bound, meaning there is nothing to enforce.
+	contextKeyCNFJKT
 )
 
 // IntrospectionAuthMiddleware validates the Bearer token by calling token-introspection-service.
@@ -80,6 +87,7 @@ func IntrospectionAuthMiddleware(introspector ports.TokenIntrospector, logger lo
 			// introspector has no acr to offer, e.g. token-introspection-service
 			// today) only by the comma-ok assertion, so the value itself can be "".
 			ctx = context.WithValue(ctx, contextKeyAcr, result.Acr)
+			ctx = context.WithValue(ctx, contextKeyCNFJKT, result.CNFJKT)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

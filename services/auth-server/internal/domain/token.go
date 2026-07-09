@@ -21,6 +21,11 @@ const (
 	// in the token_type field of RFC 6749 §5.1 token responses.
 	TokenTypeBearer TokenType = "Bearer"
 	TokenTypeOpaque TokenType = "opaque"
+
+	// TokenTypeDPoP is the RFC 9449 §5 token type value returned instead
+	// of "Bearer" when the token endpoint validated a DPoP proof for this
+	// token (ADR-0025).
+	TokenTypeDPoP TokenType = "DPoP"
 )
 
 // AcrValuePassword is the only RFC 9470 / OIDC "acr" value this platform's
@@ -30,6 +35,11 @@ const (
 // token_exchange tokens, which have no user behind them for an
 // authentication-context claim to describe.
 const AcrValuePassword = "pwd"
+
+// SupportedDPoPSigningAlgs are the DPoP proof JWT signing algorithms this
+// platform accepts (ADR-0025), advertised via
+// dpop_signing_alg_values_supported in authorization server metadata.
+var SupportedDPoPSigningAlgs = []string{"ES256", "RS256"}
 
 // Token represents an issued OAuth token.
 //
@@ -72,6 +82,15 @@ type Token struct {
 	// not own that module) — surfaced only via IntrospectResponse.Acr,
 	// which this repo does own.
 	Acr string
+
+	// JKT is the RFC 7638 thumbprint of the client's DPoP proof public key
+	// (ADR-0025), set only when the token endpoint validated a DPoP proof
+	// for this token. Empty for ordinary bearer tokens. Never lifted onto
+	// the signed JWT itself — go-platform/jwtutil.Claims has no field for
+	// it — surfaced instead via IntrospectResponse.CNF, mirroring how Acr
+	// (ADR-0024) and AuthorizationDetails (ADR-0017) already cross that
+	// same boundary.
+	JKT string
 
 	ExpiresAt time.Time
 	IssuedAt  time.Time
@@ -173,4 +192,15 @@ type IntrospectResponse struct {
 	// context-class-reference value satisfied at issuance (ADR-0024).
 	// Omitted when empty (every grant except authorization_code).
 	Acr string `json:"acr,omitempty"`
+
+	// CNF echoes the RFC 9449 §6.1 / RFC 7800 confirmation claim for
+	// DPoP-bound tokens (ADR-0025). Nil — and therefore omitted — for
+	// ordinary bearer tokens.
+	CNF *Confirmation `json:"cnf,omitempty"`
+}
+
+// Confirmation is the RFC 7800 "cnf" claim shape carrying a DPoP proof-key
+// thumbprint (RFC 9449 §6.1).
+type Confirmation struct {
+	JKT string `json:"jkt"`
 }

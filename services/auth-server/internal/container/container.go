@@ -75,6 +75,8 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, deviceAuthorizationRepositoryProvider)
 	platform.Register(c, clientAssertionReplayRepositoryProvider)
 	platform.Register(c, clientJWKSFetcherProvider)
+	platform.Register(c, dpopProofRepositoryProvider)
+	platform.Register(c, dpopValidatorProvider)
 	platform.Register(c, clientWiringProvider)
 	platform.Register(c, userAuthenticatorProvider)
 	platform.Register(c, userClaimsFetcherProvider)
@@ -299,6 +301,33 @@ func clientAssertionValidatorProvider(ctx context.Context, c *platform.Container
 	fetcher := platform.MustResolve[ports.ClientJWKSFetcher](ctx, c)
 	replayRepo := platform.MustResolve[domain.ClientAssertionReplayRepository](ctx, c)
 	return application.NewClientAssertionValidator(lookup, fetcher, replayRepo, cfg.JWT.Issuer), nil
+}
+
+// dpopProofRepositoryProvider wires the DPoP proof jti replay cache
+// (ADR-0025). Mirrors the authorization-code repository: Redis when
+// AUTH_REDIS_URL is set, the in-memory adapter otherwise.
+func dpopProofRepositoryProvider(ctx context.Context, c *platform.Container) (domain.DPoPProofRepository, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if cfg.Redis.URL == "" {
+		log.Info("using in-memory dpop proof replay cache (AUTH_REDIS_URL not set)")
+		return memory.NewDPoPProofRepository(), nil
+	}
+	log.Info("using Redis dpop proof replay cache")
+	client, err := redisadapter.NewClient(cfg.Redis.URL)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to Redis for dpop proofs: %w", err)
+	}
+	return redisadapter.NewDPoPProofRepository(client), nil
+}
+
+// dpopValidatorProvider wires application.DPoPValidator (ADR-0025). Always
+// available — DPoP has no external dependency, so unlike the outbound
+// service ports there is no nil-fallback branch here; a client simply opts
+// in per request by sending a DPoP header or not.
+func dpopValidatorProvider(ctx context.Context, c *platform.Container) (*application.DPoPValidator, error) {
+	repo := platform.MustResolve[domain.DPoPProofRepository](ctx, c)
+	return application.NewDPoPValidator(repo), nil
 }
 
 // authorizationCodeIssuerProvider wires the application-layer issuer that
@@ -605,8 +634,9 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	introspector := inboundhttp.NewTokenIntrospectorAdapter(tokens)
 	revoker := inboundhttp.NewTokenRevokerAdapter(tokens)
 	authorizeCfg := authorizeConfigFor(cfg, cw, challengeRepo, codeIssuer, parRepo)
+	dpopValidator := platform.MustResolve[*application.DPoPValidator](ctx, c)
 	emitter := platform.MustResolve[audit.Emitter](ctx, c)
-	return inboundhttp.NewHandler(issuer, introspector, revoker, cw.authenticator, log, cfg.Introspection.Secret, authorizeCfg).
+	return inboundhttp.NewHandler(issuer, introspector, revoker, cw.authenticator, log, cfg.Introspection.Secret, authorizeCfg, dpopValidator).
 		WithAudit(emitter, "auth-server"), nil
 }
 

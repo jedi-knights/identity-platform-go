@@ -135,6 +135,38 @@ func TestAuthorizationCodeStrategy_Handle_HappyPath(t *testing.T) {
 	}
 }
 
+// TestAuthorizationCodeStrategy_Handle_StampsDPoPJKTAndTokenType covers
+// RFC 9449 (ADR-0025): when the HTTP layer already validated a DPoP proof
+// and populated req.DPoPJKT, the issued token must carry that thumbprint
+// and be typed "DPoP" instead of "Bearer" — both on the stored domain.Token
+// and on the wire response.
+func TestAuthorizationCodeStrategy_Handle_StampsDPoPJKTAndTokenType(t *testing.T) {
+	// Arrange
+	f := newAuthCodeFixtures(t)
+	f.req.DPoPJKT = "test-jkt-value"
+
+	// Act
+	resp, err := f.strategy.Handle(context.Background(), f.req)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if resp.TokenType != string(domain.TokenTypeDPoP) {
+		t.Errorf("response token_type = %q, want %q", resp.TokenType, domain.TokenTypeDPoP)
+	}
+	saved, ok := f.tokenRepo.tokens[resp.AccessToken]
+	if !ok {
+		t.Fatal("access token was not saved")
+	}
+	if saved.JKT != "test-jkt-value" {
+		t.Errorf("saved.JKT = %q, want %q", saved.JKT, "test-jkt-value")
+	}
+	if saved.TokenType != domain.TokenTypeDPoP {
+		t.Errorf("saved.TokenType = %q, want %q", saved.TokenType, domain.TokenTypeDPoP)
+	}
+}
+
 func TestAuthorizationCodeStrategy_Handle_EmbedsAuthorizationDetailsOnToken(t *testing.T) {
 	// ADR-0017: granted-details persisted on the AuthorizationCode at
 	// /oauth/authorize must land on the access token at /oauth/token

@@ -4,11 +4,17 @@ package http
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/jedi-knights/go-platform/apperrors"
 
@@ -232,6 +238,29 @@ func TestIntrospectionAuthMiddleware_PropagatesContextValues(t *testing.T) {
 	}
 	if len(gotPerms) != 1 || gotPerms[0] != "resources:read" {
 		t.Errorf("contextKeyPermissions = %v, want [resources:read]", gotPerms)
+	}
+}
+
+// TestIntrospectionAuthMiddleware_PropagatesCNFJKT covers RFC 9449
+// (ADR-0025 in identity-platform-go's auth-server): the introspection
+// result's DPoP confirmation thumbprint must reach context so
+// RequireDPoPMiddleware can enforce proof-of-possession downstream.
+func TestIntrospectionAuthMiddleware_PropagatesCNFJKT(t *testing.T) {
+	// Arrange
+	result := &ports.IntrospectionResult{Active: true, Subject: "user-1", CNFJKT: "test-jkt-value"}
+	var gotJKT string
+	captureHandler := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		gotJKT, _ = r.Context().Value(contextKeyCNFJKT).(string)
+	})
+	mw := IntrospectionAuthMiddleware(&fakeIntrospector{result: result}, testutil.NewTestLogger(), "")
+	w := httptest.NewRecorder()
+
+	// Act
+	mw(captureHandler).ServeHTTP(w, bearerRequest(t, "valid.jwt"))
+
+	// Assert
+	if gotJKT != "test-jkt-value" {
+		t.Errorf("contextKeyCNFJKT = %q, want %q", gotJKT, "test-jkt-value")
 	}
 }
 
@@ -643,5 +672,163 @@ func TestJWTAuthMiddleware_WithAudience_WrongAudience_Returns401(t *testing.T) {
 	}
 	if called {
 		t.Error("next handler must not be called for a token with wrong audience")
+	}
+}
+
+// --- RequireDPoPMiddleware (RFC 9449, ADR-0025 in identity-platform-go's auth-server) ---
+
+// buildDPoPProof signs a fresh ES256 DPoP proof for htm/htu, mirroring
+// exactly what a real client presents to a resource server per RFC 9449
+// §4.2/§4.3. Deliberately duplicated from auth-server's own test helper
+// (dpop_validator_test.go) rather than shared — see ADR-0025's "a little
+// copying is better than a little dependency" rationale for why this
+// service's DPoP proof verification has its own small implementation
+// rather than importing auth-server's.
+func buildDPoPProof(t *testing.T, htm, htu string) (string, string) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating EC key: %v", err)
+	}
+	point, err := priv.PublicKey.Bytes()
+	if err != nil {
+		t.Fatalf("encoding EC public key: %v", err)
+	}
+	coordSize := (len(point) - 1) / 2
+	enc := base64.RawURLEncoding.EncodeToString
+	jwkHeader := map[string]any{"kty": "EC", "crv": "P-256", "x": enc(point[1 : 1+coordSize]), "y": enc(point[1+coordSize:])}
+	claims := jwt.MapClaims{"htm": htm, "htu": htu, "iat": time.Now().Unix(), "jti": "jti-" + t.Name()}
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+	token.Header["typ"] = "dpop+jwt"
+	token.Header["jwk"] = jwkHeader
+	proof, err := token.SignedString(priv)
+	if err != nil {
+		t.Fatalf("signing proof: %v", err)
+	}
+	jkt, err := jwkThumbprint(jwkHeader)
+	if err != nil {
+		t.Fatalf("computing thumbprint: %v", err)
+	}
+	return proof, jkt
+}
+
+// requestWithCNFJKT builds a GET /resources request carrying jkt on
+// contextKeyCNFJKT, as IntrospectionAuthMiddleware would have set it.
+func requestWithCNFJKT(jkt string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/resources", nil)
+	ctx := context.WithValue(r.Context(), contextKeyCNFJKT, jkt)
+	return r.WithContext(ctx)
+}
+
+func TestRequireDPoPMiddleware_NoConfirmedJKT_CallsNextUnconditionally(t *testing.T) {
+	// Arrange — ordinary bearer token (empty jkt); no DPoP header sent either.
+	var called bool
+	mw := RequireDPoPMiddleware(testutil.NewTestLogger())
+	w := httptest.NewRecorder()
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, requestWithCNFJKT(""))
+
+	// Assert
+	if !called {
+		t.Error("expected next handler to be called for a non-DPoP-bound token")
+	}
+}
+
+func TestRequireDPoPMiddleware_ConfirmedJKT_ValidMatchingProof_CallsNext(t *testing.T) {
+	// Arrange
+	proof, jkt := buildDPoPProof(t, http.MethodGet, "http://example.com/resources")
+	var called bool
+	mw := RequireDPoPMiddleware(testutil.NewTestLogger())
+	w := httptest.NewRecorder()
+	r := requestWithCNFJKT(jkt)
+	r.Header.Set("DPoP", proof)
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, r)
+
+	// Assert
+	if !called {
+		t.Errorf("expected next handler to be called; status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRequireDPoPMiddleware_ConfirmedJKT_MissingProof_Returns401(t *testing.T) {
+	// Arrange
+	var called bool
+	mw := RequireDPoPMiddleware(testutil.NewTestLogger())
+	w := httptest.NewRecorder()
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, requestWithCNFJKT("some-jkt"))
+
+	// Assert
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+	if called {
+		t.Error("next handler must not be called when a DPoP-bound token has no proof")
+	}
+}
+
+func TestRequireDPoPMiddleware_ConfirmedJKT_ProofKeyMismatch_Returns401(t *testing.T) {
+	// Arrange — proof is valid but signed by a different key than the token confirms.
+	proof, _ := buildDPoPProof(t, http.MethodGet, "http://example.com/resources")
+	var called bool
+	mw := RequireDPoPMiddleware(testutil.NewTestLogger())
+	w := httptest.NewRecorder()
+	r := requestWithCNFJKT("a-completely-different-jkt")
+	r.Header.Set("DPoP", proof)
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, r)
+
+	// Assert
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+	if called {
+		t.Error("next handler must not be called when the proof key does not match cnf.jkt")
+	}
+}
+
+func TestRequireDPoPMiddleware_ConfirmedJKT_HTUMismatch_Returns401(t *testing.T) {
+	// Arrange — proof is for a different resource path.
+	proof, jkt := buildDPoPProof(t, http.MethodGet, "http://example.com/other-path")
+	var called bool
+	mw := RequireDPoPMiddleware(testutil.NewTestLogger())
+	w := httptest.NewRecorder()
+	r := requestWithCNFJKT(jkt)
+	r.Header.Set("DPoP", proof)
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, r)
+
+	// Assert
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+	if called {
+		t.Error("next handler must not be called when htu does not match the request")
+	}
+}
+
+func TestRequireDPoPMiddleware_ConfirmedJKT_MalformedProof_Returns401(t *testing.T) {
+	// Arrange
+	var called bool
+	mw := RequireDPoPMiddleware(testutil.NewTestLogger())
+	w := httptest.NewRecorder()
+	r := requestWithCNFJKT("some-jkt")
+	r.Header.Set("DPoP", "not-a-jwt")
+
+	// Act
+	mw(okHandler(t, &called)).ServeHTTP(w, r)
+
+	// Assert
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+	if called {
+		t.Error("next handler must not be called for a malformed proof")
 	}
 }

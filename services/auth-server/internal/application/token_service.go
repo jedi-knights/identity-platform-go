@@ -133,7 +133,8 @@ func (s *TokenService) Introspect(ctx context.Context, raw string) (*domain.Intr
 	// Check the token store — if not present, the token was revoked. The
 	// stored record (not the validator's JWT-derived one) is also the
 	// source for domain.Token.Acr (ADR-0024): Acr is never lifted onto
-	// the JWT itself, so it only exists server-side.
+	// the JWT itself, so it only exists server-side. The same is true of
+	// JKT (ADR-0025) — go-platform/jwtutil.Claims has no field for it.
 	stored, err := s.tokenRepo.FindByRaw(ctx, raw)
 	if err != nil {
 		if errors.Is(err, domain.ErrTokenNotFound) {
@@ -144,6 +145,11 @@ func (s *TokenService) Introspect(ctx context.Context, raw string) (*domain.Intr
 
 	scopeStr := strings.Join(token.Scopes, " ")
 
+	var cnf *domain.Confirmation
+	if stored.JKT != "" {
+		cnf = &domain.Confirmation{JKT: stored.JKT}
+	}
+
 	return &domain.IntrospectResponse{
 		Active:               true,
 		ClientID:             token.ClientID,
@@ -152,11 +158,12 @@ func (s *TokenService) Introspect(ctx context.Context, raw string) (*domain.Intr
 		Scope:                scopeStr,
 		ExpiresAt:            token.ExpiresAt.Unix(),
 		IssuedAt:             token.IssuedAt.Unix(),
-		TokenType:            string(token.TokenType),
+		TokenType:            string(stored.TokenType),
 		JTI:                  token.ID,
 		Audience:             token.Audience,
 		AuthorizationDetails: domain.AuthorizationDetailsToRaw(token.AuthorizationDetails),
 		Acr:                  stored.Acr,
+		CNF:                  cnf,
 	}, nil
 }
 
