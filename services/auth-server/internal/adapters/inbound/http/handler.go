@@ -72,6 +72,7 @@ type Handler struct {
 	introspectionSecret string
 	rateLimiter         *fixedWindowLimiter
 	authorize           *AuthorizeConfig
+	dpopValidator       *application.DPoPValidator
 
 	// auditEmitter is consulted on introspection and revocation per ADR-0018.
 	// Defaults to a no-op so tests and callers that pre-date the audit feature
@@ -89,6 +90,7 @@ func NewHandler(
 	logger logging.Logger,
 	introspectionSecret string,
 	authorize *AuthorizeConfig,
+	dpopValidator *application.DPoPValidator,
 ) *Handler {
 	return &Handler{
 		issuer:              issuer,
@@ -99,6 +101,7 @@ func NewHandler(
 		introspectionSecret: introspectionSecret,
 		rateLimiter:         newFixedWindowLimiter(20, time.Minute),
 		authorize:           authorize,
+		dpopValidator:       dpopValidator,
 		auditEmitter:        audit.New(audit.NoopSink{}),
 		auditService:        "auth-server",
 	}
@@ -190,6 +193,18 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 	req, ok := parseGrantRequest(w, r, h.logger)
 	if !ok {
 		return
+	}
+
+	// RFC 9449 (ADR-0025): grant-agnostic, so this runs once here rather
+	// than inside each GrantStrategy. Absent header — unchanged Bearer
+	// behavior; present-but-invalid — reject the whole request.
+	if dpopHeader := r.Header.Get("DPoP"); dpopHeader != "" {
+		jkt, err := h.dpopValidator.Validate(r.Context(), dpopHeader, http.MethodPost, requestURL(r))
+		if err != nil {
+			writeOAuthError(w, h.logger, "invalid_dpop_proof", err.Error(), http.StatusBadRequest)
+			return
+		}
+		req.DPoPJKT = jkt
 	}
 
 	resp, err := h.issuer.IssueToken(r.Context(), req)
@@ -1270,6 +1285,22 @@ func clientIP(r *http.Request) string {
 		ip = ip[:i]
 	}
 	return ip
+}
+
+// requestURL reconstructs the request's URL — scheme, host, path, no query
+// or fragment — for RFC 9449 §4.3 DPoP htu comparison. Built directly from
+// the live request rather than any configured "public base URL" so this
+// works correctly regardless of whether AUTH_METADATA_PUBLIC_BASE_URL is
+// set (ADR-0025).
+func requestURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		scheme = proto
+	}
+	return scheme + "://" + r.Host + r.URL.Path
 }
 
 // fixedWindowLimiter is a per-key fixed-window rate limiter.

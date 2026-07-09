@@ -340,6 +340,31 @@ func TestMetadataBuilder_OAuthMetadata_AdvertisesAuthorizationDetailsTypes(t *te
 	}
 }
 
+// TestMetadataBuilder_OAuthMetadata_AdvertisesDPoPSigningAlgs and its OIDC
+// counterpart cover RFC 9449 (ADR-0025): dpop_signing_alg_values_supported
+// is an OAuth-layer capability, so — unlike OIDC-only fields — it must
+// appear on both documents unconditionally.
+func TestMetadataBuilder_OAuthMetadata_AdvertisesDPoPSigningAlgs(t *testing.T) {
+	b := newBuilder(t, nil)
+	md := b.OAuthMetadata()
+	if !slices.Contains(md.DPoPSigningAlgValuesSupported, "ES256") {
+		t.Errorf("dpop_signing_alg_values_supported = %v, must include ES256", md.DPoPSigningAlgValuesSupported)
+	}
+	if !slices.Contains(md.DPoPSigningAlgValuesSupported, "RS256") {
+		t.Errorf("dpop_signing_alg_values_supported = %v, must include RS256", md.DPoPSigningAlgValuesSupported)
+	}
+}
+
+func TestMetadataBuilder_OIDCMetadata_AdvertisesDPoPSigningAlgs(t *testing.T) {
+	b := newBuilder(t, func(c *application.MetadataBuilderConfig) {
+		c.OIDCIssuer = "https://oidc.example.com"
+	})
+	md := b.OIDCMetadata()
+	if !slices.Contains(md.DPoPSigningAlgValuesSupported, "ES256") {
+		t.Errorf("dpop_signing_alg_values_supported = %v, must include ES256", md.DPoPSigningAlgValuesSupported)
+	}
+}
+
 func TestMetadataBuilder_OIDCMetadata_HS256ReportsHS256Alg(t *testing.T) {
 	b := newBuilder(t, func(c *application.MetadataBuilderConfig) {
 		c.OIDCIssuer = "https://oidc.example.com"

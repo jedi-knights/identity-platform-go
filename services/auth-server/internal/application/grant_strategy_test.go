@@ -144,6 +144,49 @@ func TestClientCredentialsStrategy_Handle_Success(t *testing.T) {
 	}
 }
 
+// TestClientCredentialsStrategy_Handle_StampsDPoPJKTAndTokenType covers
+// RFC 9449 (ADR-0025) — see the AuthorizationCodeStrategy analog for the
+// full rationale.
+func TestClientCredentialsStrategy_Handle_StampsDPoPJKTAndTokenType(t *testing.T) {
+	auth := newMockClientAuthenticator()
+	tokenRepo := newMockTokenRepo()
+	refreshTokenRepo := newMockRefreshTokenRepo()
+	tokenGen := &mockTokenGen{}
+
+	auth.clients["my-client"] = newTestClient(
+		"my-client", "my-secret",
+		[]string{"read"},
+		[]domain.GrantType{domain.GrantTypeClientCredentials},
+	)
+
+	strategy := application.NewClientCredentialsStrategy(auth, tokenRepo, refreshTokenRepo, tokenGen, nil, time.Hour, 7*24*time.Hour, nil)
+
+	resp, err := strategy.Handle(context.Background(), domain.GrantRequest{
+		GrantType:    domain.GrantTypeClientCredentials,
+		ClientID:     "my-client",
+		ClientSecret: "my-secret",
+		Scopes:       []string{"read"},
+		DPoPJKT:      "test-jkt-value",
+	})
+
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if resp.TokenType != string(domain.TokenTypeDPoP) {
+		t.Errorf("response token_type = %q, want %q", resp.TokenType, domain.TokenTypeDPoP)
+	}
+	saved, ok := tokenRepo.tokens[resp.AccessToken]
+	if !ok {
+		t.Fatal("access token was not saved")
+	}
+	if saved.JKT != "test-jkt-value" {
+		t.Errorf("saved.JKT = %q, want %q", saved.JKT, "test-jkt-value")
+	}
+	if saved.TokenType != domain.TokenTypeDPoP {
+		t.Errorf("saved.TokenType = %q, want %q", saved.TokenType, domain.TokenTypeDPoP)
+	}
+}
+
 func TestClientCredentialsStrategy_Handle_IssuesRefreshToken(t *testing.T) {
 	// Characterization test: Handle must persist a refresh token in the repository.
 	// Required before the issueRefreshToken extraction refactor (M3).
@@ -293,6 +336,43 @@ func TestRefreshTokenStrategy_Handle_Success(t *testing.T) {
 	}
 	if resp.RefreshToken == "" {
 		t.Error("expected non-empty refresh token in response (rotation)")
+	}
+}
+
+// TestRefreshTokenStrategy_Handle_StampsDPoPJKTAndTokenType covers RFC 9449
+// (ADR-0025) — see the AuthorizationCodeStrategy analog for the full
+// rationale.
+func TestRefreshTokenStrategy_Handle_StampsDPoPJKTAndTokenType(t *testing.T) {
+	auth := newMockClientAuthenticator()
+	tokenRepo := newMockTokenRepo()
+	refreshRepo := newMockRefreshTokenRepo()
+
+	auth.clients["client1"] = newTestClient("client1", "secret", []string{"read"}, []domain.GrantType{domain.GrantTypeRefreshToken})
+	seedRefreshToken(t, refreshRepo, "refresh-raw-1", "client1", "client1", []string{"read"}, 7*24*time.Hour)
+
+	strategy := newRefreshTokenStrategy(auth, tokenRepo, refreshRepo)
+	resp, err := strategy.Handle(context.Background(), domain.GrantRequest{
+		GrantType:    domain.GrantTypeRefreshToken,
+		ClientID:     "client1",
+		ClientSecret: "secret",
+		RefreshToken: "refresh-raw-1",
+		DPoPJKT:      "test-jkt-value",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.TokenType != string(domain.TokenTypeDPoP) {
+		t.Errorf("response token_type = %q, want %q", resp.TokenType, domain.TokenTypeDPoP)
+	}
+	saved, ok := tokenRepo.tokens[resp.AccessToken]
+	if !ok {
+		t.Fatal("access token was not saved")
+	}
+	if saved.JKT != "test-jkt-value" {
+		t.Errorf("saved.JKT = %q, want %q", saved.JKT, "test-jkt-value")
+	}
+	if saved.TokenType != domain.TokenTypeDPoP {
+		t.Errorf("saved.TokenType = %q, want %q", saved.TokenType, domain.TokenTypeDPoP)
 	}
 }
 

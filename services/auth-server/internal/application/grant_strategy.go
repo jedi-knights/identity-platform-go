@@ -61,6 +61,18 @@ func authenticateClient(ctx context.Context, secretAuth ports.ClientAuthenticato
 	return secretAuth.Authenticate(ctx, req.ClientID, req.ClientSecret)
 }
 
+// dpopTokenType returns domain.TokenTypeDPoP when jkt is non-empty
+// (RFC 9449 §5 — the token endpoint validated a DPoP proof for this
+// request), else domain.TokenTypeBearer. Shared by every strategy that
+// issues an access token so the "DPoP proof present" check has exactly one
+// implementation (ADR-0025).
+func dpopTokenType(jkt string) domain.TokenType {
+	if jkt != "" {
+		return domain.TokenTypeDPoP
+	}
+	return domain.TokenTypeBearer
+}
+
 // GrantStrategy defines the interface for handling grant types (Strategy pattern).
 type GrantStrategy interface {
 	Handle(ctx context.Context, req domain.GrantRequest) (*domain.GrantResponse, error)
@@ -290,7 +302,7 @@ func (s *ClientCredentialsStrategy) issueRefreshToken(ctx context.Context, clien
 // issueAccessToken generates a token ID, builds the domain.Token, signs it as a JWT,
 // and persists it. Extracted from Handle to keep Handle's cyclomatic complexity
 // within bounds.
-func (s *ClientCredentialsStrategy) issueAccessToken(ctx context.Context, client *domain.Client, scopes, roles, permissions []string, now time.Time, authzDetails []domain.AuthorizationDetail) (string, error) {
+func (s *ClientCredentialsStrategy) issueAccessToken(ctx context.Context, client *domain.Client, scopes, roles, permissions []string, now time.Time, authzDetails []domain.AuthorizationDetail, dpopJKT string) (string, error) {
 	tokenID, err := generateID()
 	if err != nil {
 		return "", apperrors.Wrap(apperrors.ErrCodeInternal, "generating token id", err)
@@ -305,9 +317,10 @@ func (s *ClientCredentialsStrategy) issueAccessToken(ctx context.Context, client
 		ActorType:            client.ResolvedActorType(),
 		AgentID:              client.AgentID(),
 		AuthorizationDetails: authzDetails,
+		JKT:                  dpopJKT,
 		ExpiresAt:            now.Add(s.ttl),
 		IssuedAt:             now,
-		TokenType:            domain.TokenTypeBearer,
+		TokenType:            dpopTokenType(dpopJKT),
 	}
 	raw, err := s.tokenGen.Generate(ctx, token)
 	if err != nil {
@@ -342,7 +355,7 @@ func (s *ClientCredentialsStrategy) Handle(ctx context.Context, req domain.Grant
 	}
 
 	now := time.Now()
-	raw, err := s.issueAccessToken(ctx, client, scopes, roles, permissions, now, req.AuthorizationDetails)
+	raw, err := s.issueAccessToken(ctx, client, scopes, roles, permissions, now, req.AuthorizationDetails, req.DPoPJKT)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +367,7 @@ func (s *ClientCredentialsStrategy) Handle(ctx context.Context, req domain.Grant
 
 	return &domain.GrantResponse{
 		AccessToken:  raw,
-		TokenType:    string(domain.TokenTypeBearer),
+		TokenType:    string(dpopTokenType(req.DPoPJKT)),
 		ExpiresIn:    int(s.ttl.Seconds()),
 		RefreshToken: refreshRaw,
 		Scope:        strings.Join(scopes, " "),
@@ -533,9 +546,10 @@ func (s *RefreshTokenStrategy) Handle(ctx context.Context, req domain.GrantReque
 		Permissions: permissions,
 		ActorType:   actorType,
 		AgentID:     agentID,
+		JKT:         req.DPoPJKT,
 		ExpiresAt:   now.Add(s.ttl),
 		IssuedAt:    now,
-		TokenType:   domain.TokenTypeBearer,
+		TokenType:   dpopTokenType(req.DPoPJKT),
 	}
 	raw, err := s.tokenGen.Generate(ctx, token)
 	if err != nil {
@@ -553,7 +567,7 @@ func (s *RefreshTokenStrategy) Handle(ctx context.Context, req domain.GrantReque
 
 	return &domain.GrantResponse{
 		AccessToken:  raw,
-		TokenType:    string(domain.TokenTypeBearer),
+		TokenType:    string(dpopTokenType(req.DPoPJKT)),
 		ExpiresIn:    int(s.ttl.Seconds()),
 		RefreshToken: newRefreshRaw,
 		Scope:        strings.Join(existing.Scopes, " "),
@@ -659,7 +673,7 @@ func (s *AuthorizationCodeStrategy) Handle(ctx context.Context, req domain.Grant
 	if err := verifyAuthCodeMatchesRequest(code, req); err != nil {
 		return nil, err
 	}
-	return s.issueTokens(ctx, client, code)
+	return s.issueTokens(ctx, client, code, req.DPoPJKT)
 }
 
 // validateAuthCodeRequestFields checks the form fields that must be present
@@ -716,7 +730,7 @@ func verifyPKCES256(verifier, challenge string) bool {
 // (RBAC fetch is optional; refresh token is opaque hex). Failure to fetch
 // permissions does NOT fail the flow — tokens issue without RBAC claims, the
 // same fallback ClientCredentialsStrategy uses.
-func (s *AuthorizationCodeStrategy) issueTokens(ctx context.Context, client *domain.Client, code *domain.AuthorizationCode) (*domain.GrantResponse, error) {
+func (s *AuthorizationCodeStrategy) issueTokens(ctx context.Context, client *domain.Client, code *domain.AuthorizationCode, dpopJKT string) (*domain.GrantResponse, error) {
 	var roles, permissions []string
 	if s.permsFetcher != nil {
 		roles, permissions, _ = s.permsFetcher.GetSubjectPermissions(ctx, code.Subject)
@@ -748,9 +762,10 @@ func (s *AuthorizationCodeStrategy) issueTokens(ctx context.Context, client *dom
 		// regardless of what acr_values the original /oauth/authorize
 		// request asked for (see ADR-0024's stated scope).
 		Acr:       domain.AcrValuePassword,
+		JKT:       dpopJKT,
 		ExpiresAt: now.Add(s.ttl),
 		IssuedAt:  now,
-		TokenType: domain.TokenTypeBearer,
+		TokenType: dpopTokenType(dpopJKT),
 	}
 	raw, err := s.tokenGen.Generate(ctx, token)
 	if err != nil {
@@ -771,7 +786,7 @@ func (s *AuthorizationCodeStrategy) issueTokens(ctx context.Context, client *dom
 	return &domain.GrantResponse{
 		AccessToken:  raw,
 		IDToken:      idToken,
-		TokenType:    string(domain.TokenTypeBearer),
+		TokenType:    string(dpopTokenType(dpopJKT)),
 		ExpiresIn:    int(s.ttl.Seconds()),
 		RefreshToken: refreshRaw,
 		Scope:        strings.Join(code.Scopes, " "),

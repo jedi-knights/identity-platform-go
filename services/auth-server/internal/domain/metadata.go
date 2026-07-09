@@ -39,6 +39,12 @@ type AuthorizationServerMetadata struct {
 	// whether to opt into the richer parameter.
 	AuthorizationDetailsTypesSupported []string `json:"authorization_details_types_supported,omitempty"`
 
+	// DPoPSigningAlgValuesSupported lists the RFC 9449 §18.1 proof JWT
+	// signing algorithms this server accepts (ADR-0025). Emitted on both
+	// /.well-known endpoints — DPoP is an OAuth-layer capability, not
+	// OIDC-specific.
+	DPoPSigningAlgValuesSupported []string `json:"dpop_signing_alg_values_supported,omitempty"`
+
 	// OIDC Discovery 1.0 §3 additions. Emitted in the OIDC Discovery
 	// document; RFC 8414 §2 tolerates the extras but they convey OIDC
 	// semantics, so the RFC 8414 path omits them.

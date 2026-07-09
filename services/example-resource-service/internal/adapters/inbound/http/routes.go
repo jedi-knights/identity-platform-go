@@ -65,6 +65,17 @@ func NewRouter(h *Handler, logger logging.Logger, signingKey []byte, keySource j
 		RequireScopeMiddleware("read")(RequireACRMiddleware("pwd")(http.HandlerFunc(h.ListResources))),
 	))
 
+	// GET /resources/dpop-protected demonstrates RFC 9449 DPoP proof-of-
+	// possession enforcement (ADR-0025 in identity-platform-go's
+	// auth-server): reads the same resource collection as GET /resources,
+	// but additionally requires a matching DPoP proof for any token bound
+	// via cnf.jkt. See dpop.go's RequireDPoPMiddleware doc comment for why
+	// this can't be demonstrated end-to-end against the real
+	// token-introspection-service topology today.
+	mux.Handle("GET /resources/dpop-protected", authMiddleware(
+		RequireScopeMiddleware("read")(RequireDPoPMiddleware(logger)(http.HandlerFunc(h.ListResources))),
+	))
+
 	// TraceIDMiddleware must be outermost so trace IDs are in context when
 	// LoggingMiddleware reads them (it captures ctx before calling next).
 	return httputil.TraceIDMiddleware(
