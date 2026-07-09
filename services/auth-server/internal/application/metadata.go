@@ -169,6 +169,7 @@ func (b *MetadataBuilder) base() *domain.AuthorizationServerMetadata {
 		// not wired), the same way AuthorizationEndpoint is advertised
 		// even when /oauth/authorize would 501.
 		PushedAuthorizationRequestEndpoint: b.publicBaseURL + "/oauth/par",
+		DeviceAuthorizationEndpoint:        b.publicBaseURL + "/device_authorization",
 		ResponseTypesSupported: []string{
 			"code",
 		},
@@ -194,15 +195,16 @@ func (b *MetadataBuilder) base() *domain.AuthorizationServerMetadata {
 }
 
 // grantTypesSupported returns the grant types the auth-server currently
-// accepts. authorization_code is included only when login-ui is wired —
-// otherwise /oauth/authorize returns 501 and advertising the grant
-// would surprise clients. The RFC 8693 token-exchange URN is always
-// advertised because the strategy is unconditionally registered
-// (ADR-0016).
+// accepts. authorization_code and device_code are included only when
+// login-ui is wired — without it, /oauth/authorize returns 501 and
+// /device_authorization returns 404, so no code from either flow could
+// ever be approved, and advertising either grant would surprise clients.
+// The RFC 8693 token-exchange URN is always advertised because the
+// strategy is unconditionally registered (ADR-0016).
 func grantTypesSupported(hasLoginUI bool) []string {
 	out := []string{"client_credentials", "refresh_token", string(domain.GrantTypeTokenExchange)}
 	if hasLoginUI {
-		out = append(out, "authorization_code")
+		out = append(out, "authorization_code", string(domain.GrantTypeDeviceCode))
 	}
 	return out
 }

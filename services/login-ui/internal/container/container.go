@@ -50,6 +50,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, auditEmitterProvider)
 	platform.Register(c, userAuthenticatorProvider)
 	platform.Register(c, authCodeIssuerProvider)
+	platform.Register(c, deviceDeciderProvider)
 	platform.Register(c, billingClientProvider)
 	platform.Register(c, handlerProvider)
 
@@ -66,11 +67,28 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	emitter := platform.MustResolve[audit.Emitter](ctx, c)
 	cfg := platform.MustResolve[*config.Config](ctx, c)
 	billing, _ := platform.Resolve[ports.BillingClient](ctx, c)
-	h := inboundhttp.NewHandler(userAuth, codeIssuer, logger).WithAudit(emitter, "login-ui")
+	deviceDecider, _ := platform.Resolve[ports.DeviceDecider](ctx, c)
+	h := inboundhttp.NewHandler(userAuth, codeIssuer, logger).WithAudit(emitter, "login-ui").WithDeviceDecider(deviceDecider)
 	if billing != nil {
 		h = h.WithBilling(billing, cfg.Billing.SuccessURL, cfg.Billing.CancelURL)
 	}
 	return h, nil
+}
+
+// deviceDeciderProvider wires the auth-server /internal/device/decision
+// adapter (ADR-0022) when both LOGIN_UI_AUTH_SERVER_URL and
+// LOGIN_UI_AUTH_SERVER_SERVICE_TOKEN are set — the same two settings
+// authCodeIssuerProvider already requires, since both endpoints share the
+// same shared-secret authentication. A missing service token is treated
+// the same as a missing URL: the adapter is not wired and /device
+// degrades to 503.
+func deviceDeciderProvider(ctx context.Context, c *platform.Container) (ports.DeviceDecider, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	if cfg.AuthServer.URL == "" || cfg.AuthServer.ServiceToken == "" {
+		return nil, nil //nolint:nilnil // documented degradation path
+	}
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	return authserver.NewDeviceDecisionClient(cfg.AuthServer.URL, cfg.AuthServer.ServiceToken, httpClient), nil
 }
 
 // billingClientProvider wires the Lago billing client when

@@ -71,6 +71,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, authorizationCodeIssuerProvider)
 	platform.Register(c, loginChallengeRepositoryProvider)
 	platform.Register(c, pushedAuthorizationRequestRepositoryProvider)
+	platform.Register(c, deviceAuthorizationRepositoryProvider)
 	platform.Register(c, clientWiringProvider)
 	platform.Register(c, userAuthenticatorProvider)
 	platform.Register(c, userClaimsFetcherProvider)
@@ -83,10 +84,12 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, authorizationCodeStrategyProvider)
 	platform.Register(c, refreshTokenStrategyProvider)
 	platform.Register(c, tokenExchangeStrategyProvider)
+	platform.Register(c, deviceCodeStrategyProvider)
 	platform.Register(c, grantRegistryProvider)
 	platform.Register(c, tokenServiceProvider)
 	platform.Register(c, handlerProvider)
 	platform.Register(c, jwksHandlerProvider)
+	platform.Register(c, deviceAuthorizationHandlerProvider)
 	platform.Register(c, userInfoHandlerProvider)
 	platform.Register(c, metadataBuilderProvider)
 	platform.Register(c, metadataHandlerProvider)
@@ -224,6 +227,25 @@ func pushedAuthorizationRequestRepositoryProvider(ctx context.Context, c *platfo
 		return nil, fmt.Errorf("connecting to Redis for pushed authorization requests: %w", err)
 	}
 	return redisadapter.NewPushedAuthorizationRequestRepository(client), nil
+}
+
+// deviceAuthorizationRepositoryProvider wires the RFC 8628 device
+// authorization store. Mirrors the authorization-code and login-challenge
+// repositories: Redis when AUTH_REDIS_URL is set, the in-memory adapter
+// otherwise. ADR-0022.
+func deviceAuthorizationRepositoryProvider(ctx context.Context, c *platform.Container) (domain.DeviceAuthorizationRepository, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if cfg.Redis.URL == "" {
+		log.Info("using in-memory device-authorization store (AUTH_REDIS_URL not set)")
+		return memory.NewDeviceAuthorizationRepository(), nil
+	}
+	log.Info("using Redis device-authorization store")
+	client, err := redisadapter.NewClient(cfg.Redis.URL)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to Redis for device authorizations: %w", err)
+	}
+	return redisadapter.NewDeviceAuthorizationRepository(client), nil
 }
 
 // authorizationCodeIssuerProvider wires the application-layer issuer that
@@ -475,13 +497,33 @@ func tokenExchangeStrategyProvider(ctx context.Context, c *platform.Container) (
 	}), nil
 }
 
+// deviceCodeStrategyProvider wires the RFC 8628 device_code grant strategy
+// (ADR-0022). Shares the same token/refresh-token repos and TTLs as
+// client_credentials; the device authorization store is its own repo
+// since polling and consumption follow a different lifecycle than any
+// existing grant.
+func deviceCodeStrategyProvider(ctx context.Context, c *platform.Container) (*application.DeviceCodeStrategy, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	cw := platform.MustResolve[*clientWiring](ctx, c)
+	repos, err := platform.Resolve[*tokenRepositories](ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	deviceAuthRepo := platform.MustResolve[domain.DeviceAuthorizationRepository](ctx, c)
+	gen := platform.MustResolve[application.TokenGenerator](ctx, c)
+	fetcher := platform.MustResolve[ports.SubjectPermissionsFetcher](ctx, c)
+	ttl, refreshTTL := tokenTTLs(cfg)
+	return application.NewDeviceCodeStrategy(cw.authenticator, deviceAuthRepo, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL), nil
+}
+
 func grantRegistryProvider(ctx context.Context, c *platform.Container) (*application.GrantStrategyRegistry, error) {
 	cc := platform.MustResolve[*application.ClientCredentialsStrategy](ctx, c)
 	ac := platform.MustResolve[*application.AuthorizationCodeStrategy](ctx, c)
 	rt := platform.MustResolve[*application.RefreshTokenStrategy](ctx, c)
 	te := platform.MustResolve[*application.TokenExchangeStrategy](ctx, c)
+	dc := platform.MustResolve[*application.DeviceCodeStrategy](ctx, c)
 	emitter := platform.MustResolve[audit.Emitter](ctx, c)
-	return application.NewGrantStrategyRegistry(cc, ac, rt, te).WithAudit(emitter, "auth-server"), nil
+	return application.NewGrantStrategyRegistry(cc, ac, rt, te, dc).WithAudit(emitter, "auth-server"), nil
 }
 
 func tokenServiceProvider(ctx context.Context, c *platform.Container) (*application.TokenService, error) {
@@ -543,6 +585,24 @@ func authorizeConfigFor(
 		PARRepo:         parRepo,
 		PARTTL:          time.Duration(cfg.PAR.TTLSeconds) * time.Second,
 	}
+}
+
+// deviceAuthorizationHandlerProvider wires the RFC 8628 device_authorization
+// endpoint handler (ADR-0022). Nil when LoginUI.URL is unset — without a
+// login-ui base URL there is no verification page to advertise, so the
+// endpoint stays disabled, mirroring /oauth/authorize's own 501 stub
+// behaviour under the same condition.
+func deviceAuthorizationHandlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.DeviceAuthorizationHandler, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	if cfg.LoginUI.URL == "" {
+		return nil, nil
+	}
+	cw := platform.MustResolve[*clientWiring](ctx, c)
+	repo := platform.MustResolve[domain.DeviceAuthorizationRepository](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	verificationURI := strings.TrimRight(cfg.LoginUI.URL, "/") + "/device"
+	ttl := time.Duration(cfg.DeviceAuthorization.TTLSeconds) * time.Second
+	return inboundhttp.NewDeviceAuthorizationHandler(cw.authenticator, repo, verificationURI, ttl, cfg.DeviceAuthorization.PollIntervalSeconds, cfg.LoginUI.ServiceToken, log), nil
 }
 
 // userInfoHandlerProvider wires the OIDC /userinfo handler. Nil when OIDC

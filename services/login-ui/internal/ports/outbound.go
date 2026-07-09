@@ -50,6 +50,23 @@ type AuthCodeIssuer interface {
 	IssueCode(ctx context.Context, req IssueCodeRequest) (*IssueCodeResponse, error)
 }
 
+// DeviceDecisionRequest captures the inputs login-ui sends to auth-server's
+// /internal/device/decision endpoint (RFC 8628, ADR-0022) after the user
+// authenticates on the device verification page and clicks Approve or Deny.
+// Subject is required when Approved is true — it is ignored on a Deny.
+type DeviceDecisionRequest struct {
+	UserCode string
+	Subject  string
+	Approved bool
+}
+
+// DeviceDecider is the outbound port behind auth-server's bearer-authed
+// /internal/device/decision endpoint (ADR-0022). Implementations attach the
+// shared service bearer token; the same token authenticates AuthCodeIssuer.
+type DeviceDecider interface {
+	Decide(ctx context.Context, req DeviceDecisionRequest) error
+}
+
 // Plan describes one of the catalog entries Lago publishes via its plans
 // API. The shape is deliberately minimal — login-ui only needs enough to
 // render the selection page and start a checkout session; the canonical

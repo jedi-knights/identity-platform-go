@@ -41,6 +41,7 @@ This codebase implements specific RFCs. Understand the semantics before modifyin
 | [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html) | `id_token`, `/userinfo` endpoint, `nonce`, `openid` scope, authentication context | `services/auth-server`, `services/identity-service`, [ADR-0010](docs/adr/0010-oidc-core.md) |
 | [RFC 9126](https://datatracker.ietf.org/doc/html/rfc9126) | Pushed Authorization Requests — `POST /oauth/par`, `request_uri` | `services/auth-server`, [ADR-0021](docs/adr/0021-pushed-authorization-requests.md). Optional and additive — the direct query-string `/oauth/authorize` flow is unchanged. |
 | [RFC 9207](https://datatracker.ietf.org/doc/html/rfc9207) | Authorization Server Issuer Identification — `iss` on every authorization response | `services/auth-server`, `services/login-ui`, [ADR-0020](docs/adr/0020-authorization-server-issuer-identification.md). Value is `cfg.JWT.Issuer`, echoed on both the direct error-redirect path and login-ui's post-login success redirect. |
+| [RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628) | Device Authorization Flow — browserless devices (CLIs, IoT) | `services/auth-server`, `services/login-ui`, [ADR-0022](docs/adr/0022-device-authorization-flow.md). New `urn:ietf:params:oauth:grant-type:device_code` grant, `POST /device_authorization` + `POST /internal/device/decision` endpoints, and login-ui's `/device` verification page. No `slow_down` enforcement and no separate consent screen (ADR-0022's stated scope limits). |
 
 ### Planned (not yet implemented)
 
@@ -50,14 +51,6 @@ These RFCs are on the roadmap toward a complete auth/authz system. Do not implem
 |-----|-------------|-----------------|
 | [RFC 7521](https://datatracker.ietf.org/doc/html/rfc7521) / [RFC 7523](https://datatracker.ietf.org/doc/html/rfc7523) | Assertion Framework / JWT Bearer Grants — clients authenticate using a signed JWT instead of a client_secret | Enables service-to-service federation where a client proves identity with a private key. JWKS (RFC 7517) is now in place, so the main remaining work is the assertion-verification grant strategy itself. |
 | [RFC 9449](https://datatracker.ietf.org/doc/html/rfc9449) | DPoP — Demonstrating Proof of Possession | Binds access tokens to the client's private key, so a stolen token cannot be replayed from a different client. JWKS (RFC 7517) is now in place; remaining work is accepting and validating a `DPoP` header at the token endpoint. High implementation cost; most valuable when tokens are long-lived or carried over untrusted channels. |
-
-### Considered (lower priority)
-
-These are valid for a complete auth/authz system but have narrower applicability. Implement after the Planned items above are stable.
-
-| RFC | What it adds | Key design notes |
-|-----|-------------|-----------------|
-| [RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628) | Device Authorization Flow — browserless devices (CLIs, IoT) | Adds a new grant type (`urn:ietf:params:oauth:grant-type:device_code`) and a `POST /device_authorization` endpoint. Follows the same Strategy pattern extension point as other grant types. |
 
 ### Out of scope
 

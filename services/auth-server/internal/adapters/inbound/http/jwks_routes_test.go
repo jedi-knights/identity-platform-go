@@ -20,7 +20,7 @@ func TestNewRouter_JWKSRoute_RegisteredWhenHandlerNonNil(t *testing.T) {
 	// independently and we only probe that route.
 	ks := newSingleKeySet(t, "kid-router")
 	jwks := authhttp.NewJWKSHandler(ks)
-	router := authhttp.NewRouter(&authhttp.Handler{}, jwks, nil, nil, quietLogger())
+	router := authhttp.NewRouter(&authhttp.Handler{}, jwks, nil, nil, nil, quietLogger())
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 
@@ -39,7 +39,7 @@ func TestNewRouter_JWKSRoute_RegisteredWhenHandlerNonNil(t *testing.T) {
 
 func TestNewRouter_JWKSRoute_404WhenHandlerNil(t *testing.T) {
 	// Arrange — HS256 mode: jwks handler resolved as nil, route not registered.
-	router := authhttp.NewRouter(&authhttp.Handler{}, nil, nil, nil, quietLogger())
+	router := authhttp.NewRouter(&authhttp.Handler{}, nil, nil, nil, nil, quietLogger())
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 

@@ -13,8 +13,19 @@ The OAuth 2.0 authorization server. Issues, introspects, and revokes tokens. Thi
 | `client_credentials` | Fully implemented | Includes refresh token issuance and RBAC claims |
 | `refresh_token` | Fully implemented | Rotates refresh token on use (old deleted, new issued) |
 | `authorization_code` | Fully implemented (ADR-0009) | Mandatory PKCE-S256 for every client; exact redirect-URI match; 60s default code TTL; atomic Consume detects replay |
+| `urn:ietf:params:oauth:grant-type:device_code` | Fully implemented (ADR-0022) | RFC 8628 device flow; polling maps to `authorization_pending`/`access_denied`/`expired_token` via `*application.DevicePollError`; no `slow_down` enforcement (stated ADR limitation) |
 
 The authorization_code grant runs a 12-step validation pipeline at the token endpoint (see ADR-0009 §"Token-endpoint exchange — validation order"). Both public clients (no secret, PKCE-only) and confidential clients (secret + PKCE) work; the `domain.Client.Type` field controls which path the strategy follows.
+
+---
+
+## ADR-0022 endpoints — `/device_authorization` and `/internal/device/decision`
+
+`POST /device_authorization` (client-credential authed, public-client-tolerant — same non-secret-enforcement carve-out as the device_code grant itself) mints a `device_code` (256-bit CSPRNG, hex) and a `user_code` (32-symbol Crockford Base32 alphabet, excludes I/L/O/U, formatted `XXXX-XXXX`), persists a `domain.DeviceAuthorization` (memory or Redis, mirroring the auth-code adapter's two-key lookup problem — see ADR-0022), and returns `{device_code, user_code, verification_uri, verification_uri_complete, expires_in, interval}`.
+
+`POST /internal/device/decision` is bearer-authenticated with the same `AUTH_LOGIN_UI_SERVICE_TOKEN` `/internal/issue-code` uses. `login-ui`'s `/device` verification page calls it after the user signs in and clicks Approve or Deny. `Approve`/`Deny` are keyed by `user_code`; a subsequent poll at `/oauth/token` resolves by `device_code` and `Consume`s the record exactly once.
+
+Both endpoints stay disabled until `AUTH_LOGIN_UI_URL` is set: `/device_authorization` is nil-resolved (404) and `/internal/device/decision` returns 404 when the operator has not configured `AUTH_LOGIN_UI_SERVICE_TOKEN`, mirroring ADR-0011's `/oauth/authorize` / `/internal/issue-code` degradation.
 
 ---
 

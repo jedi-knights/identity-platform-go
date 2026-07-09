@@ -13,6 +13,12 @@ const (
 	// principal needs to act for another while preserving both
 	// identities in the issued token's act chain.
 	GrantTypeTokenExchange GrantType = "urn:ietf:params:oauth:grant-type:token-exchange"
+	// GrantTypeDeviceCode is the RFC 8628 §3.4 device authorization grant
+	// per ADR-0022. Used by browserless or input-constrained clients (CLIs,
+	// IoT) that obtained a device_code from POST /device_authorization and
+	// are polling the token endpoint while a user approves the request on
+	// a separate, browser-capable device.
+	GrantTypeDeviceCode GrantType = "urn:ietf:params:oauth:grant-type:device_code"
 )
 
 // RFC 8693 token type URN values. Initially only the access_token URN
@@ -38,6 +44,11 @@ type GrantRequest struct {
 	// RefreshToken is the raw refresh token value presented by the client
 	// during the refresh_token grant (RFC 6749 §6).
 	RefreshToken string
+
+	// DeviceCode is the RFC 8628 §3.4 device_code form parameter, populated
+	// by the HTTP layer only when GrantType == GrantTypeDeviceCode; ignored
+	// by every other strategy.
+	DeviceCode string
 
 	// Token-exchange (RFC 8693 §2.1) parameters. Populated by the HTTP
 	// layer only when GrantType == GrantTypeTokenExchange; ignored by

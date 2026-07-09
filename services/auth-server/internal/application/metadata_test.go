@@ -320,3 +320,33 @@ func TestMetadataBuilder_OIDCMetadata_HS256ReportsHS256Alg(t *testing.T) {
 		t.Errorf("id_token_signing_alg_values_supported = %v, must include HS256", md.IDTokenSigningAlgValuesSupported)
 	}
 }
+
+func TestMetadataBuilder_OAuthMetadata_AdvertisesDeviceAuthorizationEndpoint(t *testing.T) {
+	// ADR-0022: advertised unconditionally, like AuthorizationEndpoint and
+	// TokenEndpoint, regardless of whether login-ui is wired.
+	b := newBuilder(t, func(c *application.MetadataBuilderConfig) {
+		c.HasLoginUI = false
+	})
+	md := b.OAuthMetadata()
+	if md.DeviceAuthorizationEndpoint != "https://auth.example.com/device_authorization" {
+		t.Errorf("device_authorization_endpoint = %q", md.DeviceAuthorizationEndpoint)
+	}
+}
+
+func TestMetadataBuilder_OAuthMetadata_GrantsIncludeDeviceCodeWithLoginUI(t *testing.T) {
+	b := newBuilder(t, nil)
+	md := b.OAuthMetadata()
+	if !slices.Contains(md.GrantTypesSupported, "urn:ietf:params:oauth:grant-type:device_code") {
+		t.Errorf("grant_types_supported = %v, missing device_code grant", md.GrantTypesSupported)
+	}
+}
+
+func TestMetadataBuilder_OAuthMetadata_GrantsExcludeDeviceCodeWithoutLoginUI(t *testing.T) {
+	b := newBuilder(t, func(c *application.MetadataBuilderConfig) {
+		c.HasLoginUI = false
+	})
+	md := b.OAuthMetadata()
+	if slices.Contains(md.GrantTypesSupported, "urn:ietf:params:oauth:grant-type:device_code") {
+		t.Errorf("grant_types_supported = %v, must not include device_code without login-ui", md.GrantTypesSupported)
+	}
+}
