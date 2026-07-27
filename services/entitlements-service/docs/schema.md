@@ -19,6 +19,8 @@ erDiagram
     accounts {
         uuid id PK
         text display_name
+        text billing_email "the billing address for this account"
+        text user_id "1:1 with a personal account owner; NULL for non-personal accounts. UNIQUE (partial) when set."
         text lago_customer_id "UNIQUE, nullable until wired"
         timestamptz created_at
         timestamptz updated_at
@@ -110,11 +112,20 @@ Multi-seat model per ADR-0028 decision 1. `accounts` is the billing
 entity (1:1 with Lago customer via `lago_customer_id`), `account_seats`
 holds member users.
 
-- `user_id` is an opaque TEXT ref, **not** a foreign key —
+- `accounts.billing_email` is the billing address for the account. Set to
+  the seat owner's email at creation and left as-is when the account is
+  transferred or when the owner changes their user-level email — Lago
+  needs a stable billing address that outlives per-user identity changes.
+- `accounts.user_id` is the natural key for a **personal account** (1:1
+  with a user). Migration 000002 added this with a partial-unique index
+  (`WHERE user_id IS NOT NULL`) so multiple non-personal accounts
+  (user_id NULL) coexist safely. Personal-account creation via
+  `POST /accounts/personal` uses this key for upsert idempotency (E7-S1b).
+- `account_seats.user_id` is an opaque TEXT ref, **not** a foreign key —
   `entitlements-service` does not own the user record, `identity-service`
   does. Cross-service FKs would couple databases.
-- `(account_id, user_id)` UNIQUE prevents a user from occupying two
-  seats in the same account.
+- `(account_id, user_id)` UNIQUE on `account_seats` prevents a user from
+  occupying two seats in the same account.
 - `role` is app-level (owner/admin/member); auth roles like `agent`
   (per ADR-0015) live on the JWT, not here.
 
