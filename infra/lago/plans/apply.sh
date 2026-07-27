@@ -57,14 +57,25 @@ for f in "$PLANS_DIR"/*.json; do
 
   case "$status" in
     200)
-      # Compare — Lago echoes the persisted plan; diff on amount_cents,
-      # trial_period, name, and metadata is enough for E2-S2 scope.
-      current=$(jq -c '{name: .plan.name, amount_cents: .plan.amount_cents,
-                        trial_period: .plan.trial_period,
-                        metadata: (.plan.metadata // {})}' /tmp/lago-plan.json)
-      desired=$(jq -c '{name: .plan.name, amount_cents: .plan.amount_cents,
-                        trial_period: .plan.trial_period,
-                        metadata: (.plan.metadata // {})}' "$f")
+      # Compare a normalized subset — Lago echoes server-generated IDs and
+      # timestamps that would falsely trigger "updating" every run. jq -S
+      # sort_keys so filter/charge ordering doesn't matter.
+      subset='{
+        name: .plan.name,
+        amount_cents: .plan.amount_cents,
+        trial_period: .plan.trial_period,
+        metadata: (.plan.metadata // {}),
+        charges: [(.plan.charges // [])[] | {
+          billable_metric_code: (.billable_metric_code // .billable_metric.code),
+          charge_model,
+          properties,
+          filters: [(.filters // [])[] | {
+            values, properties, invoice_display_name
+          }]
+        }]
+      }'
+      current=$(jq -cS "$subset" /tmp/lago-plan.json)
+      desired=$(jq -cS "$subset" "$f")
       if [[ "$current" == "$desired" ]]; then
         log "unchanged: $code ($name)"
         continue
