@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "event_id": "01JQAZ7Y8XKW4EABCFINTRONO000",
+  "event_type": "token_introspected",
+  "timestamp": "2026-07-27T18:00:00Z",
+  "service": "token-introspection-service",
+  "actor_type": "service",
+  "actor_id": "bearer-introspection-caller",
+  "resource": "token:access",
+  "resource_kind": "token",
+  "resource_id": "access",
+  "resource_parent": "token-introspection-service",
+  "resource_path": "token-introspection-service/token/access",
+  "action": "introspect",
+  "decision": "allow",
+  "attrs": {
+    "active": false,
+    "introspected_client": "",
+    "introspected_jti": ""
+  }
+}
