@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Apply the Touchline plan catalog to a running Lago instance (E2-S2 / #152).
+# Apply Lago billable metric definitions from JSON files (E2-S3 / #153).
 #
 # For each *.json in this directory:
-#   - GET /api/v1/plans/<code>
-#   - if 404, POST /api/v1/plans        (create)
-#   - if 200, PUT  /api/v1/plans/<code> (update — Lago merges by code)
+#   - GET /api/v1/billable_metrics/<code>
+#   - if 404, POST /api/v1/billable_metrics        (create)
+#   - if 200, PUT  /api/v1/billable_metrics/<code> (update)
 #
-# Idempotent. Safe to re-run. Diff-friendly output: prints created/updated/
-# unchanged per plan.
+# Metrics must be applied BEFORE plans that reference them (plans reference
+# metrics by code and Lago validates the code exists on plan create).
 #
 # Requires env vars:
 #   LAGO_API_KEY  — from Lago admin UI → Developers → API keys
@@ -15,19 +15,19 @@
 #
 # Usage (from repo root):
 #   set -a; source infra/stripe/secrets.env; set +a
-#   ./infra/lago/plans/apply.sh [--dry-run]
+#   ./infra/lago/metrics/apply.sh [--dry-run]
 #
 # Exit codes:
-#   0  all plans applied
+#   0  all metrics applied
 #   2  Lago unreachable
-#   3  a plan file failed to apply (Lago returned non-2xx)
+#   3  a metric file failed to apply
 
 set -euo pipefail
 
 : "${LAGO_API_KEY:?set LAGO_API_KEY (source infra/stripe/secrets.env)}"
 : "${LAGO_API_URL:?set LAGO_API_URL}"
 
-PLANS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+METRICS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRY_RUN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,7 +36,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-log() { printf '[plans] %s\n' "$*"; }
+log() { printf '[metrics] %s\n' "$*"; }
 
 log "checking Lago reachability at $LAGO_API_URL"
 ping=$(curl -sS -o /dev/null -w "%{http_code}" \
@@ -45,37 +45,28 @@ ping=$(curl -sS -o /dev/null -w "%{http_code}" \
 [[ "$ping" == "200" ]] || { log "Lago returned $ping — is the tunnel up?"; exit 2; }
 
 exit_code=0
-for f in "$PLANS_DIR"/*.json; do
-  [[ -e "$f" ]] || { log "no plan files in $PLANS_DIR"; break; }
-  code=$(jq -r '.plan.code' "$f")
-  name=$(jq -r '.plan.name' "$f")
-  [[ -n "$code" && "$code" != "null" ]] || { log "SKIP $f: missing .plan.code"; exit_code=3; continue; }
+for f in "$METRICS_DIR"/*.json; do
+  [[ -e "$f" ]] || { log "no metric files in $METRICS_DIR"; break; }
+  code=$(jq -r '.billable_metric.code' "$f")
+  name=$(jq -r '.billable_metric.name' "$f")
+  [[ -n "$code" && "$code" != "null" ]] || { log "SKIP $f: missing .billable_metric.code"; exit_code=3; continue; }
 
-  status=$(curl -sS -o /tmp/lago-plan.json -w "%{http_code}" \
+  status=$(curl -sS -o /tmp/lago-metric.json -w "%{http_code}" \
     -H "Authorization: Bearer $LAGO_API_KEY" \
-    "$LAGO_API_URL/api/v1/plans/$code" || true)
+    "$LAGO_API_URL/api/v1/billable_metrics/$code" || true)
 
   case "$status" in
     200)
-      # Compare a normalized subset — Lago echoes server-generated IDs and
-      # timestamps that would falsely trigger "updating" every run. jq -S
-      # sort_keys so filter/charge ordering doesn't matter.
-      subset='{
-        name: .plan.name,
-        amount_cents: .plan.amount_cents,
-        trial_period: .plan.trial_period,
-        metadata: (.plan.metadata // {}),
-        charges: [(.plan.charges // [])[] | {
-          billable_metric_code: (.billable_metric_code // .billable_metric.code),
-          charge_model,
-          properties,
-          filters: [(.filters // [])[] | {
-            values, properties, invoice_display_name
-          }]
-        }]
-      }'
-      current=$(jq -cS "$subset" /tmp/lago-plan.json)
-      desired=$(jq -cS "$subset" "$f")
+      current=$(jq -cS '{name: .billable_metric.name,
+                          aggregation_type: .billable_metric.aggregation_type,
+                          field_name: .billable_metric.field_name,
+                          recurring: .billable_metric.recurring,
+                          filters: (.billable_metric.filters // [])}' /tmp/lago-metric.json)
+      desired=$(jq -cS '{name: .billable_metric.name,
+                          aggregation_type: .billable_metric.aggregation_type,
+                          field_name: .billable_metric.field_name,
+                          recurring: .billable_metric.recurring,
+                          filters: (.billable_metric.filters // [])}' "$f")
       if [[ "$current" == "$desired" ]]; then
         log "unchanged: $code ($name)"
         continue
@@ -83,7 +74,7 @@ for f in "$PLANS_DIR"/*.json; do
       log "updating:  $code ($name)"
       if [[ $DRY_RUN -eq 1 ]]; then continue; fi
       resp=$(curl -sS -o /tmp/lago-put.json -w "%{http_code}" \
-        -X PUT "$LAGO_API_URL/api/v1/plans/$code" \
+        -X PUT "$LAGO_API_URL/api/v1/billable_metrics/$code" \
         -H "Authorization: Bearer $LAGO_API_KEY" \
         -H "Content-Type: application/json" \
         -d @"$f")
@@ -93,7 +84,7 @@ for f in "$PLANS_DIR"/*.json; do
       log "creating:  $code ($name)"
       if [[ $DRY_RUN -eq 1 ]]; then continue; fi
       resp=$(curl -sS -o /tmp/lago-post.json -w "%{http_code}" \
-        -X POST "$LAGO_API_URL/api/v1/plans" \
+        -X POST "$LAGO_API_URL/api/v1/billable_metrics" \
         -H "Authorization: Bearer $LAGO_API_KEY" \
         -H "Content-Type: application/json" \
         -d @"$f")
@@ -102,15 +93,15 @@ for f in "$PLANS_DIR"/*.json; do
       ;;
     *)
       log "unexpected status $status for $code:"
-      cat /tmp/lago-plan.json
+      cat /tmp/lago-metric.json
       exit_code=3
       ;;
   esac
 done
 
 if [[ $exit_code -eq 0 ]]; then
-  log "all plans applied"
+  log "all metrics applied"
 else
-  log "one or more plans failed — see output above"
+  log "one or more metrics failed — see output above"
 fi
 exit $exit_code
