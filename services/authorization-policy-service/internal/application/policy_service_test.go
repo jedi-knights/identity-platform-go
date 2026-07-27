@@ -453,3 +453,85 @@ func TestPolicyService_WithAudit_NilEmitterPanics(t *testing.T) {
 	_ = application.NewPolicyService(newFakePolicyRepo(), newFakeRoleRepo()).
 		WithAudit(nil, "authorization-policy-service")
 }
+
+// TestEvaluate_EmitCarriesMatchedRule covers E4-S4's "policy check (with
+// allow/deny decision + matched rule)" AC. On allow, attrs.matched_rule
+// identifies which role granted the permission (a coarse forensic hint —
+// finer detail would require attaching the specific Permission entry).
+// On deny, matched_rule is absent because nothing matched.
+func TestEvaluate_EmitCarriesMatchedRule(t *testing.T) {
+	tests := []struct {
+		name            string
+		setup           func(*fakePolicyRepo, *fakeRoleRepo)
+		req             domain.EvaluationRequest
+		wantAllow       bool
+		wantMatchedRule string // "" = expect absent
+	}{
+		{
+			name: "allow — role editor grants articles:write",
+			setup: func(pr *fakePolicyRepo, rr *fakeRoleRepo) {
+				rr.roles["editor"] = &domain.Role{
+					Name: "editor",
+					Permissions: []domain.Permission{
+						{Resource: "articles", Action: "write"},
+					},
+				}
+				pr.policies["u-1"] = &domain.Policy{
+					SubjectID: "u-1",
+					Roles:     []string{"editor"},
+				}
+			},
+			req:             domain.EvaluationRequest{SubjectID: "u-1", Resource: "articles", Action: "write"},
+			wantAllow:       true,
+			wantMatchedRule: "role:editor",
+		},
+		{
+			name: "deny — no role grants articles:delete",
+			setup: func(pr *fakePolicyRepo, rr *fakeRoleRepo) {
+				rr.roles["reader"] = &domain.Role{
+					Name: "reader",
+					Permissions: []domain.Permission{
+						{Resource: "articles", Action: "read"},
+					},
+				}
+				pr.policies["u-1"] = &domain.Policy{
+					SubjectID: "u-1",
+					Roles:     []string{"reader"},
+				}
+			},
+			req:             domain.EvaluationRequest{SubjectID: "u-1", Resource: "articles", Action: "delete"},
+			wantAllow:       false,
+			wantMatchedRule: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			policyRepo := newFakePolicyRepo()
+			roleRepo := newFakeRoleRepo()
+			tt.setup(policyRepo, roleRepo)
+			sink := &captureSink{}
+			svc := application.NewPolicyService(policyRepo, roleRepo).
+				WithAudit(audit.New(sink), "authorization-policy-service")
+
+			// Act
+			resp, err := svc.Evaluate(context.Background(), tt.req)
+
+			// Assert
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if resp.Allowed != tt.wantAllow {
+				t.Errorf("allowed = %v, want %v", resp.Allowed, tt.wantAllow)
+			}
+			if len(sink.events) != 1 {
+				t.Fatalf("expected 1 audit event, got %d", len(sink.events))
+			}
+			got, _ := sink.events[0].Attrs["matched_rule"].(string)
+			if got != tt.wantMatchedRule {
+				t.Errorf("attrs.matched_rule = %q, want %q", got, tt.wantMatchedRule)
+			}
+		})
+	}
+}
