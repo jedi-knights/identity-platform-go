@@ -124,7 +124,7 @@ func (s *PolicyService) Evaluate(ctx context.Context, req domain.EvaluationReque
 	if err != nil {
 		if apperrors.IsNotFound(err) {
 			resp := &domain.EvaluationResponse{Allowed: false, Reason: "no policy found for subject"}
-			if emitErr := s.emit(ctx, req, resp); emitErr != nil {
+			if emitErr := s.emit(ctx, req, resp, ""); emitErr != nil {
 				return nil, fmt.Errorf("audit emit (policy_evaluated): %w", emitErr)
 			}
 			return resp, nil
@@ -134,17 +134,17 @@ func (s *PolicyService) Evaluate(ctx context.Context, req domain.EvaluationReque
 
 	spec := newPermissionSpecification(s.roleRepo, req.Resource, req.Action)
 
-	allowed, err := spec.IsSatisfiedBy(ctx, policy.Roles)
+	matchedRole, err := spec.IsSatisfiedBy(ctx, policy.Roles)
 	if err != nil {
 		return nil, fmt.Errorf("evaluating permissions: %w", err)
 	}
 	var resp *domain.EvaluationResponse
-	if allowed {
+	if matchedRole != "" {
 		resp = &domain.EvaluationResponse{Allowed: true}
 	} else {
 		resp = &domain.EvaluationResponse{Allowed: false, Reason: "insufficient permissions"}
 	}
-	if emitErr := s.emit(ctx, req, resp); emitErr != nil {
+	if emitErr := s.emit(ctx, req, resp, matchedRole); emitErr != nil {
 		return nil, fmt.Errorf("audit emit (policy_evaluated): %w", emitErr)
 	}
 	return resp, nil
@@ -154,10 +154,21 @@ func (s *PolicyService) Evaluate(ctx context.Context, req domain.EvaluationReque
 // decision field reflects the authorization outcome itself — this is the
 // one event type where decision genuinely tracks allow/deny rather than
 // "the caller was authenticated".
-func (s *PolicyService) emit(ctx context.Context, req domain.EvaluationRequest, resp *domain.EvaluationResponse) error {
+//
+// matchedRole is the granting role name on allow, empty on deny. It
+// surfaces as attrs.matched_rule="role:<name>" so forensics can trace
+// which role granted access; on deny the key is omitted entirely.
+func (s *PolicyService) emit(ctx context.Context, req domain.EvaluationRequest, resp *domain.EvaluationResponse, matchedRole string) error {
 	decision := audit.DecisionAllow
 	if !resp.Allowed {
 		decision = audit.DecisionDeny
+	}
+	attrs := map[string]any{
+		"requested_resource": req.Resource,
+		"requested_action":   req.Action,
+	}
+	if matchedRole != "" {
+		attrs["matched_rule"] = "role:" + matchedRole
 	}
 	return s.emitter.Emit(ctx, audit.Event{
 		EventType:      "policy_evaluated",
@@ -173,9 +184,6 @@ func (s *PolicyService) emit(ctx context.Context, req domain.EvaluationRequest, 
 		Action:         "evaluate",
 		Decision:       decision,
 		Reason:         resp.Reason,
-		Attrs: map[string]any{
-			"requested_resource": req.Resource,
-			"requested_action":   req.Action,
-		},
+		Attrs:          attrs,
 	})
 }
