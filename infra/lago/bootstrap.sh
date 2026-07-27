@@ -4,8 +4,8 @@
 # Idempotent: each step checks state before mutating. Safe to re-run.
 # Requires: flyctl >=0.3, openssl, jq, an authenticated Fly org (FLY_ORG env var).
 #
-# Usage:
-#   FLY_ORG=jedi-knights ./scripts/lago-bootstrap.sh [--region iad] [--dry-run]
+# Usage (from repo root):
+#   FLY_ORG=jedi-knights ./infra/lago/bootstrap.sh [--region iad] [--dry-run]
 #
 # What it does, in order:
 #   1. Creates three Fly apps: jk-lago-api, jk-lago-front, jk-lago-worker
@@ -21,6 +21,11 @@
 #   - Create backups schedules — Managed Postgres has daily backups by default
 
 set -euo pipefail
+
+# Resolve to the directory containing this script so `fly deploy -c fly.*.toml`
+# and other relative paths work regardless of the caller's cwd.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
 REGION="${REGION:-iad}"
 FLY_ORG="${FLY_ORG:?FLY_ORG must be set (e.g. FLY_ORG=jedi-knights)}"
@@ -128,14 +133,15 @@ fi
 # 5. Next steps ----------------------------------------------------------------
 cat <<'NEXT'
 
-[bootstrap] complete. Next steps (see docs/lago-runbook.md for detail):
+[bootstrap] complete. Next steps (see infra/lago/README.md for detail):
 
-  fly deploy -c fly.lago-api.toml
-  fly deploy -c fly.lago-worker.toml
-  fly deploy -c fly.lago-front.toml
+  fly deploy -c infra/lago/fly.lago-api.toml
+  fly deploy -c infra/lago/fly.lago-worker.toml
+  fly deploy -c infra/lago/fly.lago-front.toml
 
 Then run the first-time DB migration inside the api container:
   fly ssh console -a jk-lago-api -C 'bundle exec rails db:migrate'
 
-Create the initial admin user via Lago's signup API (see runbook §Initial admin).
+Create the initial admin user via Lago's signup API
+(see infra/lago/README.md §Post-deploy admin-UI steps).
 NEXT
