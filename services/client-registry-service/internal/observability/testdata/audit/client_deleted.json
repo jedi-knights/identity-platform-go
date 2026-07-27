@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "event_id": "01JQAZ7Y8XKW4EABCFCLIDEL0000",
+  "event_type": "client_deleted",
+  "timestamp": "2026-07-27T18:00:00Z",
+  "service": "client-registry-service",
+  "actor_type": "service",
+  "actor_id": "01JSAMPLECLIENTID000000000000",
+  "subject_id": "01JSAMPLECLIENTID000000000000",
+  "client_id": "01JSAMPLECLIENTID000000000000",
+  "resource": "endpoint:delete",
+  "resource_kind": "endpoint",
+  "resource_id": "delete",
+  "resource_parent": "client-registry-service",
+  "resource_path": "client-registry-service/endpoint/delete",
+  "action": "delete",
+  "decision": "allow"
+}
