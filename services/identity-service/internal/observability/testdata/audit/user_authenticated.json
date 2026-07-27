@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "event_id": "01JQAZ7Y8XKW4EABCFAUTHOK0000",
+  "event_type": "user_authenticated",
+  "timestamp": "2026-07-27T18:00:00Z",
+  "service": "identity-service",
+  "actor_type": "user",
+  "actor_id": "01JSAMPLEUSERID0000000000000",
+  "subject_id": "01JSAMPLEUSERID0000000000000",
+  "resource": "endpoint:authenticate",
+  "resource_kind": "endpoint",
+  "resource_id": "authenticate",
+  "resource_parent": "identity-service",
+  "resource_path": "identity-service/endpoint/authenticate",
+  "action": "authenticate",
+  "decision": "allow",
+  "attrs": {
+    "email": "sample@example.com",
+    "email_verified": true
+  }
+}

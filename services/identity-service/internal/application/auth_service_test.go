@@ -399,3 +399,97 @@ func TestAuthService_WithAudit_NilEmitterPanics(t *testing.T) {
 	}()
 	_ = application.NewAuthService(repo, &mockHasher{}).WithAudit(nil, "identity-service")
 }
+
+// TestLogin_EmitsUserAuthenticationFailed covers E4-S2's "login failure"
+// audit-emit AC. Two failure classes:
+//   - wrong password on an existing user (SubjectID known, reason=invalid_password)
+//   - unknown user               (SubjectID empty — cannot reveal existence,
+//     reason=user_not_found)
+//
+// Both surface identical "invalid credentials" errors to the caller (email
+// enumeration defense) but produce distinct audit trails for forensics.
+func TestLogin_EmitsUserAuthenticationFailed(t *testing.T) {
+	tests := []struct {
+		name          string
+		setup         func(*mockUserRepo)
+		req           domain.LoginRequest
+		wantSubjectID string
+		wantReason    string
+	}{
+		{
+			name: "wrong password",
+			setup: func(r *mockUserRepo) {
+				seedUser(t, r, &domain.User{
+					ID:           "u-1",
+					Email:        "a@b.com",
+					PasswordHash: "hashed:right",
+					Name:         "A",
+					Active:       true,
+				})
+			},
+			req:           domain.LoginRequest{Email: "a@b.com", Password: "wrong"},
+			wantSubjectID: "u-1",
+			wantReason:    "invalid_password",
+		},
+		{
+			name:          "unknown user",
+			setup:         func(*mockUserRepo) {},
+			req:           domain.LoginRequest{Email: "unknown@b.com", Password: "pw"},
+			wantSubjectID: "",
+			wantReason:    "user_not_found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			repo := newMockUserRepo()
+			tt.setup(repo)
+			sink := &captureSink{}
+			svc := application.NewAuthService(repo, &mockHasher{}).WithAudit(audit.New(sink), "identity-service")
+
+			// Act
+			_, err := svc.Login(context.Background(), tt.req)
+
+			// Assert
+			if err == nil {
+				t.Fatal("expected auth error, got nil")
+			}
+			if len(sink.events) != 1 {
+				t.Fatalf("expected 1 audit event, got %d", len(sink.events))
+			}
+			e := sink.events[0]
+			assertUserAuthenticationFailedEvent(t, e, tt.wantSubjectID, tt.wantReason)
+		})
+	}
+}
+
+// assertUserAuthenticationFailedEvent verifies the shape of a
+// user_authentication_failed event. Extracted so the subtest body stays
+// under the gocyclo budget.
+func assertUserAuthenticationFailedEvent(t *testing.T, e audit.Event, wantSubjectID, wantReason string) {
+	t.Helper()
+	checks := []struct {
+		field string
+		got   any
+		want  any
+	}{
+		{"EventType", e.EventType, "user_authentication_failed"},
+		{"Service", e.Service, "identity-service"},
+		{"ActorType", string(e.ActorType), string(audit.ActorTypeUser)},
+		{"SubjectID", e.SubjectID, wantSubjectID},
+		{"Resource", e.Resource, "endpoint:authenticate"},
+		{"ResourceKind", string(e.ResourceKind), string(audit.ResourceKindEndpoint)},
+		{"ResourceID", e.ResourceID, "authenticate"},
+		{"ResourceParent", e.ResourceParent, "identity-service"},
+		{"ResourcePath", e.ResourcePath, "identity-service/endpoint/authenticate"},
+		{"Action", e.Action, "authenticate"},
+		{"Decision", string(e.Decision), string(audit.DecisionDeny)},
+		{"Reason", e.Reason, wantReason},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("event.%s = %v, want %v", c.field, c.got, c.want)
+		}
+	}
+}
