@@ -38,3 +38,5 @@ TODO.md
 
 # Lago local secrets (never commit filled-in copy)
 infra/lago/secrets.env
+infra/stripe/secrets.env
+infra/stripe/secrets.live.env
