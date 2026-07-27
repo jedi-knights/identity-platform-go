@@ -1,0 +1,19 @@
+{
+  "plan": {
+    "name": "Touchline Club",
+    "code": "touchline-club",
+    "description": "For clubs. Unlimited match reviews across up to 10 seats. 7-day free trial. seat_allowance is enforced by entitlements-service; per-seat overage is out of scope for this plan (contact sales).",
+    "interval": "monthly",
+    "pay_in_advance": true,
+    "amount_cents": 4900,
+    "amount_currency": "USD",
+    "trial_period": 7,
+    "bill_charges_monthly": false,
+    "tax_codes": [],
+    "metadata": {
+      "match_quota": null,
+      "seat_allowance": 10,
+      "entitlements_tier": "club"
+    }
+  }
+}

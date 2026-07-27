@@ -1,0 +1,19 @@
+{
+  "plan": {
+    "name": "Touchline Coach",
+    "code": "touchline-coach",
+    "description": "For individual coaches. Unlimited match reviews. 7-day free trial. Single-seat plan; entitlements-service treats seat_allowance=1 as the enforcement key.",
+    "interval": "monthly",
+    "pay_in_advance": true,
+    "amount_cents": 1200,
+    "amount_currency": "USD",
+    "trial_period": 7,
+    "bill_charges_monthly": false,
+    "tax_codes": [],
+    "metadata": {
+      "match_quota": null,
+      "seat_allowance": 1,
+      "entitlements_tier": "coach"
+    }
+  }
+}

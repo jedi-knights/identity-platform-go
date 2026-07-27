@@ -1,0 +1,19 @@
+{
+  "plan": {
+    "name": "Touchline Free",
+    "code": "touchline-free",
+    "description": "Free tier for evaluating Touchline. 3 match reviews per calendar month. Quota is enforced by entitlements-service reading plan.metadata.match_quota — Lago does not block usage.",
+    "interval": "monthly",
+    "pay_in_advance": true,
+    "amount_cents": 0,
+    "amount_currency": "USD",
+    "trial_period": 0,
+    "bill_charges_monthly": false,
+    "tax_codes": [],
+    "metadata": {
+      "match_quota": 3,
+      "seat_allowance": 1,
+      "entitlements_tier": "free"
+    }
+  }
+}

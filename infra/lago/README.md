@@ -124,7 +124,16 @@ Then, in order:
    `wire-lago-connector.sh` → register the Stripe webhook endpoint → verify
    with `smoke-test.sh`. Track under [#151](https://github.com/jedi-knights/identity-platform-go/issues/151).
 
-9. **Smoke-test the pipeline** — from the API key created in step 5:
+9. **Apply the Touchline plan catalog** — see
+   [`plans/README.md`](./plans/README.md). One command:
+   ```bash
+   set -a; source infra/stripe/secrets.env; set +a
+   ./infra/lago/plans/apply.sh
+   ```
+   Applies `touchline-free`, `touchline-coach`, `touchline-club` from the
+   JSON files. Idempotent.
+
+10. **Smoke-test the pipeline** — from the API key created in step 5:
    ```bash
    curl -H "Authorization: Bearer $LAGO_API_KEY" \
      https://jk-lago-api.internal:3000/api/v1/organizations
