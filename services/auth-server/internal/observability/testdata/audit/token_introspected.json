@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "event_id": "01JQAZ7Y8XKW4EABCFINTRO0000",
+  "event_type": "token_introspected",
+  "timestamp": "2026-07-27T18:00:00Z",
+  "service": "auth-server",
+  "actor_type": "service",
+  "actor_id": "sample-client",
+  "subject_id": "sample-subject",
+  "client_id": "sample-client",
+  "resource": "token:access",
+  "resource_kind": "token",
+  "resource_id": "access",
+  "resource_parent": "auth-server",
+  "resource_path": "auth-server/token/access",
+  "action": "introspect",
+  "decision": "allow",
+  "attrs": {
+    "active": true,
+    "introspected_client": "sample-target-client",
+    "introspected_jti": "01JABCDEFGHJKMNPQRSTVWXYZ0"
+  }
+}
