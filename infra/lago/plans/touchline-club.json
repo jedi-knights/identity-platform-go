@@ -14,6 +14,29 @@
       "match_quota": null,
       "seat_allowance": 10,
       "entitlements_tier": "club"
-    }
+    },
+    "charges": [
+      {
+        "billable_metric_code": "mcp_tool_calls",
+        "invoice_display_name": "MCP tool calls",
+        "charge_model": "standard",
+        "pay_in_advance": false,
+        "invoiceable": true,
+        "prorated": false,
+        "properties": { "amount": "0" },
+        "filters": [
+          {
+            "invoice_display_name": "NWSL get_standings",
+            "properties": { "amount": "0.002" },
+            "values": { "tool_id": ["jk-mcp-nwsl:get_standings"] }
+          },
+          {
+            "invoice_display_name": "NCAA get_rpi",
+            "properties": { "amount": "0.01" },
+            "values": { "tool_id": ["jk-mcp-ncaa:get_rpi"] }
+          }
+        ]
+      }
+    ]
   }
 }

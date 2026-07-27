@@ -1,0 +1,19 @@
+{
+  "billable_metric": {
+    "name": "MCP tool call",
+    "code": "mcp_tool_calls",
+    "description": "One event per MCP tool invocation. tool_id carries the fully-qualified tool identifier (server:method), used both for reporting and for per-tool pricing on paid plans.",
+    "aggregation_type": "count_agg",
+    "field_name": null,
+    "recurring": false,
+    "filters": [
+      {
+        "key": "tool_id",
+        "values": [
+          "jk-mcp-nwsl:get_standings",
+          "jk-mcp-ncaa:get_rpi"
+        ]
+      }
+    ]
+  }
+}
