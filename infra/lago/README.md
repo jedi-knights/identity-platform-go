@@ -119,9 +119,10 @@ Then, in order:
    period boundaries; **change once, do not change again after invoices
    have been generated**.
 
-8. **Wire Stripe** — leave for Epic 2 (#139). The connector fields live at
-   *Settings → Integrations → Stripe* but should not be filled in until
-   the Stripe test-mode account exists.
+8. **Wire Stripe** — see [`../stripe/README.md`](../stripe/README.md) for the
+   full sequence: create test-mode Stripe account → capture keys → run
+   `wire-lago-connector.sh` → register the Stripe webhook endpoint → verify
+   with `smoke-test.sh`. Track under [#151](https://github.com/jedi-knights/identity-platform-go/issues/151).
 
 9. **Smoke-test the pipeline** — from the API key created in step 5:
    ```bash
