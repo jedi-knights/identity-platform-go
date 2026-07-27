@@ -1,0 +1,36 @@
+# Fly.io config for Lago Front (self-hosted billing platform UI).
+# Deploy: fly deploy -c fly.lago-front.toml
+# Private app; talks to jk-lago-api over Fly's 6PN network.
+#
+# The Lago front image is an nginx-served React SPA; API_URL is baked in at
+# runtime via /usr/share/nginx/html/env-config.js by the image entrypoint.
+#
+# TODO(operator): pin `image` to `getlago/front@sha256:...` after first
+# successful deploy (see rules/owasp-top-10.md A03).
+
+app            = "jk-lago-front"
+primary_region = "iad"
+kill_signal    = "SIGTERM"
+kill_timeout   = "30s"
+
+[build]
+  image = "getlago/front:v1"
+
+[env]
+  API_URL                    = "https://jk-lago-api.internal:3000"
+  LAGO_DISABLE_SIGNUP        = "true"
+  LAGO_OAUTH_PROXY_URL       = ""
+  LAGO_DISABLE_PDF_GENERATION = "false"
+
+[checks]
+  [checks.health]
+    type         = "http"
+    port         = 80
+    path         = "/"
+    interval     = "30s"
+    timeout      = "5s"
+    grace_period = "30s"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "256mb"
