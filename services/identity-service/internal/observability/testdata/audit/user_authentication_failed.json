@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "event_id": "01JQAZ7Y8XKW4EABCFAUTHNO0000",
+  "event_type": "user_authentication_failed",
+  "timestamp": "2026-07-27T18:00:00Z",
+  "service": "identity-service",
+  "actor_type": "user",
+  "actor_id": "sample@example.com",
+  "subject_id": "01JSAMPLEUSERID0000000000000",
+  "resource": "endpoint:authenticate",
+  "resource_kind": "endpoint",
+  "resource_id": "authenticate",
+  "resource_parent": "identity-service",
+  "resource_path": "identity-service/endpoint/authenticate",
+  "action": "authenticate",
+  "decision": "deny",
+  "reason": "invalid_password",
+  "attrs": {
+    "email": "sample@example.com"
+  }
+}

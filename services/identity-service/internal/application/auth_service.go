@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
@@ -63,12 +64,20 @@ func (s *AuthService) WithAudit(emitter audit.Emitter, service string) *AuthServ
 // Login verifies credentials and returns the user's identity on success.
 // Returns ErrCodeBadRequest for missing fields, ErrCodeUnauthorized for invalid
 // credentials, and ErrCodeForbidden when the account is disabled.
+//
+// On authentication failure (wrong password, unknown user, disabled account)
+// a user_authentication_failed audit event is emitted before the error
+// returns. Emit failures on the failure path are logged-and-swallowed —
+// dropping the audit here would double-fail an already-failed request. On
+// the success path emit failures still surface (a missed paid-event is worse
+// than a duplicate-fail response).
 func (s *AuthService) Login(ctx context.Context, req domain.LoginRequest) (*domain.LoginResponse, error) {
 	if err := validateLoginRequest(req); err != nil {
 		return nil, err
 	}
 	user, err := s.authenticate(ctx, req)
 	if err != nil {
+		_ = s.emitUserAuthenticationFailed(ctx, req.Email, user, err)
 		return nil, err
 	}
 	if err := s.emitUserAuthenticated(ctx, user); err != nil {
@@ -94,6 +103,13 @@ func validateLoginRequest(req domain.LoginRequest) error {
 // Returns ErrCodeUnauthorized on missing-user or bad-password (the two
 // cases collapse so callers cannot probe email existence) and
 // ErrCodeForbidden when the account is disabled.
+//
+// On failure the resolved user (if any) is returned alongside the error
+// so the caller can populate audit-event context (SubjectID) — the caller
+// MUST NOT use the returned user for authorization decisions on the error
+// path, only for observability. On the unknown-email path user is nil,
+// which is the audit-event's signal that the email did not match any
+// account (see classifyLoginFailure).
 func (s *AuthService) authenticate(ctx context.Context, req domain.LoginRequest) (*domain.User, error) {
 	user, err := s.userRepo.FindByEmail(ctx, req.Email)
 	if err != nil {
@@ -103,12 +119,85 @@ func (s *AuthService) authenticate(ctx context.Context, req domain.LoginRequest)
 		return nil, fmt.Errorf("looking up user: %w", err)
 	}
 	if !user.Active {
-		return nil, apperrors.New(apperrors.ErrCodeForbidden, "account is disabled")
+		return user, apperrors.New(apperrors.ErrCodeForbidden, "account is disabled")
 	}
 	if err := s.hasher.Compare(user.PasswordHash, req.Password); err != nil {
-		return nil, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid credentials")
+		return user, apperrors.New(apperrors.ErrCodeUnauthorized, "invalid credentials")
 	}
 	return user, nil
+}
+
+// emitUserAuthenticationFailed emits the ADR-0018 user_authentication_failed
+// event on any login failure path (wrong password, unknown user, disabled
+// account). SubjectID is set only when the user was successfully resolved
+// before the failure — an unknown-email attempt has no subject to attribute,
+// and revealing that the email was unrecognized to a downstream consumer
+// would defeat the enumeration defense.
+//
+// Reason discriminates the failure class for forensics:
+//   - "user_not_found"    — no user with the supplied email
+//   - "account_disabled"  — user exists but Active == false
+//   - "invalid_password"  — user exists but the password did not match
+//   - "credential_check_failed" — repository / hasher infrastructure error
+func (s *AuthService) emitUserAuthenticationFailed(ctx context.Context, email string, user *domain.User, cause error) error {
+	subjectID := ""
+	if user != nil {
+		subjectID = user.ID
+	}
+	attrs := map[string]any{"email": email}
+	if err := s.emitter.Emit(ctx, audit.Event{
+		EventType: "user_authentication_failed",
+		Service:   s.service,
+		ActorType: audit.ActorTypeUser,
+		// ActorID is the attempted email, not user.ID — the actor is who
+		// tried to authenticate, and that identity is only knowable via
+		// what they supplied. SubjectID is the resolved user (if any),
+		// distinct from actor for the unknown-email case.
+		ActorID:        email,
+		SubjectID:      subjectID,
+		Resource:       "endpoint:authenticate",
+		ResourceKind:   audit.ResourceKindEndpoint,
+		ResourceID:     "authenticate",
+		ResourceParent: s.service,
+		ResourcePath:   s.service + "/endpoint/authenticate",
+		Action:         "authenticate",
+		Decision:       audit.DecisionDeny,
+		Reason:         classifyLoginFailure(cause, user != nil),
+		Attrs:          attrs,
+	}); err != nil {
+		return fmt.Errorf("audit emit (user_authentication_failed): %w", err)
+	}
+	return nil
+}
+
+// classifyLoginFailure maps an authenticate() error and whether the user
+// was resolved into a stable reason string for the audit event.
+// Unrecognized errors fall back to "credential_check_failed" so an
+// infrastructure error is not miscategorized as an attack.
+//
+// authenticate() collapses "user not found" and "wrong password" into a
+// single Unauthorized error message (email-enumeration defense). The
+// discriminator here is whether user was resolved before the failure: nil
+// means the FindByEmail miss, non-nil means the password check failed.
+func classifyLoginFailure(err error, userResolved bool) string {
+	if err == nil {
+		return ""
+	}
+	var appErr *apperrors.AppError
+	if !errors.As(err, &appErr) {
+		return "credential_check_failed"
+	}
+	switch appErr.Code() {
+	case apperrors.ErrCodeUnauthorized:
+		if userResolved {
+			return "invalid_password"
+		}
+		return "user_not_found"
+	case apperrors.ErrCodeForbidden:
+		return "account_disabled"
+	default:
+		return "credential_check_failed"
+	}
 }
 
 // emitUserAuthenticated emits the ADR-0018 user_authenticated event.
