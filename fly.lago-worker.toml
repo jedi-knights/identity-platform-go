@@ -1,0 +1,42 @@
+# Fly.io config for Lago Worker (Sidekiq background jobs).
+# Deploy: fly deploy -c fly.lago-worker.toml
+# Same image as jk-lago-api, different process command. No HTTP endpoint.
+#
+# Secrets are shared with jk-lago-api — set both apps' secrets to the same
+# values so the worker can decrypt what the API encrypts:
+#   fly secrets set -a jk-lago-worker \
+#     SECRET_KEY_BASE="$(fly secrets list -a jk-lago-api ...)"  # see runbook
+#
+# DATABASE_URL and REDIS_URL are attached the same way as jk-lago-api.
+#
+# TODO(operator): pin `image` to `getlago/api@sha256:...` after first
+# successful deploy — must match the digest used by jk-lago-api.
+
+app            = "jk-lago-worker"
+primary_region = "iad"
+kill_signal    = "SIGTERM"
+kill_timeout   = "30s"
+
+[build]
+  image = "getlago/api:v1"
+
+[env]
+  RAILS_ENV                  = "production"
+  RAILS_LOG_TO_STDOUT        = "true"
+  LAGO_API_URL               = "https://jk-lago-api.internal:3000"
+  LAGO_FRONT_URL             = "https://jk-lago-front.internal"
+  LAGO_DISABLE_PDF_GENERATION = "false"
+  LAGO_USE_AWS_S3            = "false"
+  # Override the image default (Puma) with Sidekiq.
+  LAGO_RAILS_STDOUT          = "true"
+
+[processes]
+  worker = "./scripts/start.worker.sh"
+
+# No HTTP checks — worker exposes no listener.
+# Fly's default TCP check is disabled by omitting [checks].
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "1gb"
+  processes = ["worker"]
