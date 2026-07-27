@@ -35,3 +35,6 @@ TODO.md
 
 # Claude Code artifacts
 .claude/
+
+# Lago local secrets (never commit filled-in copy)
+infra/lago/secrets.env
