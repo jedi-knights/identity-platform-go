@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "event_id": "01JQAZ7Y8XKW4EABCFPOLDENY000",
+  "event_type": "policy_evaluated",
+  "timestamp": "2026-07-27T18:00:00Z",
+  "service": "authorization-policy-service",
+  "actor_type": "service",
+  "actor_id": "policy-caller",
+  "subject_id": "01JSAMPLESUBJECTID000000000",
+  "resource": "endpoint:evaluate",
+  "resource_kind": "endpoint",
+  "resource_id": "evaluate",
+  "resource_parent": "authorization-policy-service",
+  "resource_path": "authorization-policy-service/endpoint/evaluate",
+  "action": "evaluate",
+  "decision": "deny",
+  "reason": "insufficient permissions",
+  "attrs": {
+    "requested_action": "delete",
+    "requested_resource": "articles"
+  }
+}
