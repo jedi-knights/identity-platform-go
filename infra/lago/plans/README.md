@@ -19,21 +19,31 @@ will branch on `plan.metadata.entitlements_tier` (or fall back to `plan.code`)
 to decide feature access. Do not rename the codes without a coordinated
 migration.
 
-## Enforcement split — read this before adding a plan
+## Enforcement split — architectural decision
 
-Lago's job in this system is **pricing + invoicing**, not entitlement gates.
+**Lago prices; `entitlements-service` enforces.** This is a durable decision
+recorded in [ADR-0027](../../../docs/adr/0027-entitlements-enforces-quota-lago-prices.md), not an interim state. Do
+not migrate quota enforcement into Lago meters when Epic 3 lands.
 
 - **Recurring price + trial length** — Lago (`amount_cents`, `trial_period`)
-- **Match-quota hard cap** on Free — enforced by `entitlements-service`
-  reading `plan.metadata.match_quota`. Lago has no quota concept for a
-  non-metered plan.
-- **Seat allowance** on Club — enforced by `entitlements-service` reading
-  `plan.metadata.seat_allowance`. Per-seat overage pricing is out of
-  E2-S2 scope (contact-sales flow).
+- **Match-quota hard cap** on Free — `entitlements-service` reads
+  `plan.metadata.match_quota` at auth-check time and denies the 4th match
+- **Seat allowance** on Club — `entitlements-service` reads
+  `plan.metadata.seat_allowance` when adding a member; Lago has no seat
+  concept regardless
+- **Usage reporting** on the `matches` metric (Epic 3) — Lago tracks
+  usage for dashboards and future overage pricing, **but does not gate
+  access**. The billable metric enables reporting, not enforcement.
 
-When Epic 3 lands the `matches` billable metric, the Free plan will grow a
-`charges` block referencing that metric with a graduated model (free 0-3,
-overage-priced 4+). Until then, quota enforcement lives outside Lago.
+**Why one enforcement point:** entitlements-service exists regardless (for
+role gates, tier features, feature flags). Duplicating quota enforcement
+in Lago's graduated `charges` would mean two accounting paths for one
+decision, and Lago's meter is designed for overage billing, not hard
+blocks. Keeping the block in the auth layer makes "why was this request
+denied?" traceable to one code path.
+
+Per-seat overage pricing on Club is out of E2-S2 scope (contact-sales
+flow).
 
 ## Applying the catalog
 
