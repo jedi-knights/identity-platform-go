@@ -1,0 +1,53 @@
+# Fly.io config for Lago API (self-hosted billing platform).
+# Deploy: fly deploy -c fly.lago-api.toml
+# Private app; PostgreSQL-backed (DATABASE_URL set via `fly mpg attach`),
+# Redis-backed (REDIS_URL set via `fly redis attach`).
+#
+# Secrets required (set via `fly secrets set -a jk-lago-api ...`):
+#   SECRET_KEY_BASE          — 64+ hex bytes (openssl rand -hex 64)
+#   LAGO_RSA_PRIVATE_KEY     — base64-encoded RSA private key
+#                              (openssl genrsa 2048 | base64)
+#   LAGO_ENCRYPTION_KEY_SALT — 32+ hex bytes (openssl rand -hex 32)
+#   LAGO_ENCRYPTION_DETERMINISTIC_KEY — 32+ hex bytes
+#   LAGO_ENCRYPTION_PRIMARY_KEY       — 32+ hex bytes
+#
+# TODO(operator): pin `image` to `getlago/api@sha256:...` after first successful
+# deploy so future rebuilds are reproducible (see rules/owasp-top-10.md A03).
+
+app            = "jk-lago-api"
+primary_region = "iad"
+kill_signal    = "SIGTERM"
+kill_timeout   = "30s"
+
+[build]
+  image = "getlago/api:v1"
+
+[env]
+  RAILS_ENV                     = "production"
+  RAILS_LOG_TO_STDOUT           = "true"
+  LAGO_API_URL                  = "https://jk-lago-api.internal:3000"
+  LAGO_FRONT_URL                = "https://jk-lago-front.internal"
+  LAGO_SIDEKIQ_WEB              = "false"
+  LAGO_DISABLE_SIGNUP           = "true"
+  LAGO_DISABLE_PDF_GENERATION   = "false"
+  LAGO_USE_AWS_S3               = "false"
+  # Bind on all interfaces (IPv4 + IPv6) so Fly's 6PN routing works.
+  # Lago's Puma default binds 0.0.0.0; keep explicit for clarity.
+  LAGO_RAILS_STDOUT             = "true"
+
+[checks]
+  [checks.health]
+    type         = "http"
+    port         = 3000
+    path         = "/health"
+    interval     = "30s"
+    timeout      = "10s"
+    grace_period = "60s"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "1gb"
+
+[[mounts]]
+  source      = "lago_api_storage"
+  destination = "/app/storage"
