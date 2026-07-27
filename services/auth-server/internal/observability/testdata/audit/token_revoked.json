@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "event_id": "01JQAZ7Y8XKW4EABCFREVOK0000",
+  "event_type": "token_revoked",
+  "timestamp": "2026-07-27T18:00:00Z",
+  "service": "auth-server",
+  "actor_type": "service",
+  "actor_id": "sample-client",
+  "client_id": "sample-client",
+  "resource": "token:access",
+  "resource_kind": "token",
+  "resource_id": "access",
+  "resource_parent": "auth-server",
+  "resource_path": "auth-server/token/access",
+  "action": "revoke",
+  "decision": "allow",
+  "attrs": {
+    "token_type_hint": "access_token"
+  }
+}

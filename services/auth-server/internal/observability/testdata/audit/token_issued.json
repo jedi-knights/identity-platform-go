@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "event_id": "01JQAZ7Y8XKW4EABCFISSUE0000",
+  "event_type": "token_issued",
+  "timestamp": "2026-07-27T18:00:00Z",
+  "service": "auth-server",
+  "actor_type": "service",
+  "actor_id": "sample-client",
+  "subject_id": "sample-client",
+  "client_id": "sample-client",
+  "resource": "token:access",
+  "resource_kind": "token",
+  "resource_id": "access",
+  "resource_parent": "auth-server",
+  "resource_path": "auth-server/token/access",
+  "action": "issue",
+  "decision": "allow",
+  "attrs": {
+    "actor_type": "service",
+    "expires_in": 3600,
+    "grant_type": "client_credentials",
+    "has_refresh": true,
+    "id_token": false,
+    "scopes": "read write"
+  }
+}
