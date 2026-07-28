@@ -5,57 +5,125 @@ subscription state. Answers "does this actor have this entitlement, now?"
 
 ## Status
 
-**Scaffold in progress.** This directory currently contains only the
-Postgres schema (E3-S2 / #155). The Go application arrives in follow-on
-stories under Epic 3 (#140).
+**Live Go service.** Personal-account creation is wired end-to-end
+(`POST /accounts/personal`, idempotent, transactional owner-seat
+creation, `account_created` audit event).
 
 - [x] ADR-0028 — foundational design decisions ([`docs/adr/0028-*`](../../docs/adr/0028-entitlements-model.md))
-- [x] Postgres schema + migrations (this PR)
-- [ ] Seed initial catalog (#156)
-- [ ] Hexagonal Go scaffold — domain / application / adapters / cmd
-- [ ] HTTP + gRPC entitlement-check endpoints
+- [x] Postgres schema + migrations (000001 catalog + 000002 personal-account keys)
+- [x] Seed initial catalog
+- [x] **Hexagonal Go scaffold — domain / application / adapters / cmd (this PR — #210)**
+- [x] `POST /accounts/personal` — idempotent create with distinct 201/200 semantics
+- [ ] Additional endpoints (seat management, entitlement lookup)
 - [ ] Auth-server outbound port for JWT claim enrichment
 
-## Contents
+## Layout
 
-- [`docs/schema.md`](./docs/schema.md) — ER diagram, table notes, index inventory
-- [`internal/adapters/outbound/postgres/migrations/`](./internal/adapters/outbound/postgres/migrations/) — schema migrations (up + down)
-- `go.mod` — module declaration; no Go code yet
+```
+services/entitlements-service/
+├── cmd/main.go                              # Cobra entry, HTTP server, tracing bootstrap
+├── docs/schema.md                           # ER diagram + notes
+├── seeds/                                   # Reference catalog seed (E3-S3)
+└── internal/
+    ├── domain/                              # Account, Seat, Role — pure business types
+    ├── ports/                               # AccountRepository, SeatRepository
+    ├── application/                         # AccountService.CreatePersonalAccount
+    ├── observability/                       # Logger + audit emitter setup
+    ├── config/                              # Viper-based config loader
+    ├── container/                           # Dependency wiring (composition root)
+    └── adapters/
+        ├── inbound/http/                    # HTTP handler + router
+        └── outbound/
+            ├── memory/                      # In-memory repo (default)
+            └── postgres/                    # pgx-backed repo + embedded migrations
+```
+
+## API
+
+### `POST /accounts/personal`
+
+Create or return the personal account for a user. Idempotent on
+`user_id`.
+
+Request:
+
+```json
+{ "user_id": "user-abc", "email": "u@example.com" }
+```
+
+Response (201 on create, 200 on idempotent replay):
+
+```json
+{
+  "account_id": "…hex…",
+  "billing_email": "u@example.com",
+  "user_id": "user-abc",
+  "created": true
+}
+```
+
+- `201 Created` when this call created the account
+- `200 OK` when an account with the same `user_id` already existed
+- `400 Bad Request` on malformed body / missing required fields
+
+### `GET /health`
+
+Returns `{"status":"ok"}` at 200.
+
+## Configuration
+
+Env vars (all optional except in production):
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `ENTITLEMENTS_SERVER_HOST` | `0.0.0.0` | HTTP bind host |
+| `ENTITLEMENTS_SERVER_PORT` | `8086` | HTTP bind port |
+| `ENTITLEMENTS_LOG_LEVEL` | `info` | slog level |
+| `ENTITLEMENTS_LOG_FORMAT` | `json` | log format |
+| `ENTITLEMENTS_LOG_ENVIRONMENT` | `development` | environment tag |
+| `ENTITLEMENTS_DATABASE_URL` | *(empty)* | Postgres DSN — when unset, in-memory adapter is used |
+| `ENTITLEMENTS_AUDIT_DURABLE_DSN` | *(empty)* | Audit-event Postgres DSN (ADR-0018/0019) |
+| `ENTITLEMENTS_AUDIT_SKIP_MIGRATION` | `false` | skip audit-schema CREATE TABLE |
+| `ENTITLEMENTS_TRACING_ENABLED` | `false` | bootstrap OTel SDK |
+
+## Running locally
+
+In-memory (zero-dependency):
+
+```bash
+cd services/entitlements-service
+go run ./cmd
+# curl -X POST http://localhost:8086/accounts/personal \
+#   -H 'Content-Type: application/json' \
+#   -d '{"user_id":"u-1","email":"u1@x.com"}'
+```
+
+With Postgres:
+
+```bash
+docker run --rm -d --name ent-pg -e POSTGRES_PASSWORD=x -e POSTGRES_DB=ent -p 5432:5432 postgres:16
+export ENTITLEMENTS_DATABASE_URL="postgres://postgres:x@localhost:5432/ent?sslmode=disable"
+go run ./cmd    # runs 000001 + 000002 migrations at startup, then serves
+```
+
+## Testing
+
+```bash
+# Unit tests (no dependencies):
+go test ./...
+
+# Postgres integration tests (require a running Postgres):
+docker run --rm -d --name ent-it-pg -e POSTGRES_PASSWORD=x -e POSTGRES_DB=ent -p 55440:5432 postgres:16
+export ENTITLEMENTS_POSTGRES_TEST_URL="postgres://postgres:x@localhost:55440/ent?sslmode=disable"
+go test -tags integration ./internal/adapters/outbound/postgres/...
+```
+
+The integration test exercises the concurrent-stampede path — 15
+goroutines racing to upsert the same `user_id` all get the same
+account ID back, verifying the partial-unique index protection.
 
 ## Foundational references
 
 - **[ADR-0028](../../docs/adr/0028-entitlements-model.md)** — five design decisions this service is anchored on
 - **[ADR-0027](../../docs/adr/0027-entitlements-enforces-quota-lago-prices.md)** — enforcement split (this service enforces; Lago prices)
 - **[ADR-0019](../../docs/adr/0019-usage-accounting-and-billing.md)** — Lago/Stripe as billing engine
-
-## Applying the schema
-
-```bash
-# Postgres URL (from Fly Managed Postgres attach, or a local dev instance):
-export ENTITLEMENTS_DATABASE_URL="postgres://user:pass@host:5432/entitlements"
-
-migrate -database "$ENTITLEMENTS_DATABASE_URL" \
-  -path internal/adapters/outbound/postgres/migrations \
-  up
-```
-
-Down migration is symmetric and drops in FK-safe order.
-
-## Local development
-
-Nothing runnable yet. When the Go scaffold arrives, the pattern will
-follow the other services in this monorepo:
-
-```
-services/entitlements-service/
-├── cmd/
-│   └── main.go                     # Cobra entry
-├── internal/
-│   ├── domain/                     # Pure business types + rules
-│   ├── application/                # Use-case services
-│   ├── ports/                      # Inbound/outbound interfaces
-│   ├── adapters/
-│   │   ├── inbound/http/           # HTTP handlers
-│   │   └── outbound/postgres/      # This dir — schema + repositories
-│   └── container/                  # DI wiring via go-platform/container
-```

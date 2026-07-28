@@ -1,0 +1,132 @@
+// Package memory holds in-memory implementations of the
+// entitlements-service outbound ports. Default adapter per repo
+// convention — the Postgres adapter is swapped in via container.go
+// when ENTITLEMENTS_DB_URL is set. See ADR-0004 in the identity
+// platform for the reference-implementation stance on in-memory
+// persistence.
+package memory
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/jedi-knights/go-platform/apperrors"
+
+	"github.com/ocrosby/identity-platform-go/services/entitlements-service/internal/domain"
+	"github.com/ocrosby/identity-platform-go/services/entitlements-service/internal/ports"
+)
+
+// Compile-time assertions that AccountRepository satisfies both
+// interfaces. These mark the swap point for the Postgres adapter and
+// catch interface drift at declaration site.
+var (
+	_ ports.AccountRepository = (*AccountRepository)(nil)
+	_ ports.SeatRepository    = (*AccountRepository)(nil)
+)
+
+// AccountRepository is the in-memory implementation of the
+// entitlements-service account + seat repository. Safe for concurrent
+// use — a single RWMutex guards both maps because personal-account
+// upsert must lock across the account-lookup + seat-create sequence.
+type AccountRepository struct {
+	mu       sync.Mutex
+	accounts map[string]*domain.Account // keyed by account ID
+	byUser   map[string]string          // user_id -> account ID (personal accounts only)
+	seats    map[string][]domain.Seat   // account ID -> seats
+}
+
+// NewAccountRepository returns an empty in-memory account repository.
+func NewAccountRepository() *AccountRepository {
+	return &AccountRepository{
+		accounts: make(map[string]*domain.Account),
+		byUser:   make(map[string]string),
+		seats:    make(map[string][]domain.Seat),
+	}
+}
+
+// UpsertPersonalAccount creates or returns the personal account for
+// userID. Concurrent calls with the same userID are serialised by the
+// mutex so the second caller sees the first's insert.
+func (r *AccountRepository) UpsertPersonalAccount(_ context.Context, userID, email string) (*domain.Account, error) {
+	if userID == "" {
+		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "user_id is required")
+	}
+	if email == "" {
+		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "email is required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if existingID, ok := r.byUser[userID]; ok {
+		return r.accounts[existingID], nil
+	}
+	now := time.Now().UTC()
+	accountID, err := newID()
+	if err != nil {
+		return nil, fmt.Errorf("generating account id: %w", err)
+	}
+	seatID, err := newID()
+	if err != nil {
+		return nil, fmt.Errorf("generating seat id: %w", err)
+	}
+	acc := &domain.Account{
+		ID:           accountID,
+		DisplayName:  email, // personal accounts default to email as display
+		BillingEmail: email,
+		UserID:       userID,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	r.accounts[accountID] = acc
+	r.byUser[userID] = accountID
+	r.seats[accountID] = []domain.Seat{{
+		ID:        seatID,
+		AccountID: accountID,
+		UserID:    userID,
+		Role:      domain.RoleOwner,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}}
+	return acc, nil
+}
+
+// FindByUserID returns the personal account owned by userID or a
+// not-found error. Non-personal accounts (UserID = "") are unreachable
+// through this method by design — they're located via the account ID
+// path once other flows land.
+func (r *AccountRepository) FindByUserID(_ context.Context, userID string) (*domain.Account, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	accountID, ok := r.byUser[userID]
+	if !ok {
+		return nil, apperrors.New(apperrors.ErrCodeNotFound, "personal account not found for user "+userID)
+	}
+	return r.accounts[accountID], nil
+}
+
+// ListByAccount returns the seats attached to accountID. Empty slice
+// (not an error) when accountID is unknown — callers can distinguish
+// "no seats" from "no account" via a separate account lookup.
+func (r *AccountRepository) ListByAccount(_ context.Context, accountID string) ([]domain.Seat, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	seats := r.seats[accountID]
+	// Return a copy so callers cannot mutate our internal slice.
+	out := make([]domain.Seat, len(seats))
+	copy(out, seats)
+	return out, nil
+}
+
+// newID returns 16 hex-encoded random bytes (128 bits of entropy).
+// Sourced from crypto/rand so IDs are unguessable — external systems
+// (auth-server, Lago) join on these values.
+func newID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("reading random bytes: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
