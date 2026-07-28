@@ -60,8 +60,14 @@ type RegisterRequest struct {
 }
 
 // RegisterResponse contains registration result.
+//
+// AccountID is the entitlements-service personal-account ID auto-created
+// for the new user (E7-S1c). Empty when
+// IDENTITY_ENTITLEMENTS_SERVICE_URL is unset — callers should treat
+// empty as "entitlements not configured", not as failure.
 type RegisterResponse struct {
-	UserID string `json:"user_id"`
-	Email  string `json:"email"`
-	Name   string `json:"name"`
+	UserID    string `json:"user_id"`
+	Email     string `json:"email"`
+	Name      string `json:"name"`
+	AccountID string `json:"account_id,omitempty"`
 }
