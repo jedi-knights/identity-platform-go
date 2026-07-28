@@ -493,3 +493,114 @@ func assertUserAuthenticationFailedEvent(t *testing.T, e audit.Event, wantSubjec
 		}
 	}
 }
+
+// --- E7-S1c: entitlements-service outbound integration ---
+
+// stubEntitlementsCreator records calls and returns a canned account ID.
+// When err is set, CreatePersonalAccount returns it.
+type stubEntitlementsCreator struct {
+	returnedID  string
+	returnedErr error
+	calls       []struct{ UserID, Email string }
+}
+
+func (s *stubEntitlementsCreator) CreatePersonalAccount(_ context.Context, userID, email string) (string, error) {
+	s.calls = append(s.calls, struct{ UserID, Email string }{userID, email})
+	if s.returnedErr != nil {
+		return "", s.returnedErr
+	}
+	return s.returnedID, nil
+}
+
+func TestRegister_CallsEntitlementsAndReturnsAccountID(t *testing.T) {
+	// Arrange
+	repo := newMockUserRepo()
+	hasher := &mockHasher{}
+	stub := &stubEntitlementsCreator{returnedID: "acc-abc"}
+	svc := application.NewAuthService(repo, hasher).WithEntitlements(stub)
+
+	// Act
+	resp, err := svc.Register(context.Background(), domain.RegisterRequest{
+		Email:    "new@example.com",
+		Password: "pw",
+		Name:     "New",
+	})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.AccountID != "acc-abc" {
+		t.Errorf("AccountID = %q, want acc-abc", resp.AccountID)
+	}
+	if len(stub.calls) != 1 {
+		t.Fatalf("expected 1 call to entitlements, got %d", len(stub.calls))
+	}
+	if stub.calls[0].UserID != resp.UserID {
+		t.Errorf("passed userID %q, want %q", stub.calls[0].UserID, resp.UserID)
+	}
+	if stub.calls[0].Email != "new@example.com" {
+		t.Errorf("passed email %q, want new@example.com", stub.calls[0].Email)
+	}
+}
+
+func TestRegister_WithoutEntitlementsReturnsEmptyAccountID(t *testing.T) {
+	// Arrange — no WithEntitlements call; the no-op default fires. This
+	// mirrors deployments where IDENTITY_ENTITLEMENTS_SERVICE_URL is
+	// unset. Register must still succeed.
+	svc, _ := newSvc(t)
+
+	// Act
+	resp, err := svc.Register(context.Background(), domain.RegisterRequest{
+		Email:    "solo@example.com",
+		Password: "pw",
+		Name:     "Solo",
+	})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.AccountID != "" {
+		t.Errorf("AccountID = %q, want empty", resp.AccountID)
+	}
+	if resp.UserID == "" {
+		t.Error("expected non-empty UserID")
+	}
+}
+
+func TestRegister_EntitlementsFailureSurfaces(t *testing.T) {
+	// Arrange — per ADR-0019 the account-creation event is paid; a
+	// failure to reach entitlements must fail the register call so we
+	// don't ship a user without their personal account.
+	repo := newMockUserRepo()
+	hasher := &mockHasher{}
+	entErr := errors.New("simulated entitlements-service transport failure")
+	stub := &stubEntitlementsCreator{returnedErr: entErr}
+	svc := application.NewAuthService(repo, hasher).WithEntitlements(stub)
+
+	// Act
+	_, err := svc.Register(context.Background(), domain.RegisterRequest{
+		Email:    "boom@example.com",
+		Password: "pw",
+		Name:     "Boom",
+	})
+
+	// Assert
+	if err == nil {
+		t.Fatal("expected error when entitlements fails")
+	}
+	if !errors.Is(err, entErr) {
+		t.Errorf("expected wrapped entitlements error, got %v", err)
+	}
+}
+
+func TestWithEntitlements_NilPanics(t *testing.T) {
+	repo := newMockUserRepo()
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	_ = application.NewAuthService(repo, &mockHasher{}).WithEntitlements(nil)
+}

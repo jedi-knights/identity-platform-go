@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/outbound/email"
+	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/outbound/entitlementsservice"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/outbound/memory"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/outbound/postgres"
 	sqliteadapter "github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/outbound/sqlite"
@@ -27,6 +29,7 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/domain"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/observability"
+	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/ports"
 )
 
 // New constructs and bootstraps a platform container wired with every
@@ -58,6 +61,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, emailSenderProvider)
 	platform.Register(c, hasherProvider)
 	platform.Register(c, auditEmitterProvider)
+	platform.Register(c, entitlementsCreatorProvider)
 	platform.Register(c, authServiceProvider)
 	platform.Register(c, emailVerificationServiceProvider)
 	platform.Register(c, handlerProvider)
@@ -201,7 +205,31 @@ func authServiceProvider(ctx context.Context, c *platform.Container) (*applicati
 	}
 	hasher := platform.MustResolve[domain.PasswordHasher](ctx, c)
 	emitter := platform.MustResolve[audit.Emitter](ctx, c)
-	return application.NewAuthService(repos.user, hasher).WithAudit(emitter, "identity-service"), nil
+	svc := application.NewAuthService(repos.user, hasher).WithAudit(emitter, "identity-service")
+
+	entitlements, err := platform.Resolve[ports.EntitlementsAccountCreator](ctx, c)
+	if err != nil {
+		return nil, fmt.Errorf("resolving entitlements creator: %w", err)
+	}
+	if entitlements != nil {
+		svc = svc.WithEntitlements(entitlements)
+	}
+	return svc, nil
+}
+
+// entitlementsCreatorProvider selects the entitlements-service outbound
+// adapter. When IDENTITY_ENTITLEMENTS_SERVICE_URL is set, the HTTP
+// adapter is wired; otherwise nil so authServiceProvider leaves the
+// no-op default in place (Register succeeds with empty AccountID).
+func entitlementsCreatorProvider(ctx context.Context, c *platform.Container) (ports.EntitlementsAccountCreator, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	if cfg.Entitlements.ServiceURL == "" {
+		log.Info("entitlements-service adapter: not configured (IDENTITY_ENTITLEMENTS_SERVICE_URL unset); Register will return empty AccountID")
+		return nil, nil
+	}
+	log.Info("entitlements-service adapter: wired", "url", cfg.Entitlements.ServiceURL)
+	return entitlementsservice.NewCreator(cfg.Entitlements.ServiceURL, &http.Client{Timeout: 10 * time.Second}), nil
 }
 
 func emailVerificationServiceProvider(ctx context.Context, c *platform.Container) (*application.EmailVerificationService, error) {
