@@ -18,6 +18,35 @@ type UserAuthenticator interface {
 	VerifyCredentials(ctx context.Context, email, password string) (subjectID string, err error)
 }
 
+// RegisterRequest captures the inputs to UserRegistrar.Register.
+type RegisterRequest struct {
+	Email    string
+	Password string
+	Name     string
+}
+
+// RegisterResult is the login-ui-side projection of identity-service's
+// RegisterResponse. AccountID is the entitlements-service personal
+// account auto-created for the new user (E7-S1c) — empty when
+// identity-service was deployed without IDENTITY_ENTITLEMENTS_SERVICE_URL.
+// A future sign-up handler will thread AccountID through to a session
+// so the plan-selection step (Epic 2/8) can look it up without a hop
+// back to identity-service.
+type RegisterResult struct {
+	UserID    string
+	Email     string
+	Name      string
+	AccountID string // "" when entitlements-service is not wired upstream
+}
+
+// UserRegistrar creates a new user account against identity-service.
+// Implementations POST to /auth/register and decode the response into
+// RegisterResult. Callers should treat empty AccountID as "entitlements
+// not configured", not as failure.
+type UserRegistrar interface {
+	Register(ctx context.Context, req RegisterRequest) (*RegisterResult, error)
+}
+
 // IssueCodeRequest captures the inputs login-ui sends to auth-server's
 // /internal/issue-code endpoint after a successful sign-in and consent.
 // ConsentGranted carries the scopes the user approved — it must be a
