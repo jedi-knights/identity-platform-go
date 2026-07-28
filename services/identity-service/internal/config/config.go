@@ -10,12 +10,22 @@ import (
 
 // Config holds all identity-service configuration.
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	Log      LogConfig      `mapstructure:"log"`
-	Database DatabaseConfig `mapstructure:"database"`
-	Email    EmailConfig    `mapstructure:"email"`
-	Audit    AuditConfig    `mapstructure:"audit"`
-	Tracing  TracingConfig  `mapstructure:"tracing"`
+	Server       ServerConfig       `mapstructure:"server"`
+	Log          LogConfig          `mapstructure:"log"`
+	Database     DatabaseConfig     `mapstructure:"database"`
+	Email        EmailConfig        `mapstructure:"email"`
+	Audit        AuditConfig        `mapstructure:"audit"`
+	Tracing      TracingConfig      `mapstructure:"tracing"`
+	Entitlements EntitlementsConfig `mapstructure:"entitlements"`
+}
+
+// EntitlementsConfig configures the outbound port to entitlements-service
+// (E7-S1c). When ServiceURL is empty the container wires the no-op
+// adapter and Register returns an empty AccountID — appropriate for
+// development or deployments where entitlements-service is not yet
+// available.
+type EntitlementsConfig struct {
+	ServiceURL string `mapstructure:"service_url"` // IDENTITY_ENTITLEMENTS_SERVICE_URL
 }
 
 // TracingConfig configures the OpenTelemetry SDK bootstrap. Every field
@@ -108,6 +118,7 @@ func Load() (*Config, error) {
 	v.SetDefault("tracing.exporter_protocol", "")
 	v.SetDefault("tracing.exporter_insecure", false)
 	v.SetDefault("tracing.sampler_ratio", 0.0)
+	v.SetDefault("entitlements.service_url", "")
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")

@@ -12,6 +12,7 @@ import (
 	"github.com/jedi-knights/go-platform/audit"
 
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/domain"
+	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/ports"
 )
 
 // AuthService handles user authentication and registration.
@@ -26,20 +27,49 @@ type AuthService struct {
 	userRepo domain.UserRepository
 	hasher   domain.PasswordHasher
 
-	emitter audit.Emitter
-	service string
+	emitter      audit.Emitter
+	service      string
+	entitlements ports.EntitlementsAccountCreator
+}
+
+// noopEntitlements is the default EntitlementsAccountCreator when no real
+// adapter is wired. Register calls succeed and RegisterResponse.AccountID
+// comes back empty — mirrors the fallback pattern for auth-server /
+// login-ui outbound ports when their upstream URL env var is unset.
+type noopEntitlements struct{}
+
+func (noopEntitlements) CreatePersonalAccount(_ context.Context, _, _ string) (string, error) {
+	return "", nil
 }
 
 // NewAuthService creates an AuthService with the given user repository and password hasher.
-// The returned service uses a no-op audit emitter; call [AuthService.WithAudit]
-// to wire a real emitter at composition time.
+// The returned service uses a no-op audit emitter and a no-op
+// entitlements creator; call [AuthService.WithAudit] /
+// [AuthService.WithEntitlements] to wire real implementations at
+// composition time.
 func NewAuthService(userRepo domain.UserRepository, hasher domain.PasswordHasher) *AuthService {
 	return &AuthService{
-		userRepo: userRepo,
-		hasher:   hasher,
-		emitter:  audit.New(audit.NoopSink{}),
-		service:  "identity-service",
+		userRepo:     userRepo,
+		hasher:       hasher,
+		emitter:      audit.New(audit.NoopSink{}),
+		service:      "identity-service",
+		entitlements: noopEntitlements{},
 	}
+}
+
+// WithEntitlements configures the outbound port to entitlements-service
+// (E7-S1c). creator must be non-nil. Returns the receiver so
+// composition-root construction chains cleanly.
+//
+// When the container has no entitlements URL configured, the composition
+// root should NOT call WithEntitlements — the default no-op stays in
+// place and Register succeeds with an empty AccountID.
+func (s *AuthService) WithEntitlements(creator ports.EntitlementsAccountCreator) *AuthService {
+	if creator == nil {
+		panic("application: WithEntitlements called with nil creator")
+	}
+	s.entitlements = creator
+	return s
 }
 
 // WithAudit configures the service's audit emitter and service name.
@@ -248,10 +278,15 @@ func (s *AuthService) Register(ctx context.Context, req domain.RegisterRequest) 
 	if err := s.emitUserRegistered(ctx, user); err != nil {
 		return nil, err
 	}
+	accountID, err := s.entitlements.CreatePersonalAccount(ctx, user.ID, user.Email)
+	if err != nil {
+		return nil, fmt.Errorf("creating personal account: %w", err)
+	}
 	return &domain.RegisterResponse{
-		UserID: user.ID,
-		Email:  user.Email,
-		Name:   user.Name,
+		UserID:    user.ID,
+		Email:     user.Email,
+		Name:      user.Name,
+		AccountID: accountID,
 	}, nil
 }
 
