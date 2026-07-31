@@ -15,6 +15,7 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/entitlements-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/entitlements-service/internal/adapters/outbound/memory"
 	"github.com/ocrosby/identity-platform-go/services/entitlements-service/internal/application"
+	"github.com/ocrosby/identity-platform-go/services/entitlements-service/internal/ports"
 )
 
 func testLogger() logging.Logger {
@@ -25,8 +26,21 @@ func newHandler() *http.Handler {
 	repo := memory.NewAccountRepository()
 	svc := application.NewAccountService(repo).
 		WithAudit(audit.New(audit.NoopSink{}), "entitlements-service")
-	return http.NewHandler(svc, testLogger())
+	// Fixture invite service — not exercised by handler_test.go's
+	// account-creation tests, but Handler now requires it non-nil.
+	inviteRepo := memory.NewInviteRepository()
+	invSvc := application.NewInviteService(repo, inviteRepo, noopEmail{}, application.InviteConfig{
+		TTL:              1,
+		SignupURLPattern: "?token={{token}}",
+	}).WithAudit(audit.New(audit.NoopSink{}), "entitlements-service")
+	return http.NewHandler(svc, invSvc, testLogger())
 }
+
+// noopEmail satisfies ports.EmailSender for tests that don't need to
+// assert on email content.
+type noopEmail struct{}
+
+func (noopEmail) SendInvite(_ context.Context, _ ports.InviteEmail) error { return nil }
 
 func postJSON(t *testing.T, handler *http.Handler, path, body string) *httptest.ResponseRecorder {
 	t.Helper()

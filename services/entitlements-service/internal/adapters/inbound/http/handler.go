@@ -20,19 +20,23 @@ import (
 // concurrent use.
 type Handler struct {
 	accounts *application.AccountService
+	invites  *application.InviteService
 	logger   logging.Logger
 }
 
-// NewHandler wires an application service into the HTTP adapter.
-// accounts must be non-nil.
-func NewHandler(accounts *application.AccountService, logger logging.Logger) *Handler {
+// NewHandler wires application services into the HTTP adapter. All
+// non-logger arguments must be non-nil.
+func NewHandler(accounts *application.AccountService, invites *application.InviteService, logger logging.Logger) *Handler {
 	if accounts == nil {
 		panic("http: NewHandler called with nil accounts service")
+	}
+	if invites == nil {
+		panic("http: NewHandler called with nil invites service")
 	}
 	if logger == nil {
 		panic("http: NewHandler called with nil logger")
 	}
-	return &Handler{accounts: accounts, logger: logger}
+	return &Handler{accounts: accounts, invites: invites, logger: logger}
 }
 
 // createPersonalAccountRequest is the wire-level shape POSTed to
@@ -118,6 +122,8 @@ func writeAppError(w http.ResponseWriter, logger logging.Logger, err error) {
 	switch appErr.Code() {
 	case apperrors.ErrCodeBadRequest:
 		writeError(w, logger, http.StatusBadRequest, "invalid_request", appErr.Message())
+	case apperrors.ErrCodeForbidden:
+		writeError(w, logger, http.StatusForbidden, "forbidden", appErr.Message())
 	case apperrors.ErrCodeNotFound:
 		writeError(w, logger, http.StatusNotFound, "not_found", appErr.Message())
 	case apperrors.ErrCodeConflict:

@@ -13,6 +13,7 @@ import (
 func NewRouter(h *Handler, _ logging.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /accounts/personal", h.CreatePersonalAccount)
+	mux.HandleFunc("POST /accounts/{account_id}/invites", h.CreateInvite)
 	mux.HandleFunc("GET /health", h.Health)
 	return mux
 }

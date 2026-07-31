@@ -18,6 +18,22 @@ type Config struct {
 	Database DatabaseConfig `mapstructure:"database"`
 	Audit    AuditConfig    `mapstructure:"audit"`
 	Tracing  TracingConfig  `mapstructure:"tracing"`
+	Invites  InvitesConfig  `mapstructure:"invites"`
+}
+
+// InvitesConfig configures the E7-S2 invite flow.
+//
+//   - EmailSender selects the outbound adapter — "stdout" (default)
+//     writes each send to stderr as a JSON line; "noop" drops silently.
+//   - SignupURLPattern is the URL emailed to invitees; must contain
+//     the literal "{{token}}" placeholder which the invite service
+//     substitutes with the raw one-time token.
+//   - TTLHours is the invite lifetime in hours; defaults to 168
+//     (7 days per E7-S2 AC).
+type InvitesConfig struct {
+	EmailSender      string `mapstructure:"email_sender"`       // ENTITLEMENTS_INVITES_EMAIL_SENDER
+	SignupURLPattern string `mapstructure:"signup_url_pattern"` // ENTITLEMENTS_INVITES_SIGNUP_URL_PATTERN
+	TTLHours         int    `mapstructure:"ttl_hours"`          // ENTITLEMENTS_INVITES_TTL_HOURS
 }
 
 // ServerConfig holds HTTP server binding configuration.
@@ -77,6 +93,9 @@ func Load() (*Config, error) {
 	v.SetDefault("tracing.exporter_protocol", "")
 	v.SetDefault("tracing.exporter_insecure", false)
 	v.SetDefault("tracing.sampler_ratio", 0.0)
+	v.SetDefault("invites.email_sender", "stdout")
+	v.SetDefault("invites.signup_url_pattern", "")
+	v.SetDefault("invites.ttl_hours", 168) // 7 days per E7-S2 AC
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")

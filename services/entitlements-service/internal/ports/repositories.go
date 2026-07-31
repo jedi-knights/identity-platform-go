@@ -35,4 +35,30 @@ type AccountRepository interface {
 type SeatRepository interface {
 	// ListByAccount returns every seat attached to accountID.
 	ListByAccount(ctx context.Context, accountID string) ([]domain.Seat, error)
+
+	// SeatAllowance returns the number of seats the account's active
+	// plan permits. When the account has no active plan_bundles row
+	// (typical for freshly-created personal accounts before checkout),
+	// returns the default personal-account allowance of 1.
+	//
+	// Application-layer callers should treat "at allowance" as a
+	// user-visible error (the invite / add-seat request is refused
+	// with an "upgrade your plan" message), not an infrastructure
+	// failure.
+	SeatAllowance(ctx context.Context, accountID string) (int, error)
+}
+
+// InviteRepository persists account invites — the sending half of the
+// invite flow (E7-S2). The accepting half lives in a follow-up story.
+type InviteRepository interface {
+	// Insert persists a new invite and returns it with its generated
+	// ID and timestamps populated. inv.RawToken is not persisted —
+	// the caller must have already hashed it into inv.TokenHash.
+	Insert(ctx context.Context, inv domain.Invite) (*domain.Invite, error)
+
+	// CountOpen returns the number of open (pending, not-expired) invites
+	// on the account. Used by the seat-allowance check so an operator
+	// cannot over-invite by racing multiple POSTs before anyone
+	// accepts.
+	CountOpen(ctx context.Context, accountID string) (int, error)
 }

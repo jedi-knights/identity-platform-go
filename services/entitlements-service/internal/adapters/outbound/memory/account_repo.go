@@ -37,6 +37,9 @@ type AccountRepository struct {
 	accounts map[string]*domain.Account // keyed by account ID
 	byUser   map[string]string          // user_id -> account ID (personal accounts only)
 	seats    map[string][]domain.Seat   // account ID -> seats
+	// allowanceOverride is a test-only escape hatch for
+	// SetSeatAllowance. Not persisted, not exposed via the port.
+	allowanceOverride map[string]int
 }
 
 // NewAccountRepository returns an empty in-memory account repository.
@@ -118,6 +121,32 @@ func (r *AccountRepository) ListByAccount(_ context.Context, accountID string) (
 	out := make([]domain.Seat, len(seats))
 	copy(out, seats)
 	return out, nil
+}
+
+// SeatAllowance returns the seat allowance for accountID's active plan.
+// The in-memory adapter has no plan catalog (plans are held only in
+// Postgres via the E3-S3 seed), so this returns the personal-account
+// default of 1 unless a test has explicitly overridden it via
+// SetSeatAllowance. Real plan lookups happen in the Postgres adapter.
+func (r *AccountRepository) SeatAllowance(_ context.Context, accountID string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if n, ok := r.allowanceOverride[accountID]; ok {
+		return n, nil
+	}
+	return 1, nil
+}
+
+// SetSeatAllowance overrides the default in-memory allowance for
+// accountID — for tests that need to exercise multi-seat paths without
+// a real plan catalog. Not part of the port; test-only helper.
+func (r *AccountRepository) SetSeatAllowance(accountID string, n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.allowanceOverride == nil {
+		r.allowanceOverride = make(map[string]int)
+	}
+	r.allowanceOverride[accountID] = n
 }
 
 // newID returns 16 hex-encoded random bytes (128 bits of entropy).
