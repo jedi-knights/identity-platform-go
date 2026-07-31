@@ -7,12 +7,14 @@ package container
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	"github.com/jedi-knights/go-platform/audit"
 	platform "github.com/jedi-knights/go-platform/container"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/entitlements-service/internal/adapters/inbound/http"
+	"github.com/ocrosby/identity-platform-go/services/entitlements-service/internal/adapters/outbound/email"
 	"github.com/ocrosby/identity-platform-go/services/entitlements-service/internal/adapters/outbound/memory"
 	"github.com/ocrosby/identity-platform-go/services/entitlements-service/internal/adapters/outbound/postgres"
 	"github.com/ocrosby/identity-platform-go/services/entitlements-service/internal/application"
@@ -40,6 +42,8 @@ func New(ctx context.Context, cfg *config.Config, log logging.Logger) (*platform
 	platform.Register(c, auditEmitterProvider)
 	platform.Register(c, accountRepoProvider)
 	platform.Register(c, accountServiceProvider)
+	platform.Register(c, emailSenderProvider)
+	platform.Register(c, inviteServiceProvider)
 	platform.Register(c, httpHandlerProvider)
 
 	if err := c.Bootstrap(ctx); err != nil {
@@ -103,9 +107,59 @@ func accountServiceProvider(ctx context.Context, c *platform.Container) (*applic
 	return application.NewAccountService(repo).WithAudit(emitter, "entitlements-service"), nil
 }
 
+// emailSenderProvider selects the outbound email adapter per the
+// ENTITLEMENTS_EMAIL_SENDER env var. stdout (default) writes each
+// send to stderr as a JSON line; noop drops silently.
+func emailSenderProvider(ctx context.Context, c *platform.Container) (ports.EmailSender, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	log := platform.MustResolve[logging.Logger](ctx, c)
+	switch cfg.Invites.EmailSender {
+	case "noop":
+		log.Info("email sender: noop (invites will not be delivered)")
+		return email.NewNoopSender(), nil
+	case "stdout", "":
+		log.Info("email sender: stdout — invite payloads written to stderr as JSON lines")
+		return email.NewStdoutSender(), nil
+	default:
+		return nil, fmt.Errorf("email sender: unknown ENTITLEMENTS_EMAIL_SENDER value %q (want stdout|noop)", cfg.Invites.EmailSender)
+	}
+}
+
+// inviteServiceProvider wires the invite use case. The signup URL
+// pattern is validated for the {{token}} placeholder at bootstrap so
+// a misconfigured deployment fails fast, not on the first invite.
+func inviteServiceProvider(ctx context.Context, c *platform.Container) (*application.InviteService, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	repo := platform.MustResolve[ports.AccountRepository](ctx, c)
+	emitter := platform.MustResolve[audit.Emitter](ctx, c)
+	sender := platform.MustResolve[ports.EmailSender](ctx, c)
+
+	// Invite repo is not registered on the container yet — it lives
+	// only in memory. Wire the in-memory implementation directly for
+	// now; a Postgres adapter can be added behind a env-var switch
+	// in a follow-up if durability of pending invites matters before
+	// then.
+	inviteRepo := memory.NewInviteRepository()
+
+	ttl := time.Duration(cfg.Invites.TTLHours) * time.Hour
+	if ttl <= 0 {
+		ttl = 7 * 24 * time.Hour
+	}
+	pattern := cfg.Invites.SignupURLPattern
+	if pattern == "" {
+		return nil, fmt.Errorf("invite service: ENTITLEMENTS_INVITE_SIGNUP_URL_PATTERN is required")
+	}
+	svc := application.NewInviteService(repo, inviteRepo, sender, application.InviteConfig{
+		TTL:              ttl,
+		SignupURLPattern: pattern,
+	}).WithAudit(emitter, "entitlements-service")
+	return svc, nil
+}
+
 // httpHandlerProvider wires the inbound HTTP adapter.
 func httpHandlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.Handler, error) {
-	svc := platform.MustResolve[*application.AccountService](ctx, c)
+	accts := platform.MustResolve[*application.AccountService](ctx, c)
+	invites := platform.MustResolve[*application.InviteService](ctx, c)
 	log := platform.MustResolve[logging.Logger](ctx, c)
-	return inboundhttp.NewHandler(svc, log), nil
+	return inboundhttp.NewHandler(accts, invites, log), nil
 }

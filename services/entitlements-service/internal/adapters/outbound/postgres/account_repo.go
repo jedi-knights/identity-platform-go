@@ -211,6 +211,31 @@ func (r *AccountRepository) FindByUserID(ctx context.Context, userID string) (*d
 	return acc, nil
 }
 
+// SeatAllowance returns the seat allowance for accountID's active
+// plan. When the account has no active account_plans row (never
+// subscribed, or the subscription ended and no new one has started),
+// returns the personal-account default of 1 — matches the semantics
+// of the in-memory adapter and lets fresh personal accounts still
+// receive a POST /accounts/{id}/invites response of "seat limit
+// reached, upgrade your plan" rather than an infrastructure error.
+//
+// "Active" plan means an account_plans row where valid_until IS NULL.
+// If more than one active row exists (should not, but a bug upstream
+// could produce it) we pick the highest seat_allowance — fail
+// permissively so a user is never locked out by an accounting glitch.
+func (r *AccountRepository) SeatAllowance(ctx context.Context, accountID string) (int, error) {
+	const q = `
+		SELECT COALESCE(MAX(p.seat_allowance), 1)
+		FROM account_plans ap
+		JOIN plans p ON p.id = ap.plan_id
+		WHERE ap.account_id = $1 AND ap.valid_until IS NULL`
+	var n int
+	if err := r.pool.QueryRow(ctx, q, accountID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("seat allowance: %w", err)
+	}
+	return n, nil
+}
+
 // ListByAccount returns the seats attached to accountID. Empty slice
 // (not an error) when accountID is unknown.
 func (r *AccountRepository) ListByAccount(ctx context.Context, accountID string) ([]domain.Seat, error) {
