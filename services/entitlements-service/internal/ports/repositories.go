@@ -58,6 +58,19 @@ type SeatRepository interface {
 	// with an "upgrade your plan" message), not an infrastructure
 	// failure.
 	SeatAllowance(ctx context.Context, accountID string) (int, error)
+
+	// FindSeat returns the seat (accountID, userID) tuple identifies,
+	// or a not-found error when no such row exists. Used by the
+	// remove-seat authorisation path so the application layer can
+	// distinguish "no such seat" (404) from "requester lacks the
+	// role to remove it" (403).
+	FindSeat(ctx context.Context, accountID, userID string) (*domain.Seat, error)
+
+	// Remove deletes the seat (accountID, userID) identifies.
+	// Returns a not-found error when no such seat exists — callers
+	// should probe with FindSeat first when they need to distinguish
+	// "already removed" from other failures.
+	Remove(ctx context.Context, accountID, userID string) error
 }
 
 // InviteRepository persists account invites — the sending half of the

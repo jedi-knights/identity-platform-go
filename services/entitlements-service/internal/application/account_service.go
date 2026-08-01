@@ -111,6 +111,120 @@ func (s *AccountService) ListUserSeats(ctx context.Context, userID string) ([]do
 	return rows, nil
 }
 
+// RemoveSeatRequest is the shape the HTTP handler forwards to
+// RemoveSeat. RequesterUserID comes from the request's authentication
+// context — today an X-Requester-User-ID header; JWT claims when
+// auth-server's token integration into entitlements-service lands.
+type RemoveSeatRequest struct {
+	AccountID       string
+	RequesterUserID string
+	TargetUserID    string
+}
+
+// RemoveSeat is the E7-S4 use case: an owner-role seat removes another
+// seat from an account. Emits a seat_removed audit event per
+// ADR-0018 + ADR-0019 — paid event since seat count changes drive
+// downstream Lago subscription sync.
+//
+// Business rules enforced here:
+//   - Requester must be an owner-role seat on the account (403).
+//   - Owner cannot remove themselves — a solo owner has nobody to
+//     transfer to yet; a co-owner departure runs through E7-S5's
+//     transfer flow first (409 with "must transfer ownership first").
+//   - Target seat must exist on the account (404).
+//
+// Note the deliberate absence of a "last-owner" check when removing a
+// co-owner: the AC on issue #172 mentions only self-removal. If the
+// operator sets up two owners and one removes the other, that is
+// allowed — the remaining owner is fully accountable.
+func (s *AccountService) RemoveSeat(ctx context.Context, req RemoveSeatRequest) error {
+	if err := validateRemoveSeatInput(req); err != nil {
+		return err
+	}
+	if req.RequesterUserID == req.TargetUserID {
+		return apperrors.New(apperrors.ErrCodeConflict,
+			"owners cannot remove themselves; transfer ownership first")
+	}
+	if err := s.assertRequesterIsOwner(ctx, req.AccountID, req.RequesterUserID); err != nil {
+		return err
+	}
+	target, err := s.seats.FindSeat(ctx, req.AccountID, req.TargetUserID)
+	if err != nil {
+		if apperrors.IsNotFound(err) {
+			return apperrors.New(apperrors.ErrCodeNotFound, "seat not found on this account")
+		}
+		return fmt.Errorf("looking up target seat: %w", err)
+	}
+	if err := s.seats.Remove(ctx, req.AccountID, req.TargetUserID); err != nil {
+		return fmt.Errorf("removing seat: %w", err)
+	}
+	return s.emitSeatRemoved(ctx, req, target)
+}
+
+// validateRemoveSeatInput enforces the wire-boundary shape rules so
+// RemoveSeat never inspects empty inputs. Extracted to keep RemoveSeat
+// under the gocyclo cap alongside the RBAC + self-remove branches.
+func validateRemoveSeatInput(req RemoveSeatRequest) error {
+	if req.AccountID == "" {
+		return apperrors.New(apperrors.ErrCodeBadRequest, "account_id is required")
+	}
+	if req.RequesterUserID == "" {
+		return apperrors.New(apperrors.ErrCodeBadRequest, "requester user_id is required")
+	}
+	if req.TargetUserID == "" {
+		return apperrors.New(apperrors.ErrCodeBadRequest, "target user_id is required")
+	}
+	return nil
+}
+
+// assertRequesterIsOwner confirms the requester holds an owner-role
+// seat on the account. Returns 403 for any other role and 404 when
+// the account itself has no seat for the requester (the requester is
+// not a member) — both collapse to a client-safe "forbidden" at the
+// HTTP boundary so the API does not disclose membership.
+func (s *AccountService) assertRequesterIsOwner(ctx context.Context, accountID, requesterUserID string) error {
+	seat, err := s.seats.FindSeat(ctx, accountID, requesterUserID)
+	if err != nil {
+		if apperrors.IsNotFound(err) {
+			return apperrors.New(apperrors.ErrCodeForbidden, "requester is not a seat on this account")
+		}
+		return fmt.Errorf("looking up requester seat: %w", err)
+	}
+	if seat.Role != domain.RoleOwner {
+		return apperrors.New(apperrors.ErrCodeForbidden, "only owners can remove seats")
+	}
+	return nil
+}
+
+// emitSeatRemoved emits the ADR-0018 seat_removed event. Actor is the
+// requester (who took the action); subject is the removed user. Attrs
+// carry the account_id + the role that was removed for post-hoc
+// forensics ("did we lose our second owner?").
+func (s *AccountService) emitSeatRemoved(ctx context.Context, req RemoveSeatRequest, removed *domain.Seat) error {
+	if err := s.emitter.Emit(ctx, audit.Event{
+		EventType:      "seat_removed",
+		Service:        s.service,
+		ActorType:      audit.ActorTypeUser,
+		ActorID:        req.RequesterUserID,
+		SubjectID:      req.TargetUserID,
+		Resource:       "endpoint:accounts.seats.remove",
+		ResourceKind:   audit.ResourceKindEndpoint,
+		ResourceID:     "accounts.seats.remove",
+		ResourceParent: s.service,
+		ResourcePath:   s.service + "/endpoint/accounts.seats.remove",
+		Action:         "remove_seat",
+		Decision:       audit.DecisionAllow,
+		Attrs: map[string]any{
+			"account_id":   req.AccountID,
+			"removed_role": string(removed.Role),
+			"seat_id":      removed.ID,
+		},
+	}); err != nil {
+		return fmt.Errorf("audit emit (seat_removed): %w", err)
+	}
+	return nil
+}
+
 // validatePersonalAccountInput enforces the wire-boundary shape rules
 // so CreatePersonalAccount never inspects empty inputs. Extracted so
 // the entry point stays under the gocyclo budget.
