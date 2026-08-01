@@ -58,3 +58,27 @@ type Seat struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// PlanSummary is the projection of a Plan used inline in a
+// UserSeatSummary. Not a subset of the full Plan record — carries only
+// the fields the login-ui account switcher needs to label a row
+// ("Personal (Free)" / "Touchline Club"). Adding more plan detail here
+// is a UserSeatSummary-side concern; the plan catalog owns the rest.
+type PlanSummary struct {
+	ID          string
+	Code        string
+	DisplayName string
+}
+
+// UserSeatSummary is the per-seat row returned by
+// SeatRepository.ListByUserID — the join of account_seats × accounts ×
+// active account_plans × plans that the login-ui switcher consumes
+// (E7-S3b). Plan is nil when the account has no currently-active plan
+// (fresh account before checkout, or a lapsed subscription).
+type UserSeatSummary struct {
+	SeatID             string
+	AccountID          string
+	AccountDisplayName string
+	Role               Role
+	Plan               *PlanSummary
+}

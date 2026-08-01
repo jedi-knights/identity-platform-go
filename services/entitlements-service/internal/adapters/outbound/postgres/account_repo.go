@@ -236,6 +236,78 @@ func (r *AccountRepository) SeatAllowance(ctx context.Context, accountID string)
 	return n, nil
 }
 
+// ListByUserID returns every seat userID occupies joined against the
+// seat's account and (LEFT JOIN) the account's currently-active plan.
+// "Currently active" means account_plans.valid_until IS NULL — the
+// same predicate SeatAllowance uses. Rows are ordered by seat
+// created_at ascending so callers see a stable listing.
+//
+// The join is materialised here (rather than fanning out per-account
+// plan lookups in the application layer) so login-ui gets its switcher
+// data in one round-trip. Multiple currently-active plans on the same
+// account (should not happen; a bug upstream could produce it) will
+// duplicate the row — the query does not attempt to reconcile because
+// the invariant is enforced at write time by whatever wires
+// account_plans; failing loudly here would mask the upstream bug.
+func (r *AccountRepository) ListByUserID(ctx context.Context, userID string) ([]domain.UserSeatSummary, error) {
+	const q = `
+		SELECT s.id,
+		       a.id,
+		       a.display_name,
+		       s.role,
+		       p.id,
+		       p.code,
+		       p.display_name
+		FROM account_seats s
+		JOIN accounts a ON a.id = s.account_id
+		LEFT JOIN account_plans ap
+		       ON ap.account_id = a.id AND ap.valid_until IS NULL
+		LEFT JOIN plans p ON p.id = ap.plan_id
+		WHERE s.user_id = $1
+		ORDER BY s.created_at`
+	rows, err := r.pool.Query(ctx, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list user seats: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.UserSeatSummary
+	for rows.Next() {
+		var (
+			row             domain.UserSeatSummary
+			role            string
+			planID          *string
+			planCode        *string
+			planDisplayName *string
+		)
+		if err := rows.Scan(
+			&row.SeatID, &row.AccountID, &row.AccountDisplayName, &role,
+			&planID, &planCode, &planDisplayName,
+		); err != nil {
+			return nil, fmt.Errorf("scan user seat: %w", err)
+		}
+		row.Role = domain.Role(role)
+		if planID != nil {
+			row.Plan = &domain.PlanSummary{
+				ID:          *planID,
+				Code:        derefOrEmpty(planCode),
+				DisplayName: derefOrEmpty(planDisplayName),
+			}
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// derefOrEmpty returns *s or "" for nil. Extracted so ListByUserID's
+// scan-then-project block stays readable.
+func derefOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 // ListByAccount returns the seats attached to accountID. Empty slice
 // (not an error) when accountID is unknown.
 func (r *AccountRepository) ListByAccount(ctx context.Context, accountID string) ([]domain.Seat, error) {
