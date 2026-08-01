@@ -22,6 +22,8 @@ func NewRouter(h *Handler, logger logging.Logger) http.Handler {
 	mux.HandleFunc("GET /billing/plans", h.PlansGet)
 	mux.HandleFunc("POST /billing/checkout", h.CheckoutPost)
 	mux.HandleFunc("GET /billing/portal", h.PortalGet)
+	mux.HandleFunc("GET /accounts", h.AccountsGet)
+	mux.HandleFunc("POST /accounts", h.AccountsPost)
 
 	return httputil.RecoveryMiddleware(logger)(
 		httputil.LoggingMiddleware(logger)(

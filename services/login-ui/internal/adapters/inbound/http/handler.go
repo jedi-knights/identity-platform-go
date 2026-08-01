@@ -32,6 +32,9 @@ var signInTemplate = template.Must(template.ParseFS(templateFS, "templates/sign-
 // Parsed once at init for the same reason as signInTemplate.
 var plansTemplate = template.Must(template.ParseFS(templateFS, "templates/plans.html"))
 
+// accountsTemplate renders the E7-S3d account switcher.
+var accountsTemplate = template.Must(template.ParseFS(templateFS, "templates/accounts.html"))
+
 // Handler bundles every HTTP handler login-ui owns. When userAuth and
 // codeIssuer are nil the sign-in routes return 503 — letting /health remain
 // reachable in environments where the outbound dependencies are not yet
@@ -55,6 +58,23 @@ type Handler struct {
 	// one of them after Checkout completes / is abandoned.
 	billingSuccessURL string
 	billingCancelURL  string
+
+	// seats and activeAccount back the E7-S3d account switcher.
+	// Both nil = /accounts routes serve 503, matching how sign-in and
+	// billing degrade when their outbound deps are unwired.
+	seats         ports.SeatLister
+	activeAccount ports.ActiveAccountStore
+}
+
+// WithAccounts wires the outbound ports the E7-S3d account switcher
+// depends on. Both must be non-nil to enable the /accounts routes;
+// passing nil to either leaves the feature disabled (503 on both
+// AccountsGet and AccountsPost). Returns the receiver so composition-
+// root construction chains cleanly.
+func (h *Handler) WithAccounts(seats ports.SeatLister, activeAccount ports.ActiveAccountStore) *Handler {
+	h.seats = seats
+	h.activeAccount = activeAccount
+	return h
 }
 
 // NewHandler returns a Handler wired with the outbound dependencies the

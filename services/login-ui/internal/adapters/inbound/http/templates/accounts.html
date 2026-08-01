@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your accounts</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+      max-width: 720px;
+      margin: 3rem auto;
+      padding: 0 1rem;
+      color: #1a1a1a;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+    .lead { color: #555; margin-top: 0; }
+    .accounts { display: grid; gap: 0.75rem; margin-top: 1.5rem; }
+    .account {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+    .account.active { border-color: #1a73e8; background: #f0f6ff; }
+    .account-info h2 { font-size: 1rem; margin: 0 0 0.25rem 0; }
+    .account-info p { margin: 0; color: #555; font-size: 0.9rem; }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      background: #eef;
+      color: #333;
+      margin-left: 0.5rem;
+    }
+    .badge.role-owner { background: #ffe8cc; color: #7a3800; }
+    .active-marker {
+      color: #1a73e8;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+    button {
+      background: #1a73e8;
+      color: white;
+      border: 0;
+      border-radius: 6px;
+      padding: 0.5rem 1rem;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    button:hover { background: #1456b5; }
+    button[disabled] { background: #9db8db; cursor: default; }
+    .notice {
+      color: #205f10;
+      background: #e6f4d7;
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      margin-bottom: 1rem;
+    }
+    .error {
+      color: #b00020;
+      background: #fde7e9;
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      margin-bottom: 1rem;
+    }
+    .empty {
+      text-align: center;
+      color: #555;
+      padding: 2rem 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Your accounts</h1>
+  <p class="lead">
+    Pick the account you want to work in. Your choice takes effect on your next token refresh.
+  </p>
+
+  {{ if .Notice }}<p class="notice">{{ .Notice }}</p>{{ end }}
+  {{ if .Error }}<p class="error">{{ .Error }}</p>{{ end }}
+
+  {{ if not .Seats }}
+    <p class="empty">You don't have any accounts yet.</p>
+  {{ else if eq (len .Seats) 1 }}
+    <div class="accounts">
+      {{ with (index .Seats 0) }}
+        <div class="account active">
+          <div class="account-info">
+            <h2>{{ .AccountDisplayName }}<span class="badge role-{{ .Role }}">{{ .Role }}</span></h2>
+            <p>{{ if .PlanName }}{{ .PlanName }}{{ else }}No plan{{ end }}</p>
+          </div>
+          <span class="active-marker">Only account</span>
+        </div>
+      {{ end }}
+    </div>
+  {{ else }}
+    <div class="accounts">
+      {{ range .Seats }}
+        <div class="account {{ if eq .AccountID $.ActiveAccountID }}active{{ end }}">
+          <div class="account-info">
+            <h2>{{ .AccountDisplayName }}<span class="badge role-{{ .Role }}">{{ .Role }}</span></h2>
+            <p>{{ if .PlanName }}{{ .PlanName }}{{ else }}No plan{{ end }}</p>
+          </div>
+          {{ if eq .AccountID $.ActiveAccountID }}
+            <span class="active-marker">Current</span>
+          {{ else }}
+            <form method="post" action="/accounts?subject={{ $.Subject }}">
+              <input type="hidden" name="active_account_id" value="{{ .AccountID }}">
+              <button type="submit">Switch to this account</button>
+            </form>
+          {{ end }}
+        </div>
+      {{ end }}
+    </div>
+  {{ end }}
+</body>
+</html>

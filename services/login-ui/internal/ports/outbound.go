@@ -134,6 +134,42 @@ type PortalSession struct {
 	URL string
 }
 
+// AccountSeat is the login-ui-side projection of one row from
+// entitlements-service's GET /users/{user_id}/seats endpoint (E7-S3b).
+// Carries only the fields the account switcher needs to render.
+type AccountSeat struct {
+	SeatID             string
+	AccountID          string
+	AccountDisplayName string
+	Role               string // owner | admin | member
+	// PlanCode / PlanName are empty when the account has no
+	// currently-active plan (fresh account before checkout, or a
+	// lapsed subscription). The template renders "No plan" in that
+	// case; login-ui does not decide policy.
+	PlanCode string
+	PlanName string
+}
+
+// SeatLister is the outbound port for reading the accounts a user
+// occupies (E7-S3d). Backed by entitlements-service GET
+// /users/{user_id}/seats. Empty slice (nil error) when the user has no
+// seats — the switcher page renders an empty state, not an error.
+type SeatLister interface {
+	ListUserSeats(ctx context.Context, userID string) ([]AccountSeat, error)
+}
+
+// ActiveAccountStore is the outbound port for reading and writing the
+// user's currently-selected account preference (E7-S3d). Backed by
+// identity-service GET/PUT /users/{id}/active-account (E7-S3a).
+//
+// GetActiveAccount returns "" (nil error) when the user has not chosen —
+// the switcher renders every seat unselected. SetActiveAccount is
+// idempotent — the server accepts a repeat-of-current value silently.
+type ActiveAccountStore interface {
+	GetActiveAccount(ctx context.Context, userID string) (accountID string, err error)
+	SetActiveAccount(ctx context.Context, userID, accountID string) error
+}
+
 // BillingClient is the outbound port for plan listing, checkout, and
 // portal flows per identity-platform-go ADR-0019. The Lago HTTP adapter
 // satisfies it; tests use a recording double.
