@@ -80,6 +80,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, clientWiringProvider)
 	platform.Register(c, userAuthenticatorProvider)
 	platform.Register(c, userClaimsFetcherProvider)
+	platform.Register(c, activeAccountFetcherProvider)
 	platform.Register(c, idTokenGeneratorProvider)
 	platform.Register(c, permissionsFetcherProvider)
 	platform.Register(c, signingKeySetProvider)
@@ -387,6 +388,19 @@ func userClaimsFetcherProvider(ctx context.Context, c *platform.Container) (port
 	return identityservice.NewUserClaimsFetcher(cfg.IdentityService.URL, httpClient), nil
 }
 
+// activeAccountFetcherProvider wires the Epic 7 / E7-S3c outbound
+// port. Nil when AUTH_IDENTITY_SERVICE_URL is unset — both grant
+// strategies then omit active_account_id from issued tokens,
+// behaviourally identical to a user who has never selected an account.
+func activeAccountFetcherProvider(ctx context.Context, c *platform.Container) (ports.ActiveAccountFetcher, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	if cfg.IdentityService.URL == "" {
+		return nil, nil
+	}
+	return identityservice.NewActiveAccountFetcher(cfg.IdentityService.URL, httpClient), nil
+}
+
 // idTokenGeneratorProvider wires the OIDC ID-token generator. Nil when
 // AUTH_JWT_OIDC_ISSUER is empty or the signing alg is HS256 — the
 // authorization_code strategy then keeps the OAuth-only response shape.
@@ -542,7 +556,12 @@ func authorizationCodeStrategyProvider(ctx context.Context, c *platform.Containe
 	idTokenGen, _ := platform.Resolve[*application.IDTokenGenerator](ctx, c)
 	assertionAuth := platform.MustResolve[*application.ClientAssertionValidator](ctx, c)
 	idTokenTTL := time.Duration(cfg.JWT.IDTokenTTLSeconds) * time.Second
-	return application.NewAuthorizationCodeStrategy(cw.authenticator, codeRepo, repos.token, repos.refresh, gen, fetcher, claimsFetcher, idTokenGen, ttl, refreshTTL, idTokenTTL, assertionAuth), nil
+	// activeAccountFetcher is nil-resolved when AUTH_IDENTITY_SERVICE_URL
+	// is unset; passing nil to WithActiveAccountFetcher clears the wiring
+	// (Epic 7 / E7-S3c).
+	activeAccountFetcher, _ := platform.Resolve[ports.ActiveAccountFetcher](ctx, c)
+	strategy := application.NewAuthorizationCodeStrategy(cw.authenticator, codeRepo, repos.token, repos.refresh, gen, fetcher, claimsFetcher, idTokenGen, ttl, refreshTTL, idTokenTTL, assertionAuth)
+	return strategy.WithActiveAccountFetcher(activeAccountFetcher), nil
 }
 
 func refreshTokenStrategyProvider(ctx context.Context, c *platform.Container) (*application.RefreshTokenStrategy, error) {
@@ -556,7 +575,9 @@ func refreshTokenStrategyProvider(ctx context.Context, c *platform.Container) (*
 	fetcher := platform.MustResolve[ports.SubjectPermissionsFetcher](ctx, c)
 	assertionAuth := platform.MustResolve[*application.ClientAssertionValidator](ctx, c)
 	ttl, refreshTTL := tokenTTLs(cfg)
-	return application.NewRefreshTokenStrategy(cw.authenticator, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL, assertionAuth), nil
+	activeAccountFetcher, _ := platform.Resolve[ports.ActiveAccountFetcher](ctx, c)
+	strategy := application.NewRefreshTokenStrategy(cw.authenticator, repos.token, repos.refresh, gen, fetcher, ttl, refreshTTL, assertionAuth)
+	return strategy.WithActiveAccountFetcher(activeAccountFetcher), nil
 }
 
 // tokenExchangeStrategyProvider wires the RFC 8693 token-exchange

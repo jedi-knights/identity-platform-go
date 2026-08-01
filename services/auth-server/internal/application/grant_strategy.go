@@ -391,6 +391,32 @@ type RefreshTokenStrategy struct {
 	// (ADR-0023) when the request carries a client_assertion. Nil = not
 	// wired; such a request is then rejected.
 	assertionAuth *ClientAssertionValidator
+	// activeAccountFetcher re-resolves the active account on every
+	// refresh so a switcher change (via identity-service PUT
+	// /users/{id}/active-account) surfaces on the next token refresh
+	// per E7-S3 AC. Nil = not wired; refresh tokens issue without the
+	// claim.
+	activeAccountFetcher ports.ActiveAccountFetcher
+}
+
+// WithActiveAccountFetcher wires the Epic 7 / E7-S3c outbound port on
+// the refresh strategy. Chainable; nil clears.
+func (s *RefreshTokenStrategy) WithActiveAccountFetcher(f ports.ActiveAccountFetcher) *RefreshTokenStrategy {
+	s.activeAccountFetcher = f
+	return s
+}
+
+// resolveActiveAccount mirrors the AuthorizationCodeStrategy helper —
+// non-fatal on unwired / errored fetch.
+func (s *RefreshTokenStrategy) resolveActiveAccount(ctx context.Context, subject string) string {
+	if s.activeAccountFetcher == nil {
+		return ""
+	}
+	id, err := s.activeAccountFetcher.GetActiveAccount(ctx, subject)
+	if err != nil {
+		return ""
+	}
+	return id
 }
 
 // NewRefreshTokenStrategy creates a RefreshTokenStrategy.
@@ -537,19 +563,24 @@ func (s *RefreshTokenStrategy) Handle(ctx context.Context, req domain.GrantReque
 		return nil, apperrors.Wrap(apperrors.ErrCodeInternal, "generating token id", err)
 	}
 	actorType, agentID := refreshActorClassification(existing, client)
+	// Epic 7 / E7-S3c: re-resolve active_account on every refresh so a
+	// switcher change surfaces on the next refresh per the AC on #171.
+	// Non-fatal — see resolveActiveAccount docstring.
+	activeAccountID := s.resolveActiveAccount(ctx, existing.Subject)
 	token := &domain.Token{
-		ID:          id,
-		ClientID:    existing.ClientID,
-		Subject:     existing.Subject,
-		Scopes:      existing.Scopes,
-		Roles:       roles,
-		Permissions: permissions,
-		ActorType:   actorType,
-		AgentID:     agentID,
-		JKT:         req.DPoPJKT,
-		ExpiresAt:   now.Add(s.ttl),
-		IssuedAt:    now,
-		TokenType:   dpopTokenType(req.DPoPJKT),
+		ID:              id,
+		ClientID:        existing.ClientID,
+		Subject:         existing.Subject,
+		Scopes:          existing.Scopes,
+		Roles:           roles,
+		Permissions:     permissions,
+		ActorType:       actorType,
+		AgentID:         agentID,
+		ActiveAccountID: activeAccountID,
+		JKT:             req.DPoPJKT,
+		ExpiresAt:       now.Add(s.ttl),
+		IssuedAt:        now,
+		TokenType:       dpopTokenType(req.DPoPJKT),
 	}
 	raw, err := s.tokenGen.Generate(ctx, token)
 	if err != nil {
@@ -604,6 +635,14 @@ type AuthorizationCodeStrategy struct {
 	// (ADR-0023) when the request carries a client_assertion. Nil = not
 	// wired; such a request is then rejected.
 	assertionAuth *ClientAssertionValidator
+	// activeAccountFetcher resolves the user's currently-selected
+	// entitlements-service account at issuance time so the issued token
+	// carries the Epic 7 / E7-S3c active_account_id claim. Nil = not
+	// wired; tokens issue without the claim (behaviourally identical to
+	// a user who has never selected an account). Wired via
+	// [AuthorizationCodeStrategy.WithActiveAccountFetcher] at the
+	// composition root.
+	activeAccountFetcher ports.ActiveAccountFetcher
 }
 
 // NewAuthorizationCodeStrategy wires the strategy with every collaborator
@@ -640,6 +679,16 @@ func NewAuthorizationCodeStrategy(
 		idTokenTTL:       idTokenTTL,
 		assertionAuth:    assertionAuth,
 	}
+}
+
+// WithActiveAccountFetcher wires the outbound port that resolves the
+// user's currently-selected entitlements-service account at token
+// issuance. Returns the receiver so composition-root construction
+// chains cleanly. Passing a nil fetcher clears the wiring — the
+// strategy behaves as if identity-service is unwired.
+func (s *AuthorizationCodeStrategy) WithActiveAccountFetcher(f ports.ActiveAccountFetcher) *AuthorizationCodeStrategy {
+	s.activeAccountFetcher = f
+	return s
 }
 
 // Supports reports whether this strategy handles the authorization_code grant type.
@@ -740,6 +789,7 @@ func (s *AuthorizationCodeStrategy) issueTokens(ctx context.Context, client *dom
 	if err != nil {
 		return nil, apperrors.Wrap(apperrors.ErrCodeInternal, "generating token id", err)
 	}
+	activeAccountID := s.resolveActiveAccount(ctx, code.Subject)
 	token := &domain.Token{
 		ID:          tokenID,
 		ClientID:    client.ID,
@@ -752,6 +802,10 @@ func (s *AuthorizationCodeStrategy) issueTokens(ctx context.Context, client *dom
 		// an agent acting on the user's behalf, but the access token still
 		// carries the user's identity.
 		ActorType: domain.ActorTypeUser,
+		// Epic 7 / E7-S3c: the user's currently-selected account, resolved
+		// via identity-service. Empty when unwired, unavailable, or the
+		// user has not chosen — omitempty drops the claim in that case.
+		ActiveAccountID: activeAccountID,
 		// ADR-0017: the granted authorization_details follow the code
 		// onto the token so RAR-aware resource servers see the same
 		// per-call permissions the user approved at /oauth/authorize.
@@ -779,7 +833,7 @@ func (s *AuthorizationCodeStrategy) issueTokens(ctx context.Context, client *dom
 	if err != nil {
 		return nil, err
 	}
-	idToken, err := s.maybeIssueIDToken(ctx, client.ID, code, raw, now)
+	idToken, err := s.maybeIssueIDToken(ctx, client.ID, code, raw, now, activeAccountID)
 	if err != nil {
 		return nil, err
 	}
@@ -802,22 +856,41 @@ func (s *AuthorizationCodeStrategy) issueTokens(ctx context.Context, client *dom
 //
 // at_hash is computed against the FINAL signed access token (rawAccessToken),
 // per OIDC §3.1.3.6 and the binding rule from ADR-0010's review fixes.
-func (s *AuthorizationCodeStrategy) maybeIssueIDToken(ctx context.Context, clientID string, code *domain.AuthorizationCode, rawAccessToken string, now time.Time) (string, error) {
+func (s *AuthorizationCodeStrategy) maybeIssueIDToken(ctx context.Context, clientID string, code *domain.AuthorizationCode, rawAccessToken string, now time.Time, activeAccountID string) (string, error) {
 	if s.idTokenGen == nil || !domain.HasScope(code.Scopes, domain.ScopeOpenID) {
 		return "", nil
 	}
 	issuance := IDTokenIssuance{
-		Subject:   code.Subject,
-		Audience:  clientID,
-		Nonce:     code.Nonce,
-		AtHash:    jwtutil.AtHash(rawAccessToken),
-		AuthTime:  code.IssuedAt,
-		AMR:       []string{"pwd"},
-		IssuedAt:  now,
-		ExpiresAt: now.Add(s.idTokenTTL),
+		Subject:         code.Subject,
+		Audience:        clientID,
+		Nonce:           code.Nonce,
+		AtHash:          jwtutil.AtHash(rawAccessToken),
+		AuthTime:        code.IssuedAt,
+		AMR:             []string{"pwd"},
+		ActiveAccountID: activeAccountID,
+		IssuedAt:        now,
+		ExpiresAt:       now.Add(s.idTokenTTL),
 	}
 	s.populateProfileClaims(ctx, code, &issuance)
 	return s.idTokenGen.Generate(ctx, issuance)
+}
+
+// resolveActiveAccount queries the outbound port for the subject's
+// currently-selected account (Epic 7 / E7-S3c). Returns "" when the
+// port is unwired, the identity-service call fails, or the user has
+// never chosen — non-fatal for the same reason claim / permission
+// fetches are non-fatal: identity-service down should not take down
+// token issuance. Callers pass the result through omitempty at claim-
+// construction time.
+func (s *AuthorizationCodeStrategy) resolveActiveAccount(ctx context.Context, subject string) string {
+	if s.activeAccountFetcher == nil {
+		return ""
+	}
+	id, err := s.activeAccountFetcher.GetActiveAccount(ctx, subject)
+	if err != nil {
+		return ""
+	}
+	return id
 }
 
 // populateProfileClaims fetches user claims when the scope set requests them
