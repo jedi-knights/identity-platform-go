@@ -19,6 +19,7 @@ import (
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/outbound/authserver"
+	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/outbound/entitlementsservice"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/outbound/identityservice"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/adapters/outbound/lago"
 	"github.com/ocrosby/identity-platform-go/services/login-ui/internal/config"
@@ -52,6 +53,8 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, authCodeIssuerProvider)
 	platform.Register(c, deviceDeciderProvider)
 	platform.Register(c, billingClientProvider)
+	platform.Register(c, seatListerProvider)
+	platform.Register(c, activeAccountStoreProvider)
 	platform.Register(c, handlerProvider)
 
 	if err := c.Bootstrap(ctx); err != nil {
@@ -68,11 +71,44 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	cfg := platform.MustResolve[*config.Config](ctx, c)
 	billing, _ := platform.Resolve[ports.BillingClient](ctx, c)
 	deviceDecider, _ := platform.Resolve[ports.DeviceDecider](ctx, c)
+	seats, _ := platform.Resolve[ports.SeatLister](ctx, c)
+	activeAccount, _ := platform.Resolve[ports.ActiveAccountStore](ctx, c)
 	h := inboundhttp.NewHandler(userAuth, codeIssuer, logger).WithAudit(emitter, "login-ui").WithDeviceDecider(deviceDecider)
 	if billing != nil {
 		h = h.WithBilling(billing, cfg.Billing.SuccessURL, cfg.Billing.CancelURL)
 	}
+	// Both ports must resolve to enable the E7-S3d switcher; unwiring
+	// either surfaces as a 503 on /accounts.
+	if seats != nil && activeAccount != nil {
+		h = h.WithAccounts(seats, activeAccount)
+	}
 	return h, nil
+}
+
+// seatListerProvider wires the entitlements-service adapter for the
+// E7-S3d account switcher when LOGIN_UI_ENTITLEMENTS_SERVICE_URL is
+// set. Nil-resolves otherwise — the switcher route then serves 503.
+func seatListerProvider(ctx context.Context, c *platform.Container) (ports.SeatLister, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	if cfg.EntitlementsService.URL == "" {
+		return nil, nil //nolint:nilnil // documented degradation path
+	}
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	return entitlementsservice.NewSeatLister(cfg.EntitlementsService.URL, httpClient), nil
+}
+
+// activeAccountStoreProvider wires identity-service's active-account
+// read/write adapter (E7-S3a) when LOGIN_UI_IDENTITY_SERVICE_URL is
+// set — the same env var userAuthenticatorProvider consumes. Nil-
+// resolves otherwise; combined with seatListerProvider a nil here
+// disables the switcher route entirely.
+func activeAccountStoreProvider(ctx context.Context, c *platform.Container) (ports.ActiveAccountStore, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	if cfg.IdentityService.URL == "" {
+		return nil, nil //nolint:nilnil // documented degradation path
+	}
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	return identityservice.NewActiveAccountStore(cfg.IdentityService.URL, httpClient), nil
 }
 
 // deviceDeciderProvider wires the auth-server /internal/device/decision

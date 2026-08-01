@@ -14,13 +14,14 @@ import (
 
 // Config is the root of the login-ui configuration tree.
 type Config struct {
-	Server          ServerConfig          `mapstructure:"server"`
-	Log             LogConfig             `mapstructure:"log"`
-	AuthServer      AuthServerConfig      `mapstructure:"auth_server"`
-	IdentityService IdentityServiceConfig `mapstructure:"identity_service"`
-	Audit           AuditConfig           `mapstructure:"audit"`
-	Billing         BillingConfig         `mapstructure:"billing"`
-	Tracing         TracingConfig         `mapstructure:"tracing"`
+	Server              ServerConfig              `mapstructure:"server"`
+	Log                 LogConfig                 `mapstructure:"log"`
+	AuthServer          AuthServerConfig          `mapstructure:"auth_server"`
+	IdentityService     IdentityServiceConfig     `mapstructure:"identity_service"`
+	EntitlementsService EntitlementsServiceConfig `mapstructure:"entitlements_service"`
+	Audit               AuditConfig               `mapstructure:"audit"`
+	Billing             BillingConfig             `mapstructure:"billing"`
+	Tracing             TracingConfig             `mapstructure:"tracing"`
 }
 
 // TracingConfig configures the OpenTelemetry SDK bootstrap (ADR-0014 /
@@ -134,6 +135,15 @@ type IdentityServiceConfig struct {
 	URL string `mapstructure:"url"` // LOGIN_UI_IDENTITY_SERVICE_URL
 }
 
+// EntitlementsServiceConfig holds the URL login-ui calls for the
+// account switcher (E7-S3d) via entitlements-service's
+// GET /users/{user_id}/seats endpoint. Empty disables the switcher
+// route — /accounts then serves 503, matching how billing routes
+// degrade when Lago is unwired.
+type EntitlementsServiceConfig struct {
+	URL string `mapstructure:"url"` // LOGIN_UI_ENTITLEMENTS_SERVICE_URL
+}
+
 // Load reads configuration from environment variables (LOGIN_UI_*) and
 // the optional config.yaml file in the working directory. Returns the
 // populated Config or an error if the YAML file is present but malformed.
@@ -149,6 +159,7 @@ func Load() (*Config, error) {
 	v.SetDefault("auth_server.url", "")
 	v.SetDefault("auth_server.service_token", "")
 	v.SetDefault("identity_service.url", "")
+	v.SetDefault("entitlements_service.url", "")
 	v.SetDefault("audit.durable_dsn", "")
 	v.SetDefault("audit.skip_migration", false)
 	v.SetDefault("billing.lago_url", "")
