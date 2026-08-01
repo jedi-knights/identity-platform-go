@@ -50,6 +50,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, httpClientProvider)
 	platform.Register(c, auditEmitterProvider)
 	platform.Register(c, userAuthenticatorProvider)
+	platform.Register(c, userRegistrarProvider)
 	platform.Register(c, authCodeIssuerProvider)
 	platform.Register(c, deviceDeciderProvider)
 	platform.Register(c, billingClientProvider)
@@ -73,7 +74,8 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	deviceDecider, _ := platform.Resolve[ports.DeviceDecider](ctx, c)
 	seats, _ := platform.Resolve[ports.SeatLister](ctx, c)
 	activeAccount, _ := platform.Resolve[ports.ActiveAccountStore](ctx, c)
-	h := inboundhttp.NewHandler(userAuth, codeIssuer, logger).WithAudit(emitter, "login-ui").WithDeviceDecider(deviceDecider)
+	registrar, _ := platform.Resolve[ports.UserRegistrar](ctx, c)
+	h := inboundhttp.NewHandler(userAuth, codeIssuer, logger).WithAudit(emitter, "login-ui").WithDeviceDecider(deviceDecider).WithRegistrar(registrar)
 	if billing != nil {
 		h = h.WithBilling(billing, cfg.Billing.SuccessURL, cfg.Billing.CancelURL)
 	}
@@ -196,6 +198,20 @@ func userAuthenticatorProvider(ctx context.Context, c *platform.Container) (port
 	}
 	httpClient := platform.MustResolve[*http.Client](ctx, c)
 	return identityservice.NewAuthenticator(cfg.IdentityService.URL, httpClient), nil
+}
+
+// userRegistrarProvider wires the identity-service sign-up adapter
+// (E5-S1) when LOGIN_UI_IDENTITY_SERVICE_URL is set — same env var
+// userAuthenticatorProvider consumes. Nil-resolves otherwise so the
+// /sign-up routes degrade to 503, matching every other outbound-dep
+// gate in this service.
+func userRegistrarProvider(ctx context.Context, c *platform.Container) (ports.UserRegistrar, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	if cfg.IdentityService.URL == "" {
+		return nil, nil //nolint:nilnil // documented degradation path
+	}
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	return identityservice.NewRegistrar(cfg.IdentityService.URL, httpClient), nil
 }
 
 // authCodeIssuerProvider wires the auth-server /internal/issue-code adapter

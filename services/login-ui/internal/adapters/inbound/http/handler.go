@@ -35,6 +35,10 @@ var plansTemplate = template.Must(template.ParseFS(templateFS, "templates/plans.
 // accountsTemplate renders the E7-S3d account switcher.
 var accountsTemplate = template.Must(template.ParseFS(templateFS, "templates/accounts.html"))
 
+// signUpTemplate renders the E5-S1 post-signup entry-point form. Parsed
+// once at init for the same reason as its siblings.
+var signUpTemplate = template.Must(template.ParseFS(templateFS, "templates/sign-up.html"))
+
 // Handler bundles every HTTP handler login-ui owns. When userAuth and
 // codeIssuer are nil the sign-in routes return 503 — letting /health remain
 // reachable in environments where the outbound dependencies are not yet
@@ -64,6 +68,18 @@ type Handler struct {
 	// billing degrade when their outbound deps are unwired.
 	seats         ports.SeatLister
 	activeAccount ports.ActiveAccountStore
+
+	// registrar backs the E5-S1 sign-up entry point. Nil = /sign-up
+	// routes serve 503 (identity-service unwired).
+	registrar ports.UserRegistrar
+}
+
+// WithRegistrar wires the outbound port the E5-S1 sign-up entry
+// point depends on. Passing nil leaves the /sign-up routes disabled
+// (503). Chainable; returns the receiver.
+func (h *Handler) WithRegistrar(registrar ports.UserRegistrar) *Handler {
+	h.registrar = registrar
+	return h
 }
 
 // WithAccounts wires the outbound ports the E7-S3d account switcher

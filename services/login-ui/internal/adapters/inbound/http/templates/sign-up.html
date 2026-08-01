@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sign up</title>
+</head>
+<body>
+  <h1>Sign up</h1>
+  <p>Create your account. You'll pick a plan on the next screen.</p>
+  {{if .Error}}<p role="alert" data-testid="error">{{.Error}}</p>{{end}}
+  <form method="POST" action="/sign-up">
+    <label>Name <input type="text" name="name" required autocomplete="name" value="{{.Name}}"></label>
+    <label>Email <input type="email" name="email" required autocomplete="email" value="{{.Email}}"></label>
+    <label>Password <input type="password" name="password" required autocomplete="new-password"></label>
+    <button type="submit">Create account</button>
+  </form>
+  <p>Already have an account? <a href="/sign-in">Sign in</a>.</p>
+</body>
+</html>
