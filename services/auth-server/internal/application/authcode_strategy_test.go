@@ -441,3 +441,72 @@ func TestAuthorizationCodeStrategy_Handle_PublicClientNoSecretAccepted(t *testin
 		t.Error("public client AccessToken is empty")
 	}
 }
+
+// --- E7-S3c: active_account_id claim wiring ---
+
+// fakeActiveAccountFetcher is a controllable ports.ActiveAccountFetcher
+// stand-in for tests that need to verify the strategy's fetch-and-stamp
+// behaviour, plus the non-fatal fallback when the fetch fails.
+type fakeActiveAccountFetcher struct {
+	resp string
+	err  error
+	// gotUserID records the last userID passed to GetActiveAccount so
+	// tests can assert the strategy called the fetcher with the code's
+	// subject (not e.g. the client ID).
+	gotUserID string
+}
+
+func (f *fakeActiveAccountFetcher) GetActiveAccount(_ context.Context, userID string) (string, error) {
+	f.gotUserID = userID
+	return f.resp, f.err
+}
+
+func TestAuthorizationCodeStrategy_Handle_StampsActiveAccountIDFromFetcher(t *testing.T) {
+	f := newAuthCodeFixtures(t)
+	af := &fakeActiveAccountFetcher{resp: "acc-abc"}
+	f.strategy.WithActiveAccountFetcher(af)
+
+	resp, err := f.strategy.Handle(context.Background(), f.req)
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	saved, ok := f.tokenRepo.tokens[resp.AccessToken]
+	if !ok {
+		t.Fatalf("no token saved under %q", resp.AccessToken)
+	}
+	if saved.ActiveAccountID != "acc-abc" {
+		t.Errorf("saved.ActiveAccountID = %q, want acc-abc", saved.ActiveAccountID)
+	}
+	if af.gotUserID != "user-1" {
+		t.Errorf("fetcher called with userID = %q, want user-1 (code subject)", af.gotUserID)
+	}
+}
+
+func TestAuthorizationCodeStrategy_Handle_EmptyActiveAccountIDWhenFetcherUnwired(t *testing.T) {
+	f := newAuthCodeFixtures(t)
+	// Deliberately do NOT wire the fetcher.
+
+	resp, err := f.strategy.Handle(context.Background(), f.req)
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	saved := f.tokenRepo.tokens[resp.AccessToken]
+	if saved.ActiveAccountID != "" {
+		t.Errorf("saved.ActiveAccountID = %q, want empty when fetcher unwired", saved.ActiveAccountID)
+	}
+}
+
+func TestAuthorizationCodeStrategy_Handle_FetcherErrorIsNonFatal(t *testing.T) {
+	f := newAuthCodeFixtures(t)
+	af := &fakeActiveAccountFetcher{err: errors.New("identity-service down")}
+	f.strategy.WithActiveAccountFetcher(af)
+
+	resp, err := f.strategy.Handle(context.Background(), f.req)
+	if err != nil {
+		t.Fatalf("Handle should succeed despite fetcher error: %v", err)
+	}
+	saved := f.tokenRepo.tokens[resp.AccessToken]
+	if saved.ActiveAccountID != "" {
+		t.Errorf("saved.ActiveAccountID = %q, want empty on fetcher error (non-fatal)", saved.ActiveAccountID)
+	}
+}
