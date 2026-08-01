@@ -36,6 +36,18 @@ type SeatRepository interface {
 	// ListByAccount returns every seat attached to accountID.
 	ListByAccount(ctx context.Context, accountID string) ([]domain.Seat, error)
 
+	// ListByUserID returns every account seat userID occupies, joined
+	// against the seat's account and (LEFT JOIN) the account's currently-
+	// active plan. Empty slice (nil error) when the user has no seats.
+	// Ordered by seat created_at ascending so callers see a stable
+	// listing across calls.
+	//
+	// The join is materialised at the repository so login-ui can render
+	// the switcher in a single round-trip; the alternative (list seats,
+	// then fan out per-account plan reads) doubles latency and multiplies
+	// pool contention.
+	ListByUserID(ctx context.Context, userID string) ([]domain.UserSeatSummary, error)
+
 	// SeatAllowance returns the number of seats the account's active
 	// plan permits. When the account has no active plan_bundles row
 	// (typical for freshly-created personal accounts before checkout),

@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -40,6 +41,12 @@ type AccountRepository struct {
 	// allowanceOverride is a test-only escape hatch for
 	// SetSeatAllowance. Not persisted, not exposed via the port.
 	allowanceOverride map[string]int
+	// activePlan is a test-only mapping from account ID to a
+	// PlanSummary that ListByUserID reports on the joined row. Real
+	// plan attribution lives in Postgres (account_plans × plans); this
+	// escape hatch lets memory-backed tests exercise the "account has
+	// a plan" branch without a full catalog. Not part of any port.
+	activePlan map[string]domain.PlanSummary
 }
 
 // NewAccountRepository returns an empty in-memory account repository.
@@ -121,6 +128,64 @@ func (r *AccountRepository) ListByAccount(_ context.Context, accountID string) (
 	out := make([]domain.Seat, len(seats))
 	copy(out, seats)
 	return out, nil
+}
+
+// ListByUserID returns every seat userID occupies, joined with the
+// seat's account display name and the account's active plan (if any).
+// Ordering is by seat CreatedAt ascending — matches the postgres
+// adapter and gives login-ui a stable listing.
+//
+// Memory has no real plan catalog; a row's Plan is populated only when
+// a test has called SetActivePlan for that account (see the field
+// docstring). Real plan attribution lives in the postgres adapter.
+func (r *AccountRepository) ListByUserID(_ context.Context, userID string) ([]domain.UserSeatSummary, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var matches []domain.Seat
+	for _, accountSeats := range r.seats {
+		for _, s := range accountSeats {
+			if s.UserID == userID {
+				matches = append(matches, s)
+			}
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].CreatedAt.Before(matches[j].CreatedAt)
+	})
+
+	out := make([]domain.UserSeatSummary, 0, len(matches))
+	for _, s := range matches {
+		acc, ok := r.accounts[s.AccountID]
+		if !ok {
+			// Orphan seat (should not happen; belt-and-braces).
+			continue
+		}
+		row := domain.UserSeatSummary{
+			SeatID:             s.ID,
+			AccountID:          acc.ID,
+			AccountDisplayName: acc.DisplayName,
+			Role:               s.Role,
+		}
+		if plan, hasPlan := r.activePlan[acc.ID]; hasPlan {
+			p := plan
+			row.Plan = &p
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+// SetActivePlan attaches a plan projection to accountID for tests that
+// need to exercise the "account has a plan" branch of ListByUserID.
+// Not part of any port; test-only helper mirroring SetSeatAllowance.
+func (r *AccountRepository) SetActivePlan(accountID string, plan domain.PlanSummary) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.activePlan == nil {
+		r.activePlan = make(map[string]domain.PlanSummary)
+	}
+	r.activePlan[accountID] = plan
 }
 
 // SeatAllowance returns the seat allowance for accountID's active plan.

@@ -15,22 +15,32 @@ import (
 )
 
 // AccountService is the entitlements-service account use-case. It
-// orchestrates personal-account creation on user signup (E7-S1b) and
-// emits the account_created audit event per ADR-0018 + ADR-0019.
+// orchestrates personal-account creation on user signup (E7-S1b),
+// exposes the switcher-list read (E7-S3b), and emits the
+// account_created audit event per ADR-0018 + ADR-0019.
 type AccountService struct {
 	repo    ports.AccountRepository
+	seats   ports.SeatRepository
 	emitter audit.Emitter
 	service string
 }
 
 // NewAccountService constructs an AccountService with a no-op audit
 // emitter. Wire a real emitter via WithAudit at the composition root.
+// The account repository is expected to also satisfy SeatRepository —
+// the memory and postgres adapters both do so, mirroring the
+// InviteService constructor's rationale.
 func NewAccountService(repo ports.AccountRepository) *AccountService {
 	if repo == nil {
 		panic("application: NewAccountService called with nil repo")
 	}
+	seats, ok := repo.(ports.SeatRepository)
+	if !ok {
+		panic("application: NewAccountService requires repo to also satisfy SeatRepository")
+	}
 	return &AccountService{
 		repo:    repo,
+		seats:   seats,
 		emitter: audit.New(audit.NoopSink{}),
 		service: "entitlements-service",
 	}
@@ -82,6 +92,23 @@ func (s *AccountService) CreatePersonalAccount(ctx context.Context, userID, emai
 		return nil, false, err
 	}
 	return acc, true, nil
+}
+
+// ListUserSeats returns every account seat userID occupies, joined
+// with the account display name and (if any) the currently-active plan
+// summary. Empty slice (nil error) for a user with no seats — the
+// switcher UI treats that as "prompt to create/join an account", not
+// as an error. No audit emission: list operations are unpaid per
+// ADR-0019.
+func (s *AccountService) ListUserSeats(ctx context.Context, userID string) ([]domain.UserSeatSummary, error) {
+	if userID == "" {
+		return nil, apperrors.New(apperrors.ErrCodeBadRequest, "user_id is required")
+	}
+	rows, err := s.seats.ListByUserID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("listing user seats for %q: %w", userID, err)
+	}
+	return rows, nil
 }
 
 // validatePersonalAccountInput enforces the wire-boundary shape rules
