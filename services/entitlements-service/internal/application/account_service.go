@@ -6,6 +6,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jedi-knights/go-platform/apperrors"
 	"github.com/jedi-knights/go-platform/audit"
@@ -14,15 +15,32 @@ import (
 	"github.com/ocrosby/identity-platform-go/services/entitlements-service/internal/ports"
 )
 
+// DefaultTransferOwnershipMaxAuthAge is the freshness ceiling on the
+// requester's most-recent-authentication timestamp for the E7-S5
+// transfer-ownership flow. Matches the AC on issue #173 ("fresh login
+// within 5 min"). Overridable at composition time via
+// [AccountService.WithTransferOwnershipMaxAuthAge].
+const DefaultTransferOwnershipMaxAuthAge = 5 * time.Minute
+
 // AccountService is the entitlements-service account use-case. It
 // orchestrates personal-account creation on user signup (E7-S1b),
-// exposes the switcher-list read (E7-S3b), and emits the
-// account_created audit event per ADR-0018 + ADR-0019.
+// exposes the switcher-list read (E7-S3b), the seat-removal use case
+// (E7-S4), the ownership-transfer flow (E7-S5), and emits ADR-0018
+// audit events per ADR-0019.
 type AccountService struct {
 	repo    ports.AccountRepository
 	seats   ports.SeatRepository
 	emitter audit.Emitter
 	service string
+	// transferMaxAuthAge is the fresh-authentication ceiling the
+	// TransferOwnership pre-check enforces (E7-S5 AC). Zero disables
+	// the check — reserved for tests that need to bypass the freshness
+	// gate without racing a real clock.
+	transferMaxAuthAge time.Duration
+	// now is the time source the TransferOwnership freshness check
+	// reads. Overridable in tests via WithClock so a fixed instant
+	// pins auth-age arithmetic without sleep-based races.
+	now func() time.Time
 }
 
 // NewAccountService constructs an AccountService with a no-op audit
@@ -39,10 +57,12 @@ func NewAccountService(repo ports.AccountRepository) *AccountService {
 		panic("application: NewAccountService requires repo to also satisfy SeatRepository")
 	}
 	return &AccountService{
-		repo:    repo,
-		seats:   seats,
-		emitter: audit.New(audit.NoopSink{}),
-		service: "entitlements-service",
+		repo:               repo,
+		seats:              seats,
+		emitter:            audit.New(audit.NoopSink{}),
+		service:            "entitlements-service",
+		transferMaxAuthAge: DefaultTransferOwnershipMaxAuthAge,
+		now:                time.Now,
 	}
 }
 
@@ -56,6 +76,28 @@ func (s *AccountService) WithAudit(emitter audit.Emitter, service string) *Accou
 	if service != "" {
 		s.service = service
 	}
+	return s
+}
+
+// WithTransferOwnershipMaxAuthAge overrides the freshness ceiling on
+// the requester's most-recent-authentication timestamp for the
+// TransferOwnership pre-check. Zero disables the check — reserved for
+// tests that need to bypass the freshness gate without racing a real
+// clock; production code must not pass zero.
+func (s *AccountService) WithTransferOwnershipMaxAuthAge(d time.Duration) *AccountService {
+	s.transferMaxAuthAge = d
+	return s
+}
+
+// WithClock overrides the time source used by the TransferOwnership
+// freshness check. Intended for tests — production always uses
+// time.Now. Nil is rejected so a caller cannot silently disable
+// timestamping.
+func (s *AccountService) WithClock(now func() time.Time) *AccountService {
+	if now == nil {
+		panic("application: WithClock called with nil clock")
+	}
+	s.now = now
 	return s
 }
 
@@ -109,6 +151,153 @@ func (s *AccountService) ListUserSeats(ctx context.Context, userID string) ([]do
 		return nil, fmt.Errorf("listing user seats for %q: %w", userID, err)
 	}
 	return rows, nil
+}
+
+// TransferOwnershipRequest is the shape the HTTP handler forwards
+// to TransferOwnership. RequesterAuthTime carries the moment the
+// requester most recently completed a fresh authentication — used
+// to enforce the E7-S5 AC's 5-minute freshness ceiling. Today that
+// value comes from an X-Requester-Auth-Time header; once
+// auth-server's JWT integration into entitlements-service lands, it
+// will come from the token's auth_time claim.
+type TransferOwnershipRequest struct {
+	AccountID         string
+	RequesterUserID   string
+	RequesterAuthTime time.Time
+	TargetUserID      string
+}
+
+// TransferOwnership is the E7-S5 use case: the current owner-role
+// seat hands ownership to another seat on the same account. Emits an
+// ownership_transferred audit event per ADR-0018 + ADR-0019.
+//
+// Business rules enforced here, in order:
+//   - Input validation (400)
+//   - Fresh-auth guard: requester's last authentication must be no
+//     older than transferMaxAuthAge (403). See the field docstring
+//     for how this bridges to a real auth_time claim later.
+//   - Requester must currently be an owner-role seat on the account
+//     (403 — collapses "not a seat" and "wrong role" so the API does
+//     not disclose membership).
+//   - Target user must be an existing seat on the account (404). Not
+//     an owner-elsewhere check — the target could be a member on
+//     this account and an owner on a different one; that is fine.
+//   - Same-user transfer is refused (400 — a promotion loop is a
+//     programming error, not a policy). AC #173 does not mention it;
+//     surfacing it early avoids a spurious audit event.
+//
+// Then the atomic swap runs (repo enforces atomicity), and finally
+// the audit event fires. Audit failure surfaces to the caller.
+func (s *AccountService) TransferOwnership(ctx context.Context, req TransferOwnershipRequest) error {
+	if err := s.preflightTransfer(ctx, req); err != nil {
+		return err
+	}
+	if err := s.seats.SwapOwner(ctx, req.AccountID, req.RequesterUserID, req.TargetUserID); err != nil {
+		return fmt.Errorf("swap owner: %w", err)
+	}
+	return s.emitOwnershipTransferred(ctx, req)
+}
+
+// preflightTransfer runs the pre-swap validation and RBAC pipeline.
+// Extracted so TransferOwnership's cyclomatic complexity stays within
+// the gocyclo budget while covering every business-rule branch.
+func (s *AccountService) preflightTransfer(ctx context.Context, req TransferOwnershipRequest) error {
+	if err := validateTransferInput(req); err != nil {
+		return err
+	}
+	if req.RequesterUserID == req.TargetUserID {
+		return apperrors.New(apperrors.ErrCodeBadRequest, "requester and target must differ")
+	}
+	if err := s.assertFreshAuth(req.RequesterAuthTime); err != nil {
+		return err
+	}
+	if err := s.assertRequesterIsOwner(ctx, req.AccountID, req.RequesterUserID); err != nil {
+		return err
+	}
+	return s.assertTargetSeatExists(ctx, req.AccountID, req.TargetUserID)
+}
+
+// assertTargetSeatExists confirms the transfer target already occupies
+// a seat on the account. The AC on issue #173 requires this — you can
+// only promote an existing member to owner, never invite-and-promote
+// in one step.
+func (s *AccountService) assertTargetSeatExists(ctx context.Context, accountID, targetUserID string) error {
+	if _, err := s.seats.FindSeat(ctx, accountID, targetUserID); err != nil {
+		if apperrors.IsNotFound(err) {
+			return apperrors.New(apperrors.ErrCodeNotFound, "target seat not found on this account")
+		}
+		return fmt.Errorf("looking up target seat: %w", err)
+	}
+	return nil
+}
+
+// validateTransferInput enforces the wire-boundary shape rules so
+// TransferOwnership stays under the gocyclo cap alongside the RBAC
+// and freshness branches.
+func validateTransferInput(req TransferOwnershipRequest) error {
+	if req.AccountID == "" {
+		return apperrors.New(apperrors.ErrCodeBadRequest, "account_id is required")
+	}
+	if req.RequesterUserID == "" {
+		return apperrors.New(apperrors.ErrCodeBadRequest, "requester user_id is required")
+	}
+	if req.TargetUserID == "" {
+		return apperrors.New(apperrors.ErrCodeBadRequest, "target user_id is required")
+	}
+	if req.RequesterAuthTime.IsZero() {
+		return apperrors.New(apperrors.ErrCodeBadRequest, "requester auth_time is required")
+	}
+	return nil
+}
+
+// assertFreshAuth surfaces the E7-S5 5-minute step-up-auth guard. A
+// zero transferMaxAuthAge disables the check (test-only escape).
+// Requesters whose auth stamp is in the future by more than one
+// second surface as bad-request — a real caller would never present
+// this, but a bug in whichever service forwards the header could
+// otherwise silently bypass the check.
+func (s *AccountService) assertFreshAuth(authTime time.Time) error {
+	if s.transferMaxAuthAge <= 0 {
+		return nil
+	}
+	now := s.now()
+	if authTime.After(now.Add(time.Second)) {
+		return apperrors.New(apperrors.ErrCodeBadRequest, "requester auth_time is in the future")
+	}
+	if now.Sub(authTime) > s.transferMaxAuthAge {
+		return apperrors.New(apperrors.ErrCodeForbidden,
+			"re-authentication required (fresh login within 5 min)")
+	}
+	return nil
+}
+
+// emitOwnershipTransferred emits the ADR-0018 ownership_transferred
+// event. Actor is the requester (previous owner); subject is the
+// target (new owner). Attrs carry both parties + account_id so a
+// post-hoc reader can reconstruct the swap without a state diff.
+func (s *AccountService) emitOwnershipTransferred(ctx context.Context, req TransferOwnershipRequest) error {
+	if err := s.emitter.Emit(ctx, audit.Event{
+		EventType:      "ownership_transferred",
+		Service:        s.service,
+		ActorType:      audit.ActorTypeUser,
+		ActorID:        req.RequesterUserID,
+		SubjectID:      req.TargetUserID,
+		Resource:       "endpoint:accounts.transfer_ownership",
+		ResourceKind:   audit.ResourceKindEndpoint,
+		ResourceID:     "accounts.transfer_ownership",
+		ResourceParent: s.service,
+		ResourcePath:   s.service + "/endpoint/accounts.transfer_ownership",
+		Action:         "transfer_ownership",
+		Decision:       audit.DecisionAllow,
+		Attrs: map[string]any{
+			"account_id":        req.AccountID,
+			"previous_owner_id": req.RequesterUserID,
+			"new_owner_id":      req.TargetUserID,
+		},
+	}); err != nil {
+		return fmt.Errorf("audit emit (ownership_transferred): %w", err)
+	}
+	return nil
 }
 
 // RemoveSeatRequest is the shape the HTTP handler forwards to
