@@ -44,21 +44,28 @@ func TestActivatePlan_CreatesRowAndEmitsAudit(t *testing.T) {
 	svc, _, sink := newSvcWithPlan("touchline-free")
 	accountID := account(t, svc, "u1", "u1@example.com")
 
-	row, created, err := svc.ActivatePlan(context.Background(), application.ActivatePlanRequest{
+	res, err := svc.ActivatePlan(context.Background(), application.ActivatePlanRequest{
 		AccountID: accountID, PlanCode: "touchline-free",
 	})
 	if err != nil {
 		t.Fatalf("ActivatePlan: %v", err)
 	}
-	if !created {
-		t.Fatal("expected created=true on first activation")
-	}
-	if row.AccountID != accountID || row.PlanID != "plan-touchline-free" {
-		t.Errorf("row = %+v", row)
-	}
-	// One account_created + one plan_activated event expected.
+	assertCreatedResult(t, res, accountID)
 	if !containsEvent(sink.events, "plan_activated") {
 		t.Errorf("expected plan_activated event, got %v", eventTypes(sink.events))
+	}
+}
+
+func assertCreatedResult(t *testing.T, res *application.ActivatePlanResult, accountID string) {
+	t.Helper()
+	if !res.Created {
+		t.Fatal("expected created=true on first activation")
+	}
+	if res.Row.AccountID != accountID || res.Row.PlanID != "plan-touchline-free" {
+		t.Errorf("row = %+v", res.Row)
+	}
+	if res.Plan == nil || res.Plan.Tier != "free" {
+		t.Errorf("plan = %+v, want tier=free", res.Plan)
 	}
 }
 
@@ -66,18 +73,18 @@ func TestActivatePlan_IsIdempotentAndSkipsAudit(t *testing.T) {
 	svc, _, sink := newSvcWithPlan("touchline-free")
 	accountID := account(t, svc, "u1", "u1@example.com")
 
-	if _, _, err := svc.ActivatePlan(context.Background(), application.ActivatePlanRequest{
+	if _, err := svc.ActivatePlan(context.Background(), application.ActivatePlanRequest{
 		AccountID: accountID, PlanCode: "touchline-free",
 	}); err != nil {
 		t.Fatalf("first activation: %v", err)
 	}
-	_, created, err := svc.ActivatePlan(context.Background(), application.ActivatePlanRequest{
+	res, err := svc.ActivatePlan(context.Background(), application.ActivatePlanRequest{
 		AccountID: accountID, PlanCode: "touchline-free",
 	})
 	if err != nil {
 		t.Fatalf("second activation: %v", err)
 	}
-	if created {
+	if res.Created {
 		t.Error("expected created=false on idempotent replay")
 	}
 	// Only ONE plan_activated event should have been emitted.
@@ -94,13 +101,13 @@ func TestActivatePlan_DifferentPlanConflicts(t *testing.T) {
 	})
 	accountID := account(t, svc, "u1", "u1@example.com")
 
-	if _, _, err := svc.ActivatePlan(context.Background(), application.ActivatePlanRequest{
+	if _, err := svc.ActivatePlan(context.Background(), application.ActivatePlanRequest{
 		AccountID: accountID, PlanCode: "touchline-free",
 	}); err != nil {
 		t.Fatalf("first activation: %v", err)
 	}
 
-	_, _, err := svc.ActivatePlan(context.Background(), application.ActivatePlanRequest{
+	_, err := svc.ActivatePlan(context.Background(), application.ActivatePlanRequest{
 		AccountID: accountID, PlanCode: "touchline-club",
 	})
 	if err == nil {
@@ -116,7 +123,7 @@ func TestActivatePlan_UnknownPlanCode(t *testing.T) {
 	svc, _, _ := newSvcWithPlan("touchline-free")
 	accountID := account(t, svc, "u1", "u1@example.com")
 
-	_, _, err := svc.ActivatePlan(context.Background(), application.ActivatePlanRequest{
+	_, err := svc.ActivatePlan(context.Background(), application.ActivatePlanRequest{
 		AccountID: accountID, PlanCode: "ghost",
 	})
 	if err == nil || !apperrors.IsNotFound(err) {
@@ -136,7 +143,7 @@ func TestActivatePlan_ValidationRejectsEmptyFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := svc.ActivatePlan(context.Background(), tc.req)
+			_, err := svc.ActivatePlan(context.Background(), tc.req)
 			if err == nil || !apperrors.IsBadRequest(err) {
 				t.Errorf("expected bad-request, got %v", err)
 			}

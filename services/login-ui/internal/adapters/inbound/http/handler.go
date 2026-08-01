@@ -108,31 +108,44 @@ const provisionPlanMaxAttempts = 3
 // user-facing latency on the failure path at ~600ms of pure waiting.
 const provisionPlanBaseBackoff = 200 * time.Millisecond
 
+// provisionResult carries the values provisionPlan hands back to
+// CheckoutPost. LagoID is passed to the Stripe Checkout session on
+// the paid-plan path; Tier drives the free/paid branch (E5-S3).
+type provisionResult struct {
+	LagoID string
+	Tier   string
+}
+
 // provisionPlan is the E5-S2 composite: ensure the Lago customer,
 // open a subscription against the chosen plan, then write the
 // account_plans row on entitlements-service. Every step is
 // individually idempotent, so a retry after a mid-composite failure
 // converges rather than duplicating state.
 //
-// Returns the Lago subscription identifier so callers that also
-// create a Stripe Checkout session can pass it through. Errors
-// surface with the last per-attempt cause so the operator sees the
-// underlying transport / 4xx that caused exhaustion.
-func (h *Handler) provisionPlan(ctx context.Context, accountID, email, planCode string) (string, error) {
+// Returns the Lago subscription identifier and the entitlements-side
+// plan tier so callers that also create a Stripe Checkout session can
+// pass the Lago id through, and so E5-S3's free/paid branch can decide
+// whether to actually redirect to Stripe. Errors surface with the last
+// per-attempt cause so the operator sees the underlying transport / 4xx
+// that caused exhaustion.
+func (h *Handler) provisionPlan(ctx context.Context, accountID, email, planCode string) (*provisionResult, error) {
 	if h.planActivator == nil {
-		return "", fmt.Errorf("login-ui: plan activator not configured")
+		return nil, fmt.Errorf("login-ui: plan activator not configured")
 	}
-	var lagoID string
+	var out provisionResult
 	err := retryWithBackoff(ctx, provisionPlanMaxAttempts, provisionPlanBaseBackoff, func() error {
-		return h.provisionOnce(ctx, accountID, email, planCode, &lagoID)
+		return h.provisionOnce(ctx, accountID, email, planCode, &out)
 	})
-	return lagoID, err
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // provisionOnce runs one pass of the composite. Extracted so
 // retryWithBackoff stays a small loop and the composite's step ordering
 // is legible in one place.
-func (h *Handler) provisionOnce(ctx context.Context, accountID, email, planCode string, lagoID *string) error {
+func (h *Handler) provisionOnce(ctx context.Context, accountID, email, planCode string, out *provisionResult) error {
 	if err := h.billing.EnsureCustomer(ctx, ports.EnsureCustomerRequest{
 		ExternalID: accountID,
 		Email:      email,
@@ -147,14 +160,16 @@ func (h *Handler) provisionOnce(ctx context.Context, accountID, email, planCode 
 	if err != nil {
 		return fmt.Errorf("create subscription: %w", err)
 	}
-	*lagoID = sub.LagoID
-	if err := h.planActivator.ActivatePlan(ctx, ports.ActivatePlanRequest{
+	out.LagoID = sub.LagoID
+	res, err := h.planActivator.ActivatePlan(ctx, ports.ActivatePlanRequest{
 		AccountID:          accountID,
 		PlanCode:           planCode,
 		LagoSubscriptionID: sub.LagoID,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("activate plan: %w", err)
 	}
+	out.Tier = res.PlanTier
 	return nil
 }
 
@@ -459,6 +474,12 @@ func (h *Handler) PlansGet(w http.ResponseWriter, r *http.Request) {
 	subject := r.URL.Query().Get("subject")
 	accountID := r.URL.Query().Get("account")
 	view := plansView{Subject: subject, AccountID: accountID}
+	// checkout=canceled is set by the Stripe cancel URL the checkout
+	// handler composes; render a friendly banner so the user knows
+	// their card was not charged and they can pick a plan again.
+	if r.URL.Query().Get("checkout") == "canceled" {
+		view.Error = "Checkout was canceled — no card was charged. Pick a plan whenever you're ready."
+	}
 	plans, err := h.billing.ListPlans(r.Context())
 	if err != nil {
 		h.logger.Error("billing: list plans failed", "error", err)
@@ -511,11 +532,22 @@ func (h *Handler) CheckoutPost(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.provisionForCheckout(w, r, form) {
+	tier, ok := h.provisionForCheckout(w, r, form)
+	if !ok {
+		return
+	}
+	if tier == planTierFree {
+		// Free-plan short-circuit (E5-S3): no card, no Stripe redirect,
+		// straight to the success URL the operator configured.
+		http.Redirect(w, r, h.billingSuccessURL, http.StatusFound)
 		return
 	}
 	h.redirectToStripe(w, r, form)
 }
+
+// planTierFree is the entitlements-service tier that skips Stripe.
+// Coach and club tiers both continue through the paid-plan path.
+const planTierFree = "free"
 
 // checkoutForm is the parsed submission from the plan-selection page.
 // Account is the Lago external_customer_id (E5-S2); Subject stays for
@@ -558,31 +590,37 @@ func parseCheckoutForm(w http.ResponseWriter, r *http.Request) (checkoutForm, bo
 }
 
 // provisionForCheckout runs the E5-S2 composite when a plan activator
-// is wired. Returns false when the caller should stop (an error was
-// already written); true otherwise (including the unwired-activator
-// pass-through path).
-func (h *Handler) provisionForCheckout(w http.ResponseWriter, r *http.Request, form checkoutForm) bool {
+// is wired and returns the entitlements-side tier so CheckoutPost can
+// branch on free vs paid (E5-S3). ok=false when the caller should stop
+// (an error was already written); ok=true otherwise. When the activator
+// is unwired the tier is empty — the caller falls through to the paid
+// path, matching pre-E5-S3 direct-to-Stripe behaviour.
+func (h *Handler) provisionForCheckout(w http.ResponseWriter, r *http.Request, form checkoutForm) (string, bool) {
 	if h.planActivator == nil {
-		return true
+		return "", true
 	}
-	if _, err := h.provisionPlan(r.Context(), form.AccountID, form.Email, form.PlanCode); err != nil {
+	res, err := h.provisionPlan(r.Context(), form.AccountID, form.Email, form.PlanCode)
+	if err != nil {
 		h.logger.Error("billing: provision plan composite failed",
 			"error", err, "account_id", form.AccountID)
 		http.Error(w, "could not start checkout", http.StatusInternalServerError)
-		return false
+		return "", false
 	}
-	return true
+	return res.Tier, true
 }
 
 // redirectToStripe creates the Lago-managed Stripe Checkout session and
-// bounces the browser to it. Failure surfaces as a generic 500 —
-// Lago-side detail lands in the log, not the response.
+// bounces the browser to it. The cancel URL is composed per request so
+// it carries the subject + account back to /billing/plans along with
+// checkout=canceled — PlansGet reads that flag and renders a clear
+// banner (E5-S3). Failure surfaces as a generic 500 — Lago-side detail
+// lands in the log, not the response.
 func (h *Handler) redirectToStripe(w http.ResponseWriter, r *http.Request, form checkoutForm) {
 	session, err := h.billing.CreateCheckoutSession(r.Context(), ports.CheckoutSessionRequest{
 		CustomerID: form.AccountID,
 		PlanCode:   form.PlanCode,
 		SuccessURL: h.billingSuccessURL,
-		CancelURL:  h.billingCancelURL,
+		CancelURL:  h.checkoutCancelURL(form),
 	})
 	if err != nil {
 		h.logger.Error("billing: create checkout session failed", "error", err)
@@ -590,6 +628,31 @@ func (h *Handler) redirectToStripe(w http.ResponseWriter, r *http.Request, form 
 		return
 	}
 	http.Redirect(w, r, session.URL, http.StatusFound)
+}
+
+// checkoutCancelURL appends the subject, account, and checkout=canceled
+// flag onto the configured billingCancelURL base so PlansGet can echo
+// them into the re-rendered plans form. Uses url.Values.Encode so
+// operator-supplied query strings survive intact.
+func (h *Handler) checkoutCancelURL(form checkoutForm) string {
+	base := h.billingCancelURL
+	if base == "" {
+		return base
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	q := u.Query()
+	if form.Subject != "" {
+		q.Set("subject", form.Subject)
+	}
+	if form.AccountID != "" {
+		q.Set("account", form.AccountID)
+	}
+	q.Set("checkout", "canceled")
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // PortalGet redirects the authenticated user to Stripe's hosted Customer

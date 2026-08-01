@@ -450,6 +450,18 @@ type ActivatePlanRequest struct {
 	LagoSubscriptionID string
 }
 
+// ActivatePlanResult is the ActivatePlan return shape. Row is the
+// (fresh or existing) account_plans row; Plan is the resolved catalog
+// row so the caller can branch on tier (E5-S3 free/paid distinction)
+// without a second lookup; Created flips false on an idempotent
+// replay so the caller can distinguish 201 from 200 without a
+// timestamp sniff.
+type ActivatePlanResult struct {
+	Row     *domain.AccountPlan
+	Plan    *domain.Plan
+	Created bool
+}
+
 // ActivatePlan is the E5-S2 use case: the login-ui plan picker has
 // converged on a plan and Lago has recorded the customer/subscription
 // pair; entitlements-service now writes the account_plans row so the
@@ -466,16 +478,16 @@ type ActivatePlanRequest struct {
 // surfaces to the caller — the login-ui composite backs off and retries,
 // which is the correct behaviour when the audit sink is momentarily
 // unavailable.
-func (s *AccountService) ActivatePlan(ctx context.Context, req ActivatePlanRequest) (*domain.AccountPlan, bool, error) {
+func (s *AccountService) ActivatePlan(ctx context.Context, req ActivatePlanRequest) (*ActivatePlanResult, error) {
 	if s.plans == nil {
-		return nil, false, apperrors.New(apperrors.ErrCodeInternal, "plan repository not configured")
+		return nil, apperrors.New(apperrors.ErrCodeInternal, "plan repository not configured")
 	}
 	if err := validateActivatePlanInput(req); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	plan, err := s.plans.FindPlanByCode(ctx, req.PlanCode)
 	if err != nil {
-		return nil, false, fmt.Errorf("resolving plan code %q: %w", req.PlanCode, err)
+		return nil, fmt.Errorf("resolving plan code %q: %w", req.PlanCode, err)
 	}
 	row, created, err := s.plans.ActivateAccountPlan(ctx, ports.ActivateAccountPlanInput{
 		AccountID:          req.AccountID,
@@ -484,14 +496,14 @@ func (s *AccountService) ActivatePlan(ctx context.Context, req ActivatePlanReque
 		ValidFrom:          s.now(),
 	})
 	if err != nil {
-		return nil, false, fmt.Errorf("activating account plan: %w", err)
+		return nil, fmt.Errorf("activating account plan: %w", err)
 	}
 	if created {
 		if err := s.emitPlanActivated(ctx, row, plan); err != nil {
-			return nil, false, err
+			return nil, err
 		}
 	}
-	return row, created, nil
+	return &ActivatePlanResult{Row: row, Plan: plan, Created: created}, nil
 }
 
 // validateActivatePlanInput enforces wire-boundary shape rules.
