@@ -202,6 +202,65 @@ func (r *AccountRepository) SeatAllowance(_ context.Context, accountID string) (
 	return 1, nil
 }
 
+// FindSeat returns the seat identified by (accountID, userID) or a
+// not-found error. Uses a linear scan of the account's slice — seats
+// per account cap at plan allowance (single digits), so the O(seats)
+// cost is trivial and avoids adding a second index.
+func (r *AccountRepository) FindSeat(_ context.Context, accountID, userID string) (*domain.Seat, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, s := range r.seats[accountID] {
+		if s.UserID == userID {
+			seat := s
+			return &seat, nil
+		}
+	}
+	return nil, apperrors.New(apperrors.ErrCodeNotFound, "seat not found")
+}
+
+// Remove deletes the seat identified by (accountID, userID). Returns
+// ErrCodeNotFound when no such seat exists so callers can distinguish
+// "already removed" (idempotent-retry) from other failures.
+func (r *AccountRepository) Remove(_ context.Context, accountID, userID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	seats := r.seats[accountID]
+	for i, s := range seats {
+		if s.UserID == userID {
+			r.seats[accountID] = append(seats[:i], seats[i+1:]...)
+			return nil
+		}
+	}
+	return apperrors.New(apperrors.ErrCodeNotFound, "seat not found")
+}
+
+// AddMemberSeat inserts a seat on accountID for tests that need
+// multi-seat state without exercising the E7-S2 invite-accept flow
+// (which is a follow-up story). Not part of the port; test-only
+// helper mirroring SetSeatAllowance / SetActivePlan. Generates a
+// fresh ID; safe to call multiple times per account with distinct
+// user IDs.
+func (r *AccountRepository) AddMemberSeat(accountID, userID string, role domain.Role) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	id, err := newID()
+	if err != nil {
+		// Test helper — deterministic IDs are not important, but a
+		// crypto/rand failure means the test environment is broken
+		// in a way that should surface loudly.
+		panic("memory.AddMemberSeat: " + err.Error())
+	}
+	now := time.Now().UTC()
+	r.seats[accountID] = append(r.seats[accountID], domain.Seat{
+		ID:        id,
+		AccountID: accountID,
+		UserID:    userID,
+		Role:      role,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+}
+
 // SetSeatAllowance overrides the default in-memory allowance for
 // accountID — for tests that need to exercise multi-seat paths without
 // a real plan catalog. Not part of the port; test-only helper.

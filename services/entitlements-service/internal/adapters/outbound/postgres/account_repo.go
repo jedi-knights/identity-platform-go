@@ -211,6 +211,49 @@ func (r *AccountRepository) FindByUserID(ctx context.Context, userID string) (*d
 	return acc, nil
 }
 
+// FindSeat returns the seat identified by (accountID, userID) or a
+// not-found error. Callers use this before Remove so the application
+// layer can distinguish "no such seat" (404) from "requester lacks
+// the role to remove it" (403).
+func (r *AccountRepository) FindSeat(ctx context.Context, accountID, userID string) (*domain.Seat, error) {
+	const q = `
+		SELECT id, account_id, user_id, role, created_at, updated_at
+		FROM account_seats
+		WHERE account_id = $1 AND user_id = $2`
+	var (
+		s    domain.Seat
+		role string
+	)
+	err := r.pool.QueryRow(ctx, q, accountID, userID).Scan(
+		&s.ID, &s.AccountID, &s.UserID, &role, &s.CreatedAt, &s.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperrors.New(apperrors.ErrCodeNotFound, "seat not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find seat: %w", err)
+	}
+	s.Role = domain.Role(role)
+	return &s, nil
+}
+
+// Remove deletes the seat identified by (accountID, userID). Returns
+// ErrCodeNotFound when RowsAffected is 0 so a repeat call (idempotent
+// retry) surfaces distinctly from other failures.
+func (r *AccountRepository) Remove(ctx context.Context, accountID, userID string) error {
+	tag, err := r.pool.Exec(ctx,
+		`DELETE FROM account_seats WHERE account_id = $1 AND user_id = $2`,
+		accountID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("remove seat: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperrors.New(apperrors.ErrCodeNotFound, "seat not found")
+	}
+	return nil
+}
+
 // SeatAllowance returns the seat allowance for accountID's active
 // plan. When the account has no active account_plans row (never
 // subscribed, or the subscription ended and no new one has started),
