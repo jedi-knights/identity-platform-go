@@ -77,6 +77,25 @@ type UserClaimsFetcher interface {
 	GetUserClaims(ctx context.Context, subjectID string) (*UserClaims, error)
 }
 
+// ActiveAccountFetcher is the outbound port for resolving the
+// entitlements-service account a user has currently selected as their
+// working context (Epic 7 / E7-S3c). Backed by identity-service's
+// GET /users/{id}/active-account (E7-S3a).
+//
+// Empty accountID (nil error) is the "user has never chosen" signal —
+// the caller passes it through to omitempty at claim-construction time.
+// A non-nil error is a fetch failure (identity-service unreachable,
+// non-2xx status, etc.); the caller logs and issues the token without
+// the claim, mirroring the UserClaimsFetcher non-fatal fallback so an
+// identity-service outage never takes down token issuance.
+//
+// When the auth-server is run without AUTH_IDENTITY_SERVICE_URL the
+// implementation is nil — every strategy behaves as if the user had
+// never selected an active account.
+type ActiveAccountFetcher interface {
+	GetActiveAccount(ctx context.Context, userID string) (accountID string, err error)
+}
+
 // ClientJWKSFetcher is the outbound port for resolving an RFC 7523
 // client-assertion signing key (ADR-0023). Unlike this platform's own
 // JWKS (one document, fixed at process startup — see

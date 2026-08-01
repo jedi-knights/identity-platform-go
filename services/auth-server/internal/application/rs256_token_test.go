@@ -139,6 +139,69 @@ func TestRS256TokenValidator_Validate_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestRS256TokenGenerator_LiftsActiveAccountID covers the E7-S3c wire —
+// domain.Token.ActiveAccountID must survive Generate → Validate round
+// trip via the jwtutil.Claims.ActiveAccountID JSON claim.
+func TestRS256TokenGenerator_LiftsActiveAccountID(t *testing.T) {
+	ks := newTestKeySet(t, "kid-active-account")
+	gen := application.NewRS256TokenGenerator(ks, "test-issuer", nil)
+	validator := application.NewRS256TokenValidator(ks, newMockTokenRepo(), "")
+	now := time.Now().Truncate(time.Second)
+	tok := &domain.Token{
+		ID:              "tok-active-account",
+		ClientID:        "client-a",
+		Subject:         "user-1",
+		Scopes:          []string{"read"},
+		ActiveAccountID: "acc-abc",
+		IssuedAt:        now,
+		ExpiresAt:       now.Add(time.Hour),
+		TokenType:       domain.TokenTypeBearer,
+	}
+
+	raw, err := gen.Generate(context.Background(), tok)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	got, err := validator.Validate(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if got.ActiveAccountID != "acc-abc" {
+		t.Errorf("ActiveAccountID = %q, want acc-abc", got.ActiveAccountID)
+	}
+}
+
+// TestRS256TokenGenerator_OmitsActiveAccountIDWhenEmpty guards the
+// omitempty contract at the wire — a token minted without an active
+// account must have no active_account_id key in the payload (not just
+// zero-valued).
+func TestRS256TokenGenerator_OmitsActiveAccountIDWhenEmpty(t *testing.T) {
+	ks := newTestKeySet(t, "kid-omit-active-account")
+	gen := application.NewRS256TokenGenerator(ks, "test-issuer", nil)
+	now := time.Now().Truncate(time.Second)
+	tok := &domain.Token{
+		ID:        "tok-noaccount",
+		ClientID:  "client-a",
+		Subject:   "user-1",
+		Scopes:    []string{"read"},
+		IssuedAt:  now,
+		ExpiresAt: now.Add(time.Hour),
+		TokenType: domain.TokenTypeBearer,
+	}
+
+	raw, err := gen.Generate(context.Background(), tok)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	parsed, _, err := new(jwt.Parser).ParseUnverified(raw, jwt.MapClaims{})
+	if err != nil {
+		t.Fatalf("ParseUnverified: %v", err)
+	}
+	if _, present := parsed.Claims.(jwt.MapClaims)["active_account_id"]; present {
+		t.Errorf("active_account_id present in payload; want omitted")
+	}
+}
+
 func TestRS256TokenValidator_Validate_RejectsUnknownKID(t *testing.T) {
 	// Arrange — sign with one keyset, validate against a different one.
 	signingKS := newTestKeySet(t, "kid-signer")

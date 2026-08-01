@@ -30,6 +30,12 @@ type IDTokenIssuance struct {
 	Name          string
 	UpdatedAt     time.Time
 
+	// ActiveAccountID mirrors the access-token active_account_id claim on
+	// the ID token so an OIDC client (login-ui) sees the same "which
+	// account am I acting for" value without introspecting the paired
+	// access token (Epic 7 / E7-S3c). Empty omits the claim.
+	ActiveAccountID string
+
 	IssuedAt  time.Time
 	ExpiresAt time.Time
 }
@@ -74,12 +80,13 @@ func (g *IDTokenGenerator) Generate(_ context.Context, req IDTokenIssuance) (str
 			IssuedAt:  jwt.NewNumericDate(req.IssuedAt),
 			ExpiresAt: jwt.NewNumericDate(req.ExpiresAt),
 		},
-		Nonce:         req.Nonce,
-		AtHash:        req.AtHash,
-		AMR:           append([]string(nil), req.AMR...),
-		Email:         req.Email,
-		EmailVerified: req.EmailVerified,
-		Name:          req.Name,
+		Nonce:           req.Nonce,
+		AtHash:          req.AtHash,
+		AMR:             append([]string(nil), req.AMR...),
+		Email:           req.Email,
+		EmailVerified:   req.EmailVerified,
+		Name:            req.Name,
+		ActiveAccountID: req.ActiveAccountID,
 	}
 	if !req.AuthTime.IsZero() {
 		claims.AuthTime = req.AuthTime.Unix()

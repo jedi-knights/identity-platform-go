@@ -60,6 +60,16 @@ type Token struct {
 	ActorType   ActorType
 	AgentID     string
 
+	// ActiveAccountID is the entitlements-service account the subject
+	// has currently selected as their working context (Epic 7 / E7-S3c).
+	// Set only for tokens minted for a real user (ActorType == user);
+	// empty for service tokens, agents without a delegating user, and
+	// every path where identity-service is unwired or the user has not
+	// chosen an active account. Lifted onto the issued JWT via
+	// jwtutil.Claims.ActiveAccountID (omitempty drops the claim when
+	// this field is empty).
+	ActiveAccountID string
+
 	// Act is the RFC 8693 §4.1 delegation chain. Populated by the
 	// token-exchange strategy by prepending the current actor to the
 	// subject_token's chain; nil for every other grant type. Stored on

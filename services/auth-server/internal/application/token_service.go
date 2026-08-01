@@ -43,18 +43,19 @@ func NewJWTTokenGenerator(signingKey []byte, issuer string, audience []string) *
 
 func (g *JWTTokenGenerator) Generate(_ context.Context, token *domain.Token) (string, error) {
 	claims := jwtutil.NewClaims(jwtutil.ClaimsConfig{
-		Issuer:      g.issuer,
-		Subject:     token.Subject,
-		TokenID:     token.ID,
-		ClientID:    token.ClientID,
-		Scope:       strings.Join(token.Scopes, " "),
-		Audience:    g.audience,
-		Roles:       token.Roles,
-		Permissions: token.Permissions,
-		ActorType:   string(token.ActorType),
-		AgentID:     token.AgentID,
-		IssuedAt:    token.IssuedAt,
-		ExpiresAt:   token.ExpiresAt,
+		Issuer:          g.issuer,
+		Subject:         token.Subject,
+		TokenID:         token.ID,
+		ClientID:        token.ClientID,
+		Scope:           strings.Join(token.Scopes, " "),
+		Audience:        g.audience,
+		Roles:           token.Roles,
+		Permissions:     token.Permissions,
+		ActorType:       string(token.ActorType),
+		AgentID:         token.AgentID,
+		ActiveAccountID: token.ActiveAccountID,
+		IssuedAt:        token.IssuedAt,
+		ExpiresAt:       token.ExpiresAt,
 	})
 	return jwtutil.Sign(claims, g.signingKey)
 }
@@ -90,18 +91,19 @@ func (v *JWTTokenValidator) Validate(_ context.Context, raw string) (*domain.Tok
 	}
 
 	return &domain.Token{
-		ID:        claims.ID,
-		ClientID:  claims.ClientID,
-		Subject:   claims.Subject,
-		Issuer:    claims.Issuer,
-		Audience:  []string(claims.Audience),
-		Scopes:    strings.Fields(claims.Scope),
-		ActorType: domain.ActorType(claims.ActorType),
-		AgentID:   claims.AgentID,
-		ExpiresAt: claims.ExpiresAt.Time,
-		IssuedAt:  claims.IssuedAt.Time,
-		TokenType: domain.TokenTypeBearer,
-		Raw:       raw,
+		ID:              claims.ID,
+		ClientID:        claims.ClientID,
+		Subject:         claims.Subject,
+		Issuer:          claims.Issuer,
+		Audience:        []string(claims.Audience),
+		Scopes:          strings.Fields(claims.Scope),
+		ActorType:       domain.ActorType(claims.ActorType),
+		AgentID:         claims.AgentID,
+		ActiveAccountID: claims.ActiveAccountID,
+		ExpiresAt:       claims.ExpiresAt.Time,
+		IssuedAt:        claims.IssuedAt.Time,
+		TokenType:       domain.TokenTypeBearer,
+		Raw:             raw,
 	}, nil
 }
 

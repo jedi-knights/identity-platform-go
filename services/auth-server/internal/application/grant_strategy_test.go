@@ -752,3 +752,86 @@ func TestClientCredentialsStrategy_Supports(t *testing.T) {
 // expected ErrUnsupportedGrantType. ADR-0009 implements the grant; the full
 // behaviour is covered by TestAuthorizationCodeStrategy_Handle_* in
 // authcode_strategy_test.go.
+
+// --- E7-S3c: refresh path re-resolves active_account on every refresh ---
+
+func TestRefreshTokenStrategy_Handle_StampsActiveAccountIDFromFetcher(t *testing.T) {
+	auth := newMockClientAuthenticator()
+	tokenRepo := newMockTokenRepo()
+	refreshRepo := newMockRefreshTokenRepo()
+
+	auth.clients["client1"] = newTestClient("client1", "secret", []string{"read"}, []domain.GrantType{domain.GrantTypeRefreshToken})
+	seedRefreshToken(t, refreshRepo, "refresh-raw-active", "client1", "user-1", []string{"read"}, 7*24*time.Hour)
+
+	af := &fakeActiveAccountFetcher{resp: "acc-refresh-1"}
+	strategy := newRefreshTokenStrategy(auth, tokenRepo, refreshRepo).WithActiveAccountFetcher(af)
+
+	resp, err := strategy.Handle(context.Background(), domain.GrantRequest{
+		GrantType:    domain.GrantTypeRefreshToken,
+		ClientID:     "client1",
+		ClientSecret: "secret",
+		RefreshToken: "refresh-raw-active",
+	})
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	saved, ok := tokenRepo.tokens[resp.AccessToken]
+	if !ok {
+		t.Fatalf("no token saved under %q", resp.AccessToken)
+	}
+	if saved.ActiveAccountID != "acc-refresh-1" {
+		t.Errorf("saved.ActiveAccountID = %q, want acc-refresh-1", saved.ActiveAccountID)
+	}
+	if af.gotUserID != "user-1" {
+		t.Errorf("fetcher called with userID = %q, want user-1 (refresh subject)", af.gotUserID)
+	}
+}
+
+func TestRefreshTokenStrategy_Handle_EmptyActiveAccountIDWhenUnwired(t *testing.T) {
+	auth := newMockClientAuthenticator()
+	tokenRepo := newMockTokenRepo()
+	refreshRepo := newMockRefreshTokenRepo()
+	auth.clients["client1"] = newTestClient("client1", "secret", []string{"read"}, []domain.GrantType{domain.GrantTypeRefreshToken})
+	seedRefreshToken(t, refreshRepo, "refresh-raw-noac", "client1", "user-2", []string{"read"}, 7*24*time.Hour)
+
+	strategy := newRefreshTokenStrategy(auth, tokenRepo, refreshRepo)
+
+	resp, err := strategy.Handle(context.Background(), domain.GrantRequest{
+		GrantType:    domain.GrantTypeRefreshToken,
+		ClientID:     "client1",
+		ClientSecret: "secret",
+		RefreshToken: "refresh-raw-noac",
+	})
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	saved := tokenRepo.tokens[resp.AccessToken]
+	if saved.ActiveAccountID != "" {
+		t.Errorf("saved.ActiveAccountID = %q, want empty when fetcher unwired", saved.ActiveAccountID)
+	}
+}
+
+func TestRefreshTokenStrategy_Handle_FetcherErrorIsNonFatal(t *testing.T) {
+	auth := newMockClientAuthenticator()
+	tokenRepo := newMockTokenRepo()
+	refreshRepo := newMockRefreshTokenRepo()
+	auth.clients["client1"] = newTestClient("client1", "secret", []string{"read"}, []domain.GrantType{domain.GrantTypeRefreshToken})
+	seedRefreshToken(t, refreshRepo, "refresh-raw-err", "client1", "user-3", []string{"read"}, 7*24*time.Hour)
+
+	af := &fakeActiveAccountFetcher{err: errors.New("identity-service down")}
+	strategy := newRefreshTokenStrategy(auth, tokenRepo, refreshRepo).WithActiveAccountFetcher(af)
+
+	resp, err := strategy.Handle(context.Background(), domain.GrantRequest{
+		GrantType:    domain.GrantTypeRefreshToken,
+		ClientID:     "client1",
+		ClientSecret: "secret",
+		RefreshToken: "refresh-raw-err",
+	})
+	if err != nil {
+		t.Fatalf("Handle should succeed despite fetcher error: %v", err)
+	}
+	saved := tokenRepo.tokens[resp.AccessToken]
+	if saved.ActiveAccountID != "" {
+		t.Errorf("saved.ActiveAccountID = %q, want empty on fetcher error (non-fatal)", saved.ActiveAccountID)
+	}
+}
