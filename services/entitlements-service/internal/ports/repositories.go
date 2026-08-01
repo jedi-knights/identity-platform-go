@@ -71,6 +71,19 @@ type SeatRepository interface {
 	// should probe with FindSeat first when they need to distinguish
 	// "already removed" from other failures.
 	Remove(ctx context.Context, accountID, userID string) error
+
+	// SwapOwner atomically demotes oldOwnerUserID from owner → admin
+	// and promotes newOwnerUserID → owner within accountID. Both seats
+	// must exist and oldOwnerUserID must currently be the owner —
+	// implementations validate under the same lock/transaction that
+	// performs the update so an interleaved probe cannot see one seat
+	// updated without the other.
+	//
+	// Returns a not-found error when either seat is missing, and a
+	// conflict error when oldOwnerUserID is not currently the owner
+	// (application-layer callers surface both to the client — the
+	// distinction is diagnostic, not policy-critical).
+	SwapOwner(ctx context.Context, accountID, oldOwnerUserID, newOwnerUserID string) error
 }
 
 // InviteRepository persists account invites — the sending half of the

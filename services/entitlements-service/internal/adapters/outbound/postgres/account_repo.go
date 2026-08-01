@@ -237,6 +237,51 @@ func (r *AccountRepository) FindSeat(ctx context.Context, accountID, userID stri
 	return &s, nil
 }
 
+// SwapOwner atomically demotes the current owner (oldOwnerUserID) to
+// admin and promotes newOwnerUserID to owner within accountID. Both
+// UPDATEs run inside a single transaction — a mid-transfer crash
+// leaves the account with its original owner, never with two owners
+// or two admins.
+//
+// The demote UPDATE has an explicit role='owner' predicate so a stale
+// caller (an operator racing another transfer) surfaces as an
+// affected-rows check rather than silently promoting a second owner.
+func (r *AccountRepository) SwapOwner(ctx context.Context, accountID, oldOwnerUserID, newOwnerUserID string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin swap-owner tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	demoteTag, err := tx.Exec(ctx,
+		`UPDATE account_seats SET role = 'admin', updated_at = now()
+		 WHERE account_id = $1 AND user_id = $2 AND role = 'owner'`,
+		accountID, oldOwnerUserID,
+	)
+	if err != nil {
+		return fmt.Errorf("demote current owner: %w", err)
+	}
+	if demoteTag.RowsAffected() == 0 {
+		return apperrors.New(apperrors.ErrCodeConflict, "current-owner role mismatch or seat missing")
+	}
+
+	promoteTag, err := tx.Exec(ctx,
+		`UPDATE account_seats SET role = 'owner', updated_at = now()
+		 WHERE account_id = $1 AND user_id = $2`,
+		accountID, newOwnerUserID,
+	)
+	if err != nil {
+		return fmt.Errorf("promote new owner: %w", err)
+	}
+	if promoteTag.RowsAffected() == 0 {
+		return apperrors.New(apperrors.ErrCodeNotFound, "target seat not found")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit swap-owner tx: %w", err)
+	}
+	return nil
+}
+
 // Remove deletes the seat identified by (accountID, userID). Returns
 // ErrCodeNotFound when RowsAffected is 0 so a repeat call (idempotent
 // retry) surfaces distinctly from other failures.
