@@ -168,6 +168,14 @@ type ActivatePlanRequest struct {
 	LagoSubscriptionID string
 }
 
+// ActivatePlanResult is what the port returns after a successful
+// activation. PlanTier is the entitlements-service catalog tier
+// ("free" | "coach" | "club") so the checkout composite can branch on
+// free vs paid without a second lookup (E5-S3).
+type ActivatePlanResult struct {
+	PlanTier string
+}
+
 // AccountPlanActivator is the outbound port for writing the account_plans
 // row on the entitlements-service side (E5-S2). Backed by POST
 // /accounts/{account_id}/plans. The remote endpoint is idempotent — a
@@ -175,7 +183,7 @@ type ActivatePlanRequest struct {
 // so login-ui's retry loop can safely re-invoke this after a lost
 // response.
 type AccountPlanActivator interface {
-	ActivatePlan(ctx context.Context, req ActivatePlanRequest) error
+	ActivatePlan(ctx context.Context, req ActivatePlanRequest) (*ActivatePlanResult, error)
 }
 
 // ActiveAccountStore is the outbound port for reading and writing the
