@@ -64,6 +64,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, entitlementsCreatorProvider)
 	platform.Register(c, authServiceProvider)
 	platform.Register(c, emailVerificationServiceProvider)
+	platform.Register(c, userPreferencesServiceProvider)
 	platform.Register(c, handlerProvider)
 
 	if err := c.Bootstrap(ctx); err != nil {
@@ -72,12 +73,13 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	return c, nil
 }
 
-// repositories bundles the user and verification-token repos into a single
-// eager registration so they can share a connection pool when postgres is
-// configured.
+// repositories bundles the user, verification-token, and user-preferences
+// repos into a single eager registration so they can share a connection
+// pool when postgres is configured.
 type repositories struct {
 	user  domain.UserRepository
 	token domain.VerificationTokenRepository
+	prefs domain.UserPreferencesRepository
 }
 
 func repositoriesProvider(ctx context.Context, c *platform.Container) (*repositories, error) {
@@ -87,6 +89,7 @@ func repositoriesProvider(ctx context.Context, c *platform.Container) (*reposito
 		return &repositories{
 			user:  memory.NewUserRepository(),
 			token: memory.NewVerificationTokenRepository(),
+			prefs: memory.NewUserPreferencesRepository(),
 		}, nil
 	case isSQLiteDSN(cfg.Database.URL):
 		return sqliteRepositoriesProvider(ctx, c, cfg.Database.URL)
@@ -123,6 +126,7 @@ func postgresRepositoriesProvider(ctx context.Context, c *platform.Container, ds
 	return &repositories{
 		user:  postgres.NewUserRepository(pool),
 		token: postgres.NewVerificationTokenRepository(pool),
+		prefs: postgres.NewUserPreferencesRepository(pool),
 	}, nil
 }
 
@@ -152,6 +156,7 @@ func sqliteRepositoriesProvider(ctx context.Context, c *platform.Container, dsn 
 	return &repositories{
 		user:  sqliteadapter.NewUserRepository(db),
 		token: sqliteadapter.NewVerificationTokenRepository(db),
+		prefs: sqliteadapter.NewUserPreferencesRepository(db),
 	}, nil
 }
 
@@ -253,9 +258,22 @@ func emailVerificationServiceProvider(ctx context.Context, c *platform.Container
 	), nil
 }
 
+// userPreferencesServiceProvider constructs the E7-S3a per-user preferences
+// service, wiring the shared audit emitter so successful active-account
+// changes emit ADR-0018 user_active_account_changed events.
+func userPreferencesServiceProvider(ctx context.Context, c *platform.Container) (*application.UserPreferencesService, error) {
+	repos, err := platform.Resolve[*repositories](ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	emitter := platform.MustResolve[audit.Emitter](ctx, c)
+	return application.NewUserPreferencesService(repos.prefs).WithAudit(emitter, "identity-service"), nil
+}
+
 func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.Handler, error) {
 	authSvc := platform.MustResolve[*application.AuthService](ctx, c)
 	verifierSvc := platform.MustResolve[*application.EmailVerificationService](ctx, c)
+	prefsSvc := platform.MustResolve[*application.UserPreferencesService](ctx, c)
 	log := platform.MustResolve[logging.Logger](ctx, c)
-	return inboundhttp.NewHandler(authSvc, authSvc, verifierSvc, authSvc, log), nil
+	return inboundhttp.NewHandler(authSvc, authSvc, verifierSvc, authSvc, prefsSvc, log), nil
 }

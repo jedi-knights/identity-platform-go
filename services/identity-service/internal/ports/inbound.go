@@ -32,6 +32,17 @@ type EmailVerifier interface {
 	VerifyEmail(ctx context.Context, req domain.VerifyEmailRequest) (*domain.VerifyEmailResponse, error)
 }
 
+// UserPreferences is the inbound port behind
+// GET/PUT /users/{id}/active-account. GetActiveAccount returns the
+// currently selected account (empty string when the user has not chosen).
+// SetActiveAccount upserts the choice; empty accountID is rejected with
+// ErrCodeBadRequest — a client that wants to clear the selection must
+// use a future dedicated endpoint (not a PUT with empty body).
+type UserPreferences interface {
+	GetActiveAccount(ctx context.Context, userID string) (accountID string, err error)
+	SetActiveAccount(ctx context.Context, userID, accountID string) error
+}
+
 // UserClaimsProvider is the inbound port behind GET /users/{id}/claims —
 // the projection ADR-0010's /userinfo endpoint on auth-server consumes to
 // fill the OIDC profile/email claims into its response.
