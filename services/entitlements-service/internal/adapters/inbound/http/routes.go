@@ -16,6 +16,7 @@ func NewRouter(h *Handler, _ logging.Logger) http.Handler {
 	mux.HandleFunc("POST /accounts/{account_id}/invites", h.CreateInvite)
 	mux.HandleFunc("GET /users/{user_id}/seats", h.ListUserSeats)
 	mux.HandleFunc("DELETE /accounts/{account_id}/seats/{user_id}", h.RemoveSeat)
+	mux.HandleFunc("POST /accounts/{account_id}/transfer-ownership", h.TransferOwnership)
 	mux.HandleFunc("GET /health", h.Health)
 	return mux
 }

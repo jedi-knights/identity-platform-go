@@ -218,6 +218,38 @@ func (r *AccountRepository) FindSeat(_ context.Context, accountID, userID string
 	return nil, apperrors.New(apperrors.ErrCodeNotFound, "seat not found")
 }
 
+// SwapOwner atomically demotes the current owner (oldOwnerUserID) to
+// admin and promotes newOwnerUserID to owner within accountID.
+// Executes under the shared mutex so no interleaved reader can see a
+// half-transferred state (two admins, or two owners).
+func (r *AccountRepository) SwapOwner(_ context.Context, accountID, oldOwnerUserID, newOwnerUserID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	seats := r.seats[accountID]
+
+	oldIdx, newIdx := -1, -1
+	for i, s := range seats {
+		if s.UserID == oldOwnerUserID {
+			oldIdx = i
+		}
+		if s.UserID == newOwnerUserID {
+			newIdx = i
+		}
+	}
+	if oldIdx == -1 || newIdx == -1 {
+		return apperrors.New(apperrors.ErrCodeNotFound, "seat not found")
+	}
+	if seats[oldIdx].Role != domain.RoleOwner {
+		return apperrors.New(apperrors.ErrCodeConflict, "current-owner role mismatch")
+	}
+	now := time.Now().UTC()
+	seats[oldIdx].Role = domain.RoleAdmin
+	seats[oldIdx].UpdatedAt = now
+	seats[newIdx].Role = domain.RoleOwner
+	seats[newIdx].UpdatedAt = now
+	return nil
+}
+
 // Remove deletes the seat identified by (accountID, userID). Returns
 // ErrCodeNotFound when no such seat exists so callers can distinguish
 // "already removed" (idempotent-retry) from other failures.
