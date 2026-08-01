@@ -30,9 +30,10 @@ var (
 )
 
 // AccountRepository is the in-memory implementation of the
-// entitlements-service account + seat repository. Safe for concurrent
-// use — a single RWMutex guards both maps because personal-account
-// upsert must lock across the account-lookup + seat-create sequence.
+// entitlements-service account + seat + plan repositories. Safe for
+// concurrent use — a single mutex guards every map because the personal-
+// account upsert and the plan activation both span multiple map writes
+// that must land atomically.
 type AccountRepository struct {
 	mu       sync.Mutex
 	accounts map[string]*domain.Account // keyed by account ID
@@ -47,6 +48,15 @@ type AccountRepository struct {
 	// escape hatch lets memory-backed tests exercise the "account has
 	// a plan" branch without a full catalog. Not part of any port.
 	activePlan map[string]domain.PlanSummary
+	// plans is the plan catalog. Populated at fixture-load time by
+	// AddPlan; keyed by plan code (the Lago-side identifier) so
+	// FindPlanByCode is a single-map hit.
+	plans map[string]*domain.Plan
+	// accountPlans stores the account_plans rows the port writes.
+	// Only currently-active rows are retained — a plan-close (ValidUntil
+	// set) would move the row into a history slice, but E5-S2 only
+	// activates fresh plans so we never write ValidUntil here.
+	accountPlans map[string]*domain.AccountPlan // account ID -> active row
 }
 
 // NewAccountRepository returns an empty in-memory account repository.

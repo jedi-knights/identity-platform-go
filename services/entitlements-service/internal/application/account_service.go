@@ -25,11 +25,12 @@ const DefaultTransferOwnershipMaxAuthAge = 5 * time.Minute
 // AccountService is the entitlements-service account use-case. It
 // orchestrates personal-account creation on user signup (E7-S1b),
 // exposes the switcher-list read (E7-S3b), the seat-removal use case
-// (E7-S4), the ownership-transfer flow (E7-S5), and emits ADR-0018
-// audit events per ADR-0019.
+// (E7-S4), the ownership-transfer flow (E7-S5), the plan-activation
+// flow (E5-S2), and emits ADR-0018 audit events per ADR-0019.
 type AccountService struct {
 	repo    ports.AccountRepository
 	seats   ports.SeatRepository
+	plans   ports.PlanRepository
 	emitter audit.Emitter
 	service string
 	// transferMaxAuthAge is the fresh-authentication ceiling the
@@ -423,6 +424,116 @@ func validatePersonalAccountInput(userID, email string) error {
 	}
 	if email == "" {
 		return apperrors.New(apperrors.ErrCodeBadRequest, "email is required")
+	}
+	return nil
+}
+
+// WithPlans wires the plan repository so the ActivatePlan use case can
+// resolve plan_code → plan_id and write account_plans. Nil is rejected
+// so a mis-composed container fails loudly at startup rather than at
+// the first plan-selection request.
+func (s *AccountService) WithPlans(plans ports.PlanRepository) *AccountService {
+	if plans == nil {
+		panic("application: WithPlans called with nil plans repository")
+	}
+	s.plans = plans
+	return s
+}
+
+// ActivatePlanRequest is the shape the HTTP handler forwards to
+// ActivatePlan. LagoSubscriptionID is empty on the free-plan path;
+// paid plans carry the subscription identifier Lago handed back so
+// downstream reconciliation can join account_plans × Lago.
+type ActivatePlanRequest struct {
+	AccountID          string
+	PlanCode           string
+	LagoSubscriptionID string
+}
+
+// ActivatePlan is the E5-S2 use case: the login-ui plan picker has
+// converged on a plan and Lago has recorded the customer/subscription
+// pair; entitlements-service now writes the account_plans row so the
+// switcher, seat-allowance, and MCP-gating reads all reflect the
+// chosen plan.
+//
+// Idempotent on (account_id, plan_code): a replay returns the existing
+// row with created=false and no duplicate audit event. A different-plan
+// active row surfaces as ErrCodeConflict (409) — plan changes route
+// through a distinct future endpoint.
+//
+// The plan_activated audit event fires only on the create path so a
+// replayed provisioning call does not double-count. Emit failure
+// surfaces to the caller — the login-ui composite backs off and retries,
+// which is the correct behaviour when the audit sink is momentarily
+// unavailable.
+func (s *AccountService) ActivatePlan(ctx context.Context, req ActivatePlanRequest) (*domain.AccountPlan, bool, error) {
+	if s.plans == nil {
+		return nil, false, apperrors.New(apperrors.ErrCodeInternal, "plan repository not configured")
+	}
+	if err := validateActivatePlanInput(req); err != nil {
+		return nil, false, err
+	}
+	plan, err := s.plans.FindPlanByCode(ctx, req.PlanCode)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolving plan code %q: %w", req.PlanCode, err)
+	}
+	row, created, err := s.plans.ActivateAccountPlan(ctx, ports.ActivateAccountPlanInput{
+		AccountID:          req.AccountID,
+		PlanID:             plan.ID,
+		LagoSubscriptionID: req.LagoSubscriptionID,
+		ValidFrom:          s.now(),
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("activating account plan: %w", err)
+	}
+	if created {
+		if err := s.emitPlanActivated(ctx, row, plan); err != nil {
+			return nil, false, err
+		}
+	}
+	return row, created, nil
+}
+
+// validateActivatePlanInput enforces wire-boundary shape rules.
+// Extracted so ActivatePlan stays under the gocyclo budget.
+func validateActivatePlanInput(req ActivatePlanRequest) error {
+	if req.AccountID == "" {
+		return apperrors.New(apperrors.ErrCodeBadRequest, "account_id is required")
+	}
+	if req.PlanCode == "" {
+		return apperrors.New(apperrors.ErrCodeBadRequest, "plan_code is required")
+	}
+	return nil
+}
+
+// emitPlanActivated emits the ADR-0018 plan_activated event. Actor is
+// the account (subject_id) since the acting principal at this hop is
+// the login-ui service; the account is the thing being modified. Attrs
+// carry plan_code + tier so a post-hoc reader can price the tier
+// distribution without joining plans.
+func (s *AccountService) emitPlanActivated(ctx context.Context, row *domain.AccountPlan, plan *domain.Plan) error {
+	if err := s.emitter.Emit(ctx, audit.Event{
+		EventType:      "plan_activated",
+		Service:        s.service,
+		ActorType:      audit.ActorTypeService,
+		ActorID:        s.service,
+		SubjectID:      row.AccountID,
+		Resource:       "endpoint:accounts.plans",
+		ResourceKind:   audit.ResourceKindEndpoint,
+		ResourceID:     "accounts.plans",
+		ResourceParent: s.service,
+		ResourcePath:   s.service + "/endpoint/accounts.plans",
+		Action:         "activate_plan",
+		Decision:       audit.DecisionAllow,
+		Attrs: map[string]any{
+			"account_id":           row.AccountID,
+			"plan_id":              row.PlanID,
+			"plan_code":            plan.Code,
+			"plan_tier":            plan.Tier,
+			"lago_subscription_id": row.LagoSubscriptionID,
+		},
+	}); err != nil {
+		return fmt.Errorf("audit emit (plan_activated): %w", err)
 	}
 	return nil
 }

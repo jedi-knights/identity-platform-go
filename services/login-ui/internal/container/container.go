@@ -56,6 +56,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, billingClientProvider)
 	platform.Register(c, seatListerProvider)
 	platform.Register(c, activeAccountStoreProvider)
+	platform.Register(c, planActivatorProvider)
 	platform.Register(c, handlerProvider)
 
 	if err := c.Bootstrap(ctx); err != nil {
@@ -75,9 +76,13 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	seats, _ := platform.Resolve[ports.SeatLister](ctx, c)
 	activeAccount, _ := platform.Resolve[ports.ActiveAccountStore](ctx, c)
 	registrar, _ := platform.Resolve[ports.UserRegistrar](ctx, c)
+	planActivator, _ := platform.Resolve[ports.AccountPlanActivator](ctx, c)
 	h := inboundhttp.NewHandler(userAuth, codeIssuer, logger).WithAudit(emitter, "login-ui").WithDeviceDecider(deviceDecider).WithRegistrar(registrar)
 	if billing != nil {
 		h = h.WithBilling(billing, cfg.Billing.SuccessURL, cfg.Billing.CancelURL)
+	}
+	if planActivator != nil {
+		h = h.WithPlanActivator(planActivator)
 	}
 	// Both ports must resolve to enable the E7-S3d switcher; unwiring
 	// either surfaces as a 503 on /accounts.
@@ -97,6 +102,21 @@ func seatListerProvider(ctx context.Context, c *platform.Container) (ports.SeatL
 	}
 	httpClient := platform.MustResolve[*http.Client](ctx, c)
 	return entitlementsservice.NewSeatLister(cfg.EntitlementsService.URL, httpClient), nil
+}
+
+// planActivatorProvider wires the entitlements-service adapter behind
+// the E5-S2 plan-provisioning composite. Reuses the same
+// LOGIN_UI_ENTITLEMENTS_SERVICE_URL knob the seat lister already reads,
+// so a single env var toggles both /accounts and the checkout composite.
+// Nil-resolves otherwise; CheckoutPost then falls back to the pre-E5-S2
+// direct-to-Stripe path so unwired deployments keep working.
+func planActivatorProvider(ctx context.Context, c *platform.Container) (ports.AccountPlanActivator, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	if cfg.EntitlementsService.URL == "" {
+		return nil, nil //nolint:nilnil // documented degradation path
+	}
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	return entitlementsservice.NewPlanActivator(cfg.EntitlementsService.URL, httpClient), nil
 }
 
 // activeAccountStoreProvider wires identity-service's active-account
