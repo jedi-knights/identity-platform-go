@@ -21,6 +21,7 @@ type Handler struct {
 	registrar     ports.UserRegistrar
 	verifier      ports.EmailVerifier
 	claims        ports.UserClaimsProvider
+	preferences   ports.UserPreferences
 	logger        logging.Logger
 }
 
@@ -29,6 +30,7 @@ func NewHandler(
 	registrar ports.UserRegistrar,
 	verifier ports.EmailVerifier,
 	claims ports.UserClaimsProvider,
+	preferences ports.UserPreferences,
 	logger logging.Logger,
 ) *Handler {
 	return &Handler{
@@ -36,6 +38,7 @@ func NewHandler(
 		registrar:     registrar,
 		verifier:      verifier,
 		claims:        claims,
+		preferences:   preferences,
 		logger:        logger,
 	}
 }

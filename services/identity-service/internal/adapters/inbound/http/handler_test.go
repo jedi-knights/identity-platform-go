@@ -49,6 +49,23 @@ func (f *fakeClaims) GetUserClaims(_ context.Context, _ string) (*domain.UserCla
 	return f.resp, f.err
 }
 
+// fakePreferences is the test double for ports.UserPreferences. The zero
+// value returns an empty active account and accepts writes silently —
+// suitable for tests that exercise unrelated handlers.
+type fakePreferences struct {
+	getResp string
+	getErr  error
+	setErr  error
+}
+
+func (f *fakePreferences) GetActiveAccount(_ context.Context, _ string) (string, error) {
+	return f.getResp, f.getErr
+}
+
+func (f *fakePreferences) SetActiveAccount(_ context.Context, _, _ string) error {
+	return f.setErr
+}
+
 type fakeVerifier struct {
 	requestErr error
 	verifyResp *domain.VerifyEmailResponse
@@ -90,7 +107,7 @@ func postJSON(t *testing.T, h http.HandlerFunc, body any) *httptest.ResponseReco
 
 func TestLogin_Success_Returns200(t *testing.T) {
 	auth := &fakeAuthenticator{resp: &domain.LoginResponse{UserID: "u1", Email: "a@b.com", Name: "Alice"}}
-	h := NewHandler(auth, &fakeRegistrar{}, &fakeVerifier{}, &fakeClaims{}, testutil.NewTestLogger())
+	h := NewHandler(auth, &fakeRegistrar{}, &fakeVerifier{}, &fakeClaims{}, &fakePreferences{}, testutil.NewTestLogger())
 
 	w := postJSON(t, h.Login, domain.LoginRequest{Email: "a@b.com", Password: "secret"})
 	if w.Code != http.StatusOK {
@@ -107,7 +124,7 @@ func TestLogin_Success_Returns200(t *testing.T) {
 
 func TestLogin_InvalidCredentials_Returns401(t *testing.T) {
 	auth := &fakeAuthenticator{err: apperrors.New(apperrors.ErrCodeUnauthorized, "invalid credentials")}
-	h := NewHandler(auth, &fakeRegistrar{}, &fakeVerifier{}, &fakeClaims{}, testutil.NewTestLogger())
+	h := NewHandler(auth, &fakeRegistrar{}, &fakeVerifier{}, &fakeClaims{}, &fakePreferences{}, testutil.NewTestLogger())
 
 	w := postJSON(t, h.Login, domain.LoginRequest{Email: "a@b.com", Password: "wrong"})
 	if w.Code != http.StatusUnauthorized {
@@ -116,7 +133,7 @@ func TestLogin_InvalidCredentials_Returns401(t *testing.T) {
 }
 
 func TestLogin_BadJSON_Returns400(t *testing.T) {
-	h := NewHandler(&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{}, &fakeClaims{}, testutil.NewTestLogger())
+	h := NewHandler(&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{}, &fakeClaims{}, &fakePreferences{}, testutil.NewTestLogger())
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("not-json"))
 	w := httptest.NewRecorder()
 	h.Login(w, r)
@@ -130,7 +147,7 @@ func TestLogin_BadJSON_Returns400(t *testing.T) {
 func TestLogin_DoesNotLogNonInternalErrors(t *testing.T) {
 	spy := &spyLogger{Logger: testutil.NewTestLogger()}
 	auth := &fakeAuthenticator{err: apperrors.New(apperrors.ErrCodeUnauthorized, "invalid")}
-	h := NewHandler(auth, &fakeRegistrar{}, &fakeVerifier{}, &fakeClaims{}, spy)
+	h := NewHandler(auth, &fakeRegistrar{}, &fakeVerifier{}, &fakeClaims{}, &fakePreferences{}, spy)
 
 	postJSON(t, h.Login, domain.LoginRequest{Email: "a@b.com", Password: "wrong"})
 	if spy.errorCalled {
@@ -142,7 +159,7 @@ func TestLogin_DoesNotLogNonInternalErrors(t *testing.T) {
 
 func TestRegister_Success_Returns201WithLocation(t *testing.T) {
 	reg := &fakeRegistrar{resp: &domain.RegisterResponse{UserID: "u2", Email: "b@b.com", Name: "Bob"}}
-	h := NewHandler(&fakeAuthenticator{}, reg, &fakeVerifier{}, &fakeClaims{}, testutil.NewTestLogger())
+	h := NewHandler(&fakeAuthenticator{}, reg, &fakeVerifier{}, &fakeClaims{}, &fakePreferences{}, testutil.NewTestLogger())
 
 	w := postJSON(t, h.Register, domain.RegisterRequest{Email: "b@b.com", Password: "pass", Name: "Bob"})
 	if w.Code != http.StatusCreated {
@@ -155,7 +172,7 @@ func TestRegister_Success_Returns201WithLocation(t *testing.T) {
 
 func TestRegister_DuplicateEmail_Returns409(t *testing.T) {
 	reg := &fakeRegistrar{err: apperrors.New(apperrors.ErrCodeConflict, "email already registered")}
-	h := NewHandler(&fakeAuthenticator{}, reg, &fakeVerifier{}, &fakeClaims{}, testutil.NewTestLogger())
+	h := NewHandler(&fakeAuthenticator{}, reg, &fakeVerifier{}, &fakeClaims{}, &fakePreferences{}, testutil.NewTestLogger())
 
 	w := postJSON(t, h.Register, domain.RegisterRequest{Email: "b@b.com", Password: "pass", Name: "Bob"})
 	if w.Code != http.StatusConflict {
@@ -164,7 +181,7 @@ func TestRegister_DuplicateEmail_Returns409(t *testing.T) {
 }
 
 func TestRegister_BadJSON_Returns400(t *testing.T) {
-	h := NewHandler(&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{}, &fakeClaims{}, testutil.NewTestLogger())
+	h := NewHandler(&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{}, &fakeClaims{}, &fakePreferences{}, testutil.NewTestLogger())
 	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("not-json"))
 	w := httptest.NewRecorder()
 	h.Register(w, r)
@@ -178,7 +195,7 @@ func TestRegister_BadJSON_Returns400(t *testing.T) {
 func TestRegister_DoesNotLogNonInternalErrors(t *testing.T) {
 	spy := &spyLogger{Logger: testutil.NewTestLogger()}
 	reg := &fakeRegistrar{err: apperrors.New(apperrors.ErrCodeConflict, "email already registered")}
-	h := NewHandler(&fakeAuthenticator{}, reg, &fakeVerifier{}, &fakeClaims{}, spy)
+	h := NewHandler(&fakeAuthenticator{}, reg, &fakeVerifier{}, &fakeClaims{}, &fakePreferences{}, spy)
 
 	postJSON(t, h.Register, domain.RegisterRequest{Email: "b@b.com", Password: "pass", Name: "Bob"})
 	if spy.errorCalled {
@@ -191,7 +208,7 @@ func TestRegister_DoesNotLogNonInternalErrors(t *testing.T) {
 func TestRegister_LogsInternalErrors(t *testing.T) {
 	spy := &spyLogger{Logger: testutil.NewTestLogger()}
 	reg := &fakeRegistrar{err: apperrors.New(apperrors.ErrCodeInternal, "db down")}
-	h := NewHandler(&fakeAuthenticator{}, reg, &fakeVerifier{}, &fakeClaims{}, spy)
+	h := NewHandler(&fakeAuthenticator{}, reg, &fakeVerifier{}, &fakeClaims{}, &fakePreferences{}, spy)
 
 	postJSON(t, h.Register, domain.RegisterRequest{Email: "b@b.com", Password: "pass", Name: "Bob"})
 	if !spy.errorCalled {
@@ -205,7 +222,7 @@ func TestGetUserClaims_Success_Returns200(t *testing.T) {
 	claims := &fakeClaims{resp: &domain.UserClaims{
 		Subject: "u-1", Email: "alice@example.com", EmailVerified: true, Name: "Alice",
 	}}
-	h := NewHandler(&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{}, claims, testutil.NewTestLogger())
+	h := NewHandler(&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{}, claims, &fakePreferences{}, testutil.NewTestLogger())
 
 	r := httptest.NewRequest(http.MethodGet, "/users/u-1/claims", nil)
 	r.SetPathValue("id", "u-1")
@@ -224,7 +241,7 @@ func TestGetUserClaims_Success_Returns200(t *testing.T) {
 }
 
 func TestGetUserClaims_MissingID_Returns400(t *testing.T) {
-	h := NewHandler(&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{}, &fakeClaims{}, testutil.NewTestLogger())
+	h := NewHandler(&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{}, &fakeClaims{}, &fakePreferences{}, testutil.NewTestLogger())
 	r := httptest.NewRequest(http.MethodGet, "/users//claims", nil)
 	w := httptest.NewRecorder()
 	h.GetUserClaims(w, r)
@@ -235,7 +252,7 @@ func TestGetUserClaims_MissingID_Returns400(t *testing.T) {
 
 func TestGetUserClaims_UserNotFound_Returns404(t *testing.T) {
 	claims := &fakeClaims{err: apperrors.New(apperrors.ErrCodeNotFound, "no user")}
-	h := NewHandler(&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{}, claims, testutil.NewTestLogger())
+	h := NewHandler(&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{}, claims, &fakePreferences{}, testutil.NewTestLogger())
 	r := httptest.NewRequest(http.MethodGet, "/users/u-bogus/claims", nil)
 	r.SetPathValue("id", "u-bogus")
 	w := httptest.NewRecorder()
@@ -248,7 +265,7 @@ func TestGetUserClaims_UserNotFound_Returns404(t *testing.T) {
 func TestGetUserClaims_InternalError_Returns500AndLogs(t *testing.T) {
 	spy := &spyLogger{Logger: testutil.NewTestLogger()}
 	claims := &fakeClaims{err: apperrors.New(apperrors.ErrCodeInternal, "db down")}
-	h := NewHandler(&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{}, claims, spy)
+	h := NewHandler(&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{}, claims, &fakePreferences{}, spy)
 	r := httptest.NewRequest(http.MethodGet, "/users/u-1/claims", nil)
 	r.SetPathValue("id", "u-1")
 	w := httptest.NewRecorder()
@@ -264,7 +281,7 @@ func TestGetUserClaims_InternalError_Returns500AndLogs(t *testing.T) {
 // --- Health ---
 
 func TestHealth_Returns200(t *testing.T) {
-	h := NewHandler(&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{}, &fakeClaims{}, testutil.NewTestLogger())
+	h := NewHandler(&fakeAuthenticator{}, &fakeRegistrar{}, &fakeVerifier{}, &fakeClaims{}, &fakePreferences{}, testutil.NewTestLogger())
 	r := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
 	h.Health(w, r)

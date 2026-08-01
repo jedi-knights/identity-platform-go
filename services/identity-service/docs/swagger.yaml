@@ -1,5 +1,15 @@
 basePath: /
 definitions:
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_adapters_inbound_http.activeAccountResponse:
+    properties:
+      account_id:
+        type: string
+    type: object
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_adapters_inbound_http.setActiveAccountRequest:
+    properties:
+      account_id:
+        type: string
+    type: object
   github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.LoginRequest:
     properties:
       email:
@@ -27,6 +37,8 @@ definitions:
     type: object
   github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.RegisterResponse:
     properties:
+      account_id:
+        type: string
       email:
         type: string
       name:
@@ -34,11 +46,53 @@ definitions:
       user_id:
         type: string
     type: object
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.RequestVerificationRequest:
+    properties:
+      email:
+        type: string
+    type: object
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.UserClaims:
+    properties:
+      email:
+        type: string
+      email_verified:
+        type: boolean
+      name:
+        type: string
+      sub:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.VerifyEmailRequest:
+    properties:
+      token:
+        type: string
+    type: object
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.VerifyEmailResponse:
+    properties:
+      email:
+        type: string
+      user_id:
+        type: string
+      verified_at:
+        type: string
+    type: object
   httputil.ErrorResponse:
     properties:
       code:
         type: string
       error:
+        type: string
+    type: object
+  internal_adapters_inbound_http.activeAccountResponse:
+    properties:
+      account_id:
+        type: string
+    type: object
+  internal_adapters_inbound_http.setActiveAccountRequest:
+    properties:
+      account_id:
         type: string
     type: object
 host: localhost:8081
@@ -104,6 +158,59 @@ paths:
       summary: Register new user
       tags:
       - auth
+  /auth/request-verification:
+    post:
+      consumes:
+      - application/json
+      description: Sends a verification email to the address on the request. Always
+        returns 204 to prevent user enumeration.
+      parameters:
+      - description: Email
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.RequestVerificationRequest'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Request a verification email
+      tags:
+      - auth
+  /auth/verify-email:
+    post:
+      consumes:
+      - application/json
+      description: Redeems a one-time verification token and marks the user verified.
+      parameters:
+      - description: Verification token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.VerifyEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.VerifyEmailResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Verify an email address
+      tags:
+      - auth
   /health:
     get:
       description: Returns service health status
@@ -119,4 +226,96 @@ paths:
       summary: Health check
       tags:
       - health
+  /users/{id}/active-account:
+    get:
+      description: Returns the currently selected account for the user. account_id
+        is null when the user has never chosen.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Requester user ID (must equal path id)
+        in: header
+        name: X-Requester-User-ID
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_adapters_inbound_http.activeAccountResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Get the user's active account
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: Upserts the currently selected account for the user.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Requester user ID (must equal path id)
+        in: header
+        name: X-Requester-User-ID
+        required: true
+        type: string
+      - description: Active account selection
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_adapters_inbound_http.setActiveAccountRequest'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Set the user's active account
+      tags:
+      - users
+  /users/{id}/claims:
+    get:
+      description: Returns OIDC Core §5.1 claim projection for the user with the given
+        id
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.UserClaims'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Get user OIDC claims
+      tags:
+      - users
 swagger: "2.0"
