@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -97,6 +98,133 @@ func (c *Client) ListPlans(ctx context.Context) ([]ports.Plan, error) {
 		})
 	}
 	return out, nil
+}
+
+// EnsureCustomer creates or updates the Lago customer keyed by
+// req.ExternalID. Lago's POST /api/v1/customers upserts on
+// external_id — a repeat call with the same key returns the existing
+// row with 200, so this method is safely retriable at the caller.
+// Email is only included in the body when supplied so we do not
+// clobber a customer-managed value on a bare-bones re-provision.
+func (c *Client) EnsureCustomer(ctx context.Context, in ports.EnsureCustomerRequest) error {
+	if in.ExternalID == "" {
+		return fmt.Errorf("login-ui/lago: EnsureCustomer requires external_id")
+	}
+	customer := map[string]any{"external_id": in.ExternalID}
+	if in.Email != "" {
+		customer["email"] = in.Email
+	}
+	body := map[string]any{"customer": customer}
+	req, err := c.newRequest(ctx, http.MethodPost, "/api/v1/customers", body)
+	if err != nil {
+		return err
+	}
+	if _, err := c.do(req); err != nil {
+		return err
+	}
+	return nil
+}
+
+// CreateSubscription opens a Lago subscription. ExternalID is the
+// caller-supplied idempotency key — Lago rejects a duplicate with 422
+// carrying an "external_id: value_already_exist" body. That case is
+// mapped to a successful lookup: the existing subscription's Lago ID
+// is returned so a lost-response retry converges rather than failing.
+// Any other error surfaces as APIError.
+func (c *Client) CreateSubscription(ctx context.Context, in ports.CreateSubscriptionRequest) (*ports.SubscriptionResult, error) {
+	if err := validateCreateSubscription(in); err != nil {
+		return nil, err
+	}
+	body := map[string]any{
+		"subscription": map[string]any{
+			"external_customer_id": in.CustomerExternalID,
+			"plan_code":            in.PlanCode,
+			"external_id":          in.ExternalID,
+		},
+	}
+	req, err := c.newRequest(ctx, http.MethodPost, "/api/v1/subscriptions", body)
+	if err != nil {
+		return nil, err
+	}
+	respBody, err := c.do(req)
+	if err != nil {
+		if isDuplicateExternalID(err) {
+			return c.findSubscriptionByExternalID(ctx, in.ExternalID)
+		}
+		return nil, err
+	}
+	return decodeSubscription(respBody)
+}
+
+// validateCreateSubscription enforces the required fields at the
+// adapter boundary so a mis-composed request never hits Lago.
+func validateCreateSubscription(in ports.CreateSubscriptionRequest) error {
+	if in.CustomerExternalID == "" {
+		return fmt.Errorf("login-ui/lago: CreateSubscription requires external_customer_id")
+	}
+	if in.PlanCode == "" {
+		return fmt.Errorf("login-ui/lago: CreateSubscription requires plan_code")
+	}
+	if in.ExternalID == "" {
+		return fmt.Errorf("login-ui/lago: CreateSubscription requires external_id (idempotency key)")
+	}
+	return nil
+}
+
+// isDuplicateExternalID reports whether err is Lago's 422 payload for a
+// repeat external_id — the shape Lago returns is:
+//
+//	{"status":422,"error":"Unprocessable Entity","error_details":{"external_id":["value_already_exist"]}}
+//
+// We match on the substring rather than parsing because Lago's error
+// envelope varies across resource endpoints; substring-matching the
+// specific `"value_already_exist"` marker is stable enough for our
+// retry loop and precise enough to avoid false positives.
+func isDuplicateExternalID(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	if apiErr.Status != http.StatusUnprocessableEntity {
+		return false
+	}
+	return strings.Contains(apiErr.Body, "value_already_exist") &&
+		strings.Contains(apiErr.Body, "external_id")
+}
+
+// findSubscriptionByExternalID GETs /api/v1/subscriptions/{external_id}
+// so a duplicate-key retry can converge on the existing subscription's
+// Lago-side identifier. Lago's read endpoint accepts either the Lago
+// ID or the caller-supplied external_id in the path.
+func (c *Client) findSubscriptionByExternalID(ctx context.Context, externalID string) (*ports.SubscriptionResult, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/v1/subscriptions/"+externalID, nil)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	return decodeSubscription(body)
+}
+
+// decodeSubscription reads Lago's subscription envelope. lago_id is
+// the field the reconciliation flow keys off; a missing value surfaces
+// as an error so a partial response cannot silently produce a row with
+// an empty Lago identifier.
+func decodeSubscription(body []byte) (*ports.SubscriptionResult, error) {
+	var wire struct {
+		Subscription struct {
+			LagoID string `json:"lago_id"`
+		} `json:"subscription"`
+	}
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return nil, fmt.Errorf("login-ui/lago: decoding subscription response: %w", err)
+	}
+	if wire.Subscription.LagoID == "" {
+		return nil, fmt.Errorf("login-ui/lago: subscription response missing lago_id")
+	}
+	return &ports.SubscriptionResult{LagoID: wire.Subscription.LagoID}, nil
 }
 
 // CreateCheckoutSession asks Lago to create a Stripe Checkout session via

@@ -6,9 +6,43 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/ocrosby/identity-platform-go/services/entitlements-service/internal/domain"
 )
+
+// ActivateAccountPlanInput is the input shape for PlanRepository.
+// ActivateAccountPlan. ValidFrom is passed in from the application layer
+// (not defaulted at the adapter) so tests can pin a deterministic
+// timestamp and the write matches the audit event's timestamp exactly.
+type ActivateAccountPlanInput struct {
+	AccountID          string
+	PlanID             string
+	LagoSubscriptionID string
+	ValidFrom          time.Time
+}
+
+// PlanRepository reads the plan catalog and writes account_plans rows.
+// The catalog is separate from AccountRepository because it has a
+// distinct lifecycle — plans are edited by ops, accounts are created by
+// users. Splitting the port lets memory-backed tests exercise plan
+// activation without stubbing the seat surface.
+type PlanRepository interface {
+	// FindPlanByCode returns the plan row keyed by code (Lago plan.code)
+	// or ErrCodeNotFound. Callers translate the plan_code the user
+	// picked in login-ui into a plan_id for the account_plans FK.
+	FindPlanByCode(ctx context.Context, code string) (*domain.Plan, error)
+
+	// ActivateAccountPlan attaches a plan to an account. Idempotent by
+	// (account_id, plan_id, valid_until IS NULL):
+	//   - if an active row already exists for the same (account, plan),
+	//     the existing row is returned with created=false.
+	//   - if an active row exists for a *different* plan, ErrCodeConflict
+	//     is returned — plan changes go through a distinct flow that
+	//     closes the prior row first (out of scope for E5-S2).
+	//   - otherwise the row is inserted and returned with created=true.
+	ActivateAccountPlan(ctx context.Context, in ActivateAccountPlanInput) (*domain.AccountPlan, bool, error)
+}
 
 // AccountRepository persists Account rows and their owner Seat. The
 // personal-account create path is expressed as a single upsert method
