@@ -9,6 +9,7 @@
   <p>Create your account. You'll pick a plan on the next screen.</p>
   {{if .Error}}<p role="alert" data-testid="error">{{.Error}}</p>{{end}}
   <form method="POST" action="/sign-up">
+    <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
     <label>Name <input type="text" name="name" required autocomplete="name" value="{{.Name}}"></label>
     <label>Email <input type="email" name="email" required autocomplete="email" value="{{.Email}}"></label>
     <label>Password <input type="password" name="password" required autocomplete="new-password"></label>

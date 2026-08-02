@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/jedi-knights/go-platform/apperrors"
 
@@ -12,10 +13,14 @@ import (
 // Email echo prior form input so a POST failure re-renders the form
 // with the user's values preserved (they only re-type the password,
 // which the browser never surfaces as a plain-text hidden field).
+// RedirectURI is the E5-S4 return target the originating app supplied;
+// it rides as a hidden field through the sign-up POST so the plan
+// picker and checkout composite can honour it downstream.
 type signUpView struct {
-	Name  string
-	Email string
-	Error string
+	Name        string
+	Email       string
+	RedirectURI string
+	Error       string
 }
 
 // SignUpGet renders the sign-up form. Returns 503 when the registrar
@@ -29,11 +34,13 @@ type signUpView struct {
 // @Success      200  "HTML form"
 // @Failure      503  "Sign-up not configured"
 // @Router       /sign-up [get]
-func (h *Handler) SignUpGet(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) SignUpGet(w http.ResponseWriter, r *http.Request) {
 	if !h.signUpWired(w) {
 		return
 	}
-	h.renderSignUp(w, signUpView{})
+	h.renderSignUp(w, signUpView{
+		RedirectURI: r.URL.Query().Get("redirect_uri"),
+	})
 }
 
 // SignUpPost processes the sign-up form. Order of operations:
@@ -75,8 +82,9 @@ func (h *Handler) SignUpPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := signUpView{
-		Name:  r.PostForm.Get("name"),
-		Email: r.PostForm.Get("email"),
+		Name:        r.PostForm.Get("name"),
+		Email:       r.PostForm.Get("email"),
+		RedirectURI: r.PostForm.Get("redirect_uri"),
 	}
 	password := r.PostForm.Get("password")
 	if view.Name == "" || view.Email == "" || password == "" {
@@ -96,20 +104,28 @@ func (h *Handler) SignUpPost(w http.ResponseWriter, r *http.Request) {
 	// Bounce to the existing plan picker with the fresh subject and
 	// account id. account is used as the Lago external_customer_id
 	// per E5-S2; subject stays for log correlation until login-ui
-	// owns a signed session.
-	http.Redirect(w, r, plansRedirectURL(result), http.StatusFound)
+	// owns a signed session. return_to preserves the E5-S4 originating-
+	// app URI so the checkout completion path can send the user back.
+	http.Redirect(w, r, plansRedirectURL(result, view.RedirectURI), http.StatusFound)
 }
 
 // plansRedirectURL composes the post-signup redirect target. Extracted
 // so SignUpPost stays under the gocyclo budget; a nil result is not
 // possible in practice but the helper is defensive so a future refactor
-// can call it from other paths without a panic risk.
-func plansRedirectURL(result *ports.RegisterResult) string {
-	target := "/billing/plans?subject=" + result.UserID
+// can call it from other paths without a panic risk. return_to carries
+// the E5-S4 originating-app URI verbatim — validation happens where the
+// value is *consumed* (checkout / /billing/return), not here, so the
+// user's picked plan-page URL is a faithful echo of what the app sent.
+func plansRedirectURL(result *ports.RegisterResult, returnTo string) string {
+	q := url.Values{}
+	q.Set("subject", result.UserID)
 	if result.AccountID != "" {
-		target += "&account=" + result.AccountID
+		q.Set("account", result.AccountID)
 	}
-	return target
+	if returnTo != "" {
+		q.Set("return_to", returnTo)
+	}
+	return "/billing/plans?" + q.Encode()
 }
 
 // signUpWired guards both routes so the handler degrades gracefully

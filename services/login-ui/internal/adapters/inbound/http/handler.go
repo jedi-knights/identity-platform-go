@@ -79,6 +79,25 @@ type Handler struct {
 	// acceptable for local dev before entitlements-service is wired;
 	// composition root sets it in every real deployment.
 	planActivator ports.AccountPlanActivator
+
+	// returnValidator guards the E5-S4 return_to flow. Non-nil in every
+	// deployment; the setter wires an empty-allowlist instance by
+	// default so a misconfigured LOGIN_UI_BILLING_ALLOWED_RETURN_HOSTS
+	// simply rejects every external redirect (safe default) rather than
+	// panicking. NewHandler leaves it nil so the CheckoutPost code path
+	// treats "no validator wired" as "reject everything and fall back
+	// to billingSuccessURL".
+	returnValidator *returnURLValidator
+}
+
+// WithAllowedReturnHosts configures the E5-S4 return-URL validator from
+// a comma-separated hostname list. Returns the receiver so composition-
+// root construction chains cleanly. Callers that want to disable
+// external redirects entirely can pass an empty string — the resulting
+// validator treats every non-loopback host as forbidden.
+func (h *Handler) WithAllowedReturnHosts(csv string) *Handler {
+	h.returnValidator = newReturnURLValidator(csv)
+	return h
 }
 
 // WithRegistrar wires the outbound port the E5-S1 sign-up entry
@@ -435,9 +454,12 @@ func (h *Handler) redeemAndRedirect(w http.ResponseWriter, r *http.Request, logi
 // AccountID rides alongside Subject so the form POST can carry both
 // through to CheckoutPost — the account_id is the Lago-side customer
 // external_id per E5-S2, while subject remains for log correlation.
+// ReturnTo is the E5-S4 originating-app URL — carried verbatim on a
+// hidden field so it survives the plan-picker POST into checkout.
 type plansView struct {
 	Subject   string
 	AccountID string
+	ReturnTo  string
 	Plans     []planRow
 	Error     string
 }
@@ -473,7 +495,8 @@ func (h *Handler) PlansGet(w http.ResponseWriter, r *http.Request) {
 	}
 	subject := r.URL.Query().Get("subject")
 	accountID := r.URL.Query().Get("account")
-	view := plansView{Subject: subject, AccountID: accountID}
+	returnTo := r.URL.Query().Get("return_to")
+	view := plansView{Subject: subject, AccountID: accountID, ReturnTo: returnTo}
 	// checkout=canceled is set by the Stripe cancel URL the checkout
 	// handler composes; render a friendly banner so the user knows
 	// their card was not charged and they can pick a plan again.
@@ -537,12 +560,30 @@ func (h *Handler) CheckoutPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tier == planTierFree {
-		// Free-plan short-circuit (E5-S3): no card, no Stripe redirect,
-		// straight to the success URL the operator configured.
-		http.Redirect(w, r, h.billingSuccessURL, http.StatusFound)
+		// Free-plan short-circuit (E5-S3 + E5-S4): no card, no Stripe.
+		// If the originating app supplied an allowlisted return_to,
+		// send the user straight back there; otherwise fall through to
+		// the operator-configured success URL.
+		http.Redirect(w, r, h.freePlanSuccessURL(form.ReturnTo), http.StatusFound)
 		return
 	}
 	h.redirectToStripe(w, r, form)
+}
+
+// freePlanSuccessURL picks the free-plan redirect target. Validated
+// return_to wins; on empty/rejected input we fall back to the
+// operator-configured billingSuccessURL so a legitimate signup never
+// dead-ends. The validator is nil when the composition root never
+// called WithAllowedReturnHosts — treat that as "reject everything"
+// so a misconfiguration cannot open a redirect hole.
+func (h *Handler) freePlanSuccessURL(returnTo string) string {
+	if h.returnValidator == nil {
+		return h.billingSuccessURL
+	}
+	if url, ok := h.returnValidator.Validate(returnTo); ok {
+		return url
+	}
+	return h.billingSuccessURL
 }
 
 // planTierFree is the entitlements-service tier that skips Stripe.
@@ -552,12 +593,15 @@ const planTierFree = "free"
 // checkoutForm is the parsed submission from the plan-selection page.
 // Account is the Lago external_customer_id (E5-S2); Subject stays for
 // log correlation until login-ui owns a signed session; Email is
-// forwarded to Lago's EnsureCustomer when present.
+// forwarded to Lago's EnsureCustomer when present; ReturnTo is the
+// E5-S4 originating-app URI that CheckoutPost validates and honours
+// on the completion path.
 type checkoutForm struct {
 	Subject   string
 	AccountID string
 	PlanCode  string
 	Email     string
+	ReturnTo  string
 }
 
 // parseCheckoutForm reads the wire form and validates required fields.
@@ -574,6 +618,7 @@ func parseCheckoutForm(w http.ResponseWriter, r *http.Request) (checkoutForm, bo
 		AccountID: r.PostForm.Get("account"),
 		PlanCode:  r.PostForm.Get("plan_code"),
 		Email:     r.PostForm.Get("email"),
+		ReturnTo:  r.PostForm.Get("return_to"),
 	}
 	// account carries the entitlements-service account_id; it is the
 	// Lago external_customer_id per E5-S2. Empty falls back to subject
@@ -613,13 +658,15 @@ func (h *Handler) provisionForCheckout(w http.ResponseWriter, r *http.Request, f
 // bounces the browser to it. The cancel URL is composed per request so
 // it carries the subject + account back to /billing/plans along with
 // checkout=canceled — PlansGet reads that flag and renders a clear
-// banner (E5-S3). Failure surfaces as a generic 500 — Lago-side detail
-// lands in the log, not the response.
+// banner (E5-S3). The success URL carries a validated return_to (E5-S4)
+// so /billing/return can send the user back to the originating app
+// after Stripe posts the payment. Failure surfaces as a generic 500 —
+// Lago-side detail lands in the log, not the response.
 func (h *Handler) redirectToStripe(w http.ResponseWriter, r *http.Request, form checkoutForm) {
 	session, err := h.billing.CreateCheckoutSession(r.Context(), ports.CheckoutSessionRequest{
 		CustomerID: form.AccountID,
 		PlanCode:   form.PlanCode,
-		SuccessURL: h.billingSuccessURL,
+		SuccessURL: h.checkoutSuccessURL(form),
 		CancelURL:  h.checkoutCancelURL(form),
 	})
 	if err != nil {
@@ -628,6 +675,30 @@ func (h *Handler) redirectToStripe(w http.ResponseWriter, r *http.Request, form 
 		return
 	}
 	http.Redirect(w, r, session.URL, http.StatusFound)
+}
+
+// checkoutSuccessURL composes the Stripe success URL, appending a
+// validated return_to so /billing/return can honour the originating-app
+// URI after Stripe roundtrips the user. An invalid or missing return_to
+// yields the bare billingSuccessURL — the user still lands on
+// /billing/return, but without an outbound redirect target.
+func (h *Handler) checkoutSuccessURL(form checkoutForm) string {
+	base := h.billingSuccessURL
+	if base == "" || h.returnValidator == nil {
+		return base
+	}
+	validated, ok := h.returnValidator.Validate(form.ReturnTo)
+	if !ok {
+		return base
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	q := u.Query()
+	q.Set("return_to", validated)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // checkoutCancelURL appends the subject, account, and checkout=canceled

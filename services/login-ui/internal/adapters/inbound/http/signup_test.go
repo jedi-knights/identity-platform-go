@@ -116,9 +116,12 @@ func TestSignUpPost_Success_IncludesAccountIDWhenPresent(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.SignUpPost(w, postSignUp("Alice", "alice@example.com", "hunter2"))
 
-	want := "/billing/plans?subject=u-new-42&account=acc-99"
-	if loc := w.Header().Get("Location"); loc != want {
-		t.Errorf("Location = %q, want %q", loc, want)
+	// url.Values.Encode sorts keys alphabetically — the order is
+	// semantically identical to subject=...&account=...; assert on the
+	// individual parameters rather than the literal string.
+	loc := w.Header().Get("Location")
+	if !strings.Contains(loc, "subject=u-new-42") || !strings.Contains(loc, "account=acc-99") {
+		t.Errorf("Location = %q missing subject/account params", loc)
 	}
 }
 

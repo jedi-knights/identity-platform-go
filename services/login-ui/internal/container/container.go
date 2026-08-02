@@ -77,7 +77,11 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	activeAccount, _ := platform.Resolve[ports.ActiveAccountStore](ctx, c)
 	registrar, _ := platform.Resolve[ports.UserRegistrar](ctx, c)
 	planActivator, _ := platform.Resolve[ports.AccountPlanActivator](ctx, c)
-	h := inboundhttp.NewHandler(userAuth, codeIssuer, logger).WithAudit(emitter, "login-ui").WithDeviceDecider(deviceDecider).WithRegistrar(registrar)
+	h := inboundhttp.NewHandler(userAuth, codeIssuer, logger).
+		WithAudit(emitter, "login-ui").
+		WithDeviceDecider(deviceDecider).
+		WithRegistrar(registrar).
+		WithAllowedReturnHosts(cfg.Billing.AllowedReturnHosts)
 	if billing != nil {
 		h = h.WithBilling(billing, cfg.Billing.SuccessURL, cfg.Billing.CancelURL)
 	}

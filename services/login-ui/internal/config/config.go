@@ -91,6 +91,19 @@ type BillingConfig struct {
 	// CancelURL is where Stripe sends the user when they abandon Checkout.
 	// Sourced from LOGIN_UI_BILLING_CANCEL_URL.
 	CancelURL string `mapstructure:"cancel_url"`
+
+	// AllowedReturnHosts is the comma-separated list of hostnames that
+	// the E5-S4 return_to URL may target. Sourced from
+	// LOGIN_UI_BILLING_ALLOWED_RETURN_HOSTS (e.g.
+	// "touchline.example.com,scout-sleuth.example.com"). Any return_to
+	// whose host is not in this list is rejected and the free/paid
+	// completion path falls back to SuccessURL. Empty list = no
+	// external redirects are permitted; SuccessURL is always used.
+	//
+	// Matched case-insensitively on host only (scheme and path
+	// invariants are enforced separately in the URL validator). This is
+	// the open-redirect defence per OWASP A01:2025.
+	AllowedReturnHosts string `mapstructure:"allowed_return_hosts"`
 }
 
 // AuditConfig configures the agent-audit emitter (ADR-0018 / ADR-0019).
@@ -166,6 +179,7 @@ func Load() (*Config, error) {
 	v.SetDefault("billing.lago_api_key", "")
 	v.SetDefault("billing.success_url", "")
 	v.SetDefault("billing.cancel_url", "")
+	v.SetDefault("billing.allowed_return_hosts", "")
 	v.SetDefault("tracing.enabled", false)
 	v.SetDefault("tracing.service_version", "")
 	v.SetDefault("tracing.exporter_endpoint", "")
