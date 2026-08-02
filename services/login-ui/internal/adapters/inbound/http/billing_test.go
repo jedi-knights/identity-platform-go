@@ -133,6 +133,29 @@ func TestPlansGet_LagoError_RendersErrorBanner(t *testing.T) {
 	}
 }
 
+func TestPlansGet_CheckoutCanceled_RendersCancelBanner(t *testing.T) {
+	billing := &fakeBilling{
+		listPlansResp: []ports.Plan{
+			{Code: "starter", Name: "Starter", AmountCents: 0, Currency: "USD", Interval: "monthly"},
+		},
+	}
+	h := newBillingHandler(t, billing)
+	req := httptest.NewRequest(http.MethodGet, "/billing/plans?subject=u-1&account=acc-1&checkout=canceled", nil)
+	w := httptest.NewRecorder()
+	h.PlansGet(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "Checkout was canceled") {
+		t.Errorf("body missing cancel banner: %s", body)
+	}
+	if !strings.Contains(body, "no card was charged") {
+		t.Errorf("cancel banner missing reassurance copy: %s", body)
+	}
+}
+
 func TestCheckoutPost_HappyPath_RedirectsToStripe(t *testing.T) {
 	billing := &fakeBilling{
 		checkoutResp: &ports.CheckoutSession{URL: "https://checkout.stripe.test/abc"},
