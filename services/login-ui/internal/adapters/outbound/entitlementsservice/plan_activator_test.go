@@ -24,12 +24,16 @@ func TestPlanActivator_PostsExpectedShape(t *testing.T) {
 	defer srv.Close()
 
 	a := entitlementsservice.NewPlanActivator(srv.URL, srv.Client())
-	if err := a.ActivatePlan(context.Background(), ports.ActivatePlanRequest{
+	res, err := a.ActivatePlan(context.Background(), ports.ActivatePlanRequest{
 		AccountID:          "acc-1",
 		PlanCode:           "touchline-free",
 		LagoSubscriptionID: "sub-abc",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("ActivatePlan: %v", err)
+	}
+	if res == nil {
+		t.Fatal("expected non-nil result")
 	}
 	if gotPath != "/accounts/acc-1/plans" {
 		t.Errorf("path = %q", gotPath)
@@ -52,15 +56,38 @@ func TestPlanActivator_PostsExpectedShape(t *testing.T) {
 func TestPlanActivator_TreatsIdempotent200AsSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"created":false}`))
+		_, _ = w.Write([]byte(`{"created":false,"plan_tier":"free"}`))
 	}))
 	defer srv.Close()
 
 	a := entitlementsservice.NewPlanActivator(srv.URL, srv.Client())
-	if err := a.ActivatePlan(context.Background(), ports.ActivatePlanRequest{
+	res, err := a.ActivatePlan(context.Background(), ports.ActivatePlanRequest{
 		AccountID: "acc-1", PlanCode: "touchline-free",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("idempotent replay should be a success: %v", err)
+	}
+	if res.PlanTier != "free" {
+		t.Errorf("PlanTier = %q, want free", res.PlanTier)
+	}
+}
+
+func TestPlanActivator_ReturnsTierFromResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"account_plan_id":"ap-1","plan_tier":"club","created":true}`))
+	}))
+	defer srv.Close()
+
+	a := entitlementsservice.NewPlanActivator(srv.URL, srv.Client())
+	res, err := a.ActivatePlan(context.Background(), ports.ActivatePlanRequest{
+		AccountID: "acc-1", PlanCode: "touchline-club",
+	})
+	if err != nil {
+		t.Fatalf("ActivatePlan: %v", err)
+	}
+	if res.PlanTier != "club" {
+		t.Errorf("PlanTier = %q, want club", res.PlanTier)
 	}
 }
 
@@ -71,7 +98,7 @@ func TestPlanActivator_Non2xxErrors(t *testing.T) {
 	defer srv.Close()
 
 	a := entitlementsservice.NewPlanActivator(srv.URL, srv.Client())
-	err := a.ActivatePlan(context.Background(), ports.ActivatePlanRequest{
+	_, err := a.ActivatePlan(context.Background(), ports.ActivatePlanRequest{
 		AccountID: "acc-1", PlanCode: "touchline-free",
 	})
 	if err == nil {
@@ -86,7 +113,7 @@ func TestPlanActivator_ValidationFailsFast(t *testing.T) {
 		{AccountID: "acc-1"},
 	}
 	for _, tc := range cases {
-		if err := a.ActivatePlan(context.Background(), tc); err == nil {
+		if _, err := a.ActivatePlan(context.Background(), tc); err == nil {
 			t.Errorf("expected error for %+v", tc)
 		}
 	}

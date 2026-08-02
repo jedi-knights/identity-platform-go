@@ -20,24 +20,33 @@ import (
 // fakePlanActivator records calls and can be programmed to fail up to
 // failCount times before succeeding — the retry-loop assertions in
 // TestCheckoutPost_ProvisionRetriesTransientFailures depend on it.
+// Tier drives what the successful call reports back so E5-S3 tests can
+// exercise both the free and paid branches; empty tier means the fake
+// hands back the concrete "coach" default (matches the paid path).
 type fakePlanActivator struct {
 	calls     atomic.Int32
 	failCount int32
 	failWith  error
 	lastReq   ports.ActivatePlanRequest
+	tier      string
 }
 
-func (f *fakePlanActivator) ActivatePlan(_ context.Context, req ports.ActivatePlanRequest) error {
+func (f *fakePlanActivator) ActivatePlan(_ context.Context, req ports.ActivatePlanRequest) (*ports.ActivatePlanResult, error) {
 	f.lastReq = req
 	if n := f.calls.Add(1); n <= f.failCount {
-		return f.failWith
+		return nil, f.failWith
 	}
-	return nil
+	tier := f.tier
+	if tier == "" {
+		tier = "coach"
+	}
+	return &ports.ActivatePlanResult{PlanTier: tier}, nil
 }
 
 // billingWithProvisioning is a fakeBilling that also records
-// EnsureCustomer / CreateSubscription so the composite tests can verify
-// step order and inputs.
+// EnsureCustomer / CreateSubscription / CreateCheckoutSession so the
+// composite tests can verify step order, inputs, and the composed
+// cancel URL.
 type billingWithProvisioning struct {
 	ensureCalls atomic.Int32
 	ensureReq   ports.EnsureCustomerRequest
@@ -47,7 +56,15 @@ type billingWithProvisioning struct {
 	subResp  *ports.SubscriptionResult
 	subErr   error
 
+	checkoutReq  ports.CheckoutSessionRequest
 	checkoutResp *ports.CheckoutSession
+}
+
+// lastCheckoutReq returns the most recent CheckoutSessionRequest the
+// fake received. Tests use it to assert on the dynamic cancel URL
+// CheckoutPost composes (E5-S3).
+func (b *billingWithProvisioning) lastCheckoutReq() ports.CheckoutSessionRequest {
+	return b.checkoutReq
 }
 
 func (b *billingWithProvisioning) ListPlans(_ context.Context) ([]ports.Plan, error) {
@@ -69,7 +86,8 @@ func (b *billingWithProvisioning) CreateSubscription(_ context.Context, req port
 	return b.subResp, nil
 }
 
-func (b *billingWithProvisioning) CreateCheckoutSession(_ context.Context, _ ports.CheckoutSessionRequest) (*ports.CheckoutSession, error) {
+func (b *billingWithProvisioning) CreateCheckoutSession(_ context.Context, req ports.CheckoutSessionRequest) (*ports.CheckoutSession, error) {
+	b.checkoutReq = req
 	return b.checkoutResp, nil
 }
 
@@ -210,5 +228,70 @@ func TestCheckoutPost_FallsBackToSubjectWhenAccountEmpty(t *testing.T) {
 	}
 	if b.ensureReq.ExternalID != "u-1" {
 		t.Errorf("expected fallback external_id = u-1, got %q", b.ensureReq.ExternalID)
+	}
+}
+
+// --- E5-S3: free/paid branch ---
+
+func TestCheckoutPost_FreeTierSkipsStripe(t *testing.T) {
+	b := &billingWithProvisioning{
+		subResp:      &ports.SubscriptionResult{LagoID: "sub-free"},
+		checkoutResp: &ports.CheckoutSession{URL: "https://checkout.stripe.test/should-not-hit"},
+	}
+	pa := &fakePlanActivator{tier: "free"}
+	h := newProvisioningHandler(t, b, pa)
+
+	form := url.Values{"subject": {"u-1"}, "account": {"acc-1"}, "plan_code": {"touchline-free"}}
+	w := postCheckout(t, h, form)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302 (body: %s)", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	// Free-plan redirect goes to the configured success URL, never Stripe.
+	if loc != "https://login-ui.test/billing/return" {
+		t.Errorf("Location = %q, want billing/return", loc)
+	}
+	if strings.Contains(loc, "stripe") {
+		t.Errorf("free tier must NOT redirect to Stripe; got %q", loc)
+	}
+}
+
+func TestCheckoutPost_PaidTierContinuesToStripe(t *testing.T) {
+	b := &billingWithProvisioning{
+		subResp:      &ports.SubscriptionResult{LagoID: "sub-club"},
+		checkoutResp: &ports.CheckoutSession{URL: "https://checkout.stripe.test/paid"},
+	}
+	pa := &fakePlanActivator{tier: "club"}
+	h := newProvisioningHandler(t, b, pa)
+
+	form := url.Values{"subject": {"u-1"}, "account": {"acc-1"}, "plan_code": {"touchline-club"}}
+	w := postCheckout(t, h, form)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302 (body: %s)", w.Code, w.Body.String())
+	}
+	if loc := w.Header().Get("Location"); loc != "https://checkout.stripe.test/paid" {
+		t.Errorf("Location = %q, want Stripe URL", loc)
+	}
+}
+
+func TestCheckoutPost_PaidTierCancelURLCarriesSubjectAndFlag(t *testing.T) {
+	b := &billingWithProvisioning{
+		subResp:      &ports.SubscriptionResult{LagoID: "sub-x"},
+		checkoutResp: &ports.CheckoutSession{URL: "https://checkout.stripe.test/x"},
+	}
+	pa := &fakePlanActivator{tier: "club"}
+	h := newProvisioningHandler(t, b, pa)
+
+	form := url.Values{"subject": {"u-1"}, "account": {"acc-1"}, "plan_code": {"touchline-club"}}
+	postCheckout(t, h, form)
+
+	cancel := b.lastCheckoutReq().CancelURL
+	if !strings.Contains(cancel, "checkout=canceled") {
+		t.Errorf("cancel URL missing checkout=canceled flag: %q", cancel)
+	}
+	if !strings.Contains(cancel, "subject=u-1") || !strings.Contains(cancel, "account=acc-1") {
+		t.Errorf("cancel URL missing subject/account: %q", cancel)
 	}
 }

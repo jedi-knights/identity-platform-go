@@ -23,11 +23,13 @@ type activatePlanRequest struct {
 // to the login-ui composite. account_plan_id lets the caller correlate
 // this write with a subsequent audit or reconciliation lookup;
 // created distinguishes a fresh insert (201) from an idempotent replay
-// (200) without a timestamp sniff.
+// (200) without a timestamp sniff; plan_tier lets the caller branch on
+// free vs paid without a second lookup (E5-S3).
 type activatePlanResponse struct {
 	AccountPlanID string `json:"account_plan_id"`
 	AccountID     string `json:"account_id"`
 	PlanID        string `json:"plan_id"`
+	PlanTier      string `json:"plan_tier"`
 	Created       bool   `json:"created"`
 }
 
@@ -64,20 +66,21 @@ func (h *Handler) ActivatePlan(w http.ResponseWriter, r *http.Request) {
 		writeAppError(w, h.logger, err)
 		return
 	}
-	row, created, err := h.accounts.ActivatePlan(r.Context(), req)
+	res, err := h.accounts.ActivatePlan(r.Context(), req)
 	if err != nil {
 		writeAppError(w, h.logger, err)
 		return
 	}
 	status := http.StatusOK
-	if created {
+	if res.Created {
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, activatePlanResponse{
-		AccountPlanID: row.ID,
-		AccountID:     row.AccountID,
-		PlanID:        row.PlanID,
-		Created:       created,
+		AccountPlanID: res.Row.ID,
+		AccountID:     res.Row.AccountID,
+		PlanID:        res.Row.PlanID,
+		PlanTier:      res.Plan.Tier,
+		Created:       res.Created,
 	})
 }
 
