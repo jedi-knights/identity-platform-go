@@ -100,11 +100,20 @@ func accountRepoProvider(ctx context.Context, c *platform.Container) (ports.Acco
 }
 
 // accountServiceProvider wires the application-layer service against
-// its repository + audit emitter.
+// its repository + audit emitter. Both concrete adapters (memory,
+// postgres) also satisfy PlanRepository so the plan-activation use
+// case (E5-S2) reads the same handle; a mismatch fails at composition,
+// not at the first plan-selection request.
 func accountServiceProvider(ctx context.Context, c *platform.Container) (*application.AccountService, error) {
 	repo := platform.MustResolve[ports.AccountRepository](ctx, c)
 	emitter := platform.MustResolve[audit.Emitter](ctx, c)
-	return application.NewAccountService(repo).WithAudit(emitter, "entitlements-service"), nil
+	plans, ok := repo.(ports.PlanRepository)
+	if !ok {
+		return nil, fmt.Errorf("account repository does not satisfy PlanRepository")
+	}
+	return application.NewAccountService(repo).
+		WithAudit(emitter, "entitlements-service").
+		WithPlans(plans), nil
 }
 
 // emailSenderProvider selects the outbound email adapter per the

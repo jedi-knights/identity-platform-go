@@ -21,6 +21,13 @@ type fakeBilling struct {
 	listPlansResp []ports.Plan
 	listPlansErr  error
 
+	ensureCustomerErr error
+	ensureCustomerReq ports.EnsureCustomerRequest
+
+	createSubResp *ports.SubscriptionResult
+	createSubErr  error
+	createSubReq  ports.CreateSubscriptionRequest
+
 	checkoutResp *ports.CheckoutSession
 	checkoutErr  error
 	checkoutReq  ports.CheckoutSessionRequest
@@ -32,6 +39,19 @@ type fakeBilling struct {
 
 func (f *fakeBilling) ListPlans(_ context.Context) ([]ports.Plan, error) {
 	return f.listPlansResp, f.listPlansErr
+}
+
+func (f *fakeBilling) EnsureCustomer(_ context.Context, req ports.EnsureCustomerRequest) error {
+	f.ensureCustomerReq = req
+	return f.ensureCustomerErr
+}
+
+func (f *fakeBilling) CreateSubscription(_ context.Context, req ports.CreateSubscriptionRequest) (*ports.SubscriptionResult, error) {
+	f.createSubReq = req
+	if f.createSubErr != nil {
+		return nil, f.createSubErr
+	}
+	return f.createSubResp, nil
 }
 
 func (f *fakeBilling) CreateCheckoutSession(_ context.Context, req ports.CheckoutSessionRequest) (*ports.CheckoutSession, error) {

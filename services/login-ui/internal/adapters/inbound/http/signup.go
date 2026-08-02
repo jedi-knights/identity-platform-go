@@ -93,9 +93,23 @@ func (h *Handler) SignUpPost(w http.ResponseWriter, r *http.Request) {
 		h.renderSignUp(w, view.withRegisterError(err))
 		return
 	}
-	// Bounce to the existing plan picker with the fresh subject —
-	// the picker + Free/Paid branch UX gets built out in E5-S2/S3.
-	http.Redirect(w, r, "/billing/plans?subject="+result.UserID, http.StatusFound)
+	// Bounce to the existing plan picker with the fresh subject and
+	// account id. account is used as the Lago external_customer_id
+	// per E5-S2; subject stays for log correlation until login-ui
+	// owns a signed session.
+	http.Redirect(w, r, plansRedirectURL(result), http.StatusFound)
+}
+
+// plansRedirectURL composes the post-signup redirect target. Extracted
+// so SignUpPost stays under the gocyclo budget; a nil result is not
+// possible in practice but the helper is defensive so a future refactor
+// can call it from other paths without a panic risk.
+func plansRedirectURL(result *ports.RegisterResult) string {
+	target := "/billing/plans?subject=" + result.UserID
+	if result.AccountID != "" {
+		target += "&account=" + result.AccountID
+	}
+	return target
 }
 
 // signUpWired guards both routes so the handler degrades gracefully

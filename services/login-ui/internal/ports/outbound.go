@@ -158,6 +158,26 @@ type SeatLister interface {
 	ListUserSeats(ctx context.Context, userID string) ([]AccountSeat, error)
 }
 
+// ActivatePlanRequest carries the fields entitlements-service needs to
+// insert the account_plans row. LagoSubscriptionID is empty on the free-
+// plan path and populated when the paid-plan flow returns a subscription
+// identifier from Lago.
+type ActivatePlanRequest struct {
+	AccountID          string
+	PlanCode           string
+	LagoSubscriptionID string
+}
+
+// AccountPlanActivator is the outbound port for writing the account_plans
+// row on the entitlements-service side (E5-S2). Backed by POST
+// /accounts/{account_id}/plans. The remote endpoint is idempotent — a
+// repeat with the same (account_id, plan_code) reuses the existing row —
+// so login-ui's retry loop can safely re-invoke this after a lost
+// response.
+type AccountPlanActivator interface {
+	ActivatePlan(ctx context.Context, req ActivatePlanRequest) error
+}
+
 // ActiveAccountStore is the outbound port for reading and writing the
 // user's currently-selected account preference (E7-S3d). Backed by
 // identity-service GET/PUT /users/{id}/active-account (E7-S3a).
@@ -170,6 +190,33 @@ type ActiveAccountStore interface {
 	SetActiveAccount(ctx context.Context, userID, accountID string) error
 }
 
+// EnsureCustomerRequest carries the fields Lago needs to upsert a
+// customer keyed by ExternalID. Email is optional at the port level so
+// the free-plan path can create a shell customer before we require
+// billing details; adapters may still choose to POST it when known.
+type EnsureCustomerRequest struct {
+	ExternalID string
+	Email      string
+}
+
+// CreateSubscriptionRequest carries the fields Lago needs to open a
+// subscription. ExternalID is the caller-supplied idempotency key —
+// login-ui composes it deterministically from (account_id, plan_code)
+// so a retry after a lost response reuses the same key. PlanCode is
+// the Lago plan.code the customer selected.
+type CreateSubscriptionRequest struct {
+	CustomerExternalID string
+	PlanCode           string
+	ExternalID         string
+}
+
+// SubscriptionResult is the trimmed shape login-ui records after a
+// successful subscription create. LagoID is the Lago-side subscription
+// identifier the account_plans row keys off for reconciliation.
+type SubscriptionResult struct {
+	LagoID string
+}
+
 // BillingClient is the outbound port for plan listing, checkout, and
 // portal flows per identity-platform-go ADR-0019. The Lago HTTP adapter
 // satisfies it; tests use a recording double.
@@ -178,6 +225,19 @@ type BillingClient interface {
 	// Implementations may cache responses at a short TTL so a Lago
 	// outage degrades the selection page rather than blocking sign-in.
 	ListPlans(ctx context.Context) ([]Plan, error)
+
+	// EnsureCustomer creates or updates the Lago customer keyed by
+	// ExternalID. Idempotent — Lago's POST /customers upserts on the
+	// external_id key so a retry after a lost response is safe.
+	EnsureCustomer(ctx context.Context, req EnsureCustomerRequest) error
+
+	// CreateSubscription opens a subscription for the given customer +
+	// plan. The caller supplies ExternalID as a deterministic
+	// idempotency key so a retry after a lost response returns the
+	// same subscription rather than creating a duplicate. Returns the
+	// Lago-side subscription identifier so the caller can persist it
+	// alongside the account_plans row for reconciliation.
+	CreateSubscription(ctx context.Context, req CreateSubscriptionRequest) (*SubscriptionResult, error)
 
 	// CreateCheckoutSession asks Lago to start a Stripe Checkout flow for
 	// the given subscription. successURL and cancelURL are the

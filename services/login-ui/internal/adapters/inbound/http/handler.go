@@ -11,6 +11,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	"github.com/jedi-knights/go-platform/apperrors"
@@ -72,6 +73,12 @@ type Handler struct {
 	// registrar backs the E5-S1 sign-up entry point. Nil = /sign-up
 	// routes serve 503 (identity-service unwired).
 	registrar ports.UserRegistrar
+
+	// planActivator backs the E5-S2 plan-provisioning composite. Nil =
+	// CheckoutPost skips the entitlements write and only touches Lago —
+	// acceptable for local dev before entitlements-service is wired;
+	// composition root sets it in every real deployment.
+	planActivator ports.AccountPlanActivator
 }
 
 // WithRegistrar wires the outbound port the E5-S1 sign-up entry
@@ -80,6 +87,101 @@ type Handler struct {
 func (h *Handler) WithRegistrar(registrar ports.UserRegistrar) *Handler {
 	h.registrar = registrar
 	return h
+}
+
+// WithPlanActivator wires the outbound port the E5-S2 plan-provisioning
+// composite depends on. Passing nil leaves the composite disabled —
+// CheckoutPost falls back to the pre-E5-S2 direct-to-Stripe path so
+// environments that pre-date entitlements-service still degrade
+// visibly rather than 500ing. Chainable; returns the receiver.
+func (h *Handler) WithPlanActivator(a ports.AccountPlanActivator) *Handler {
+	h.planActivator = a
+	return h
+}
+
+// provisionPlanMaxAttempts is the retry ceiling for the E5-S2 composite,
+// per the acceptance criteria on issue #163.
+const provisionPlanMaxAttempts = 3
+
+// provisionPlanBaseBackoff is the first inter-attempt delay; each
+// subsequent attempt doubles it. 200ms × 3 attempts (200 + 400) caps
+// user-facing latency on the failure path at ~600ms of pure waiting.
+const provisionPlanBaseBackoff = 200 * time.Millisecond
+
+// provisionPlan is the E5-S2 composite: ensure the Lago customer,
+// open a subscription against the chosen plan, then write the
+// account_plans row on entitlements-service. Every step is
+// individually idempotent, so a retry after a mid-composite failure
+// converges rather than duplicating state.
+//
+// Returns the Lago subscription identifier so callers that also
+// create a Stripe Checkout session can pass it through. Errors
+// surface with the last per-attempt cause so the operator sees the
+// underlying transport / 4xx that caused exhaustion.
+func (h *Handler) provisionPlan(ctx context.Context, accountID, email, planCode string) (string, error) {
+	if h.planActivator == nil {
+		return "", fmt.Errorf("login-ui: plan activator not configured")
+	}
+	var lagoID string
+	err := retryWithBackoff(ctx, provisionPlanMaxAttempts, provisionPlanBaseBackoff, func() error {
+		return h.provisionOnce(ctx, accountID, email, planCode, &lagoID)
+	})
+	return lagoID, err
+}
+
+// provisionOnce runs one pass of the composite. Extracted so
+// retryWithBackoff stays a small loop and the composite's step ordering
+// is legible in one place.
+func (h *Handler) provisionOnce(ctx context.Context, accountID, email, planCode string, lagoID *string) error {
+	if err := h.billing.EnsureCustomer(ctx, ports.EnsureCustomerRequest{
+		ExternalID: accountID,
+		Email:      email,
+	}); err != nil {
+		return fmt.Errorf("ensure customer: %w", err)
+	}
+	sub, err := h.billing.CreateSubscription(ctx, ports.CreateSubscriptionRequest{
+		CustomerExternalID: accountID,
+		PlanCode:           planCode,
+		ExternalID:         accountID + "-" + planCode,
+	})
+	if err != nil {
+		return fmt.Errorf("create subscription: %w", err)
+	}
+	*lagoID = sub.LagoID
+	if err := h.planActivator.ActivatePlan(ctx, ports.ActivatePlanRequest{
+		AccountID:          accountID,
+		PlanCode:           planCode,
+		LagoSubscriptionID: sub.LagoID,
+	}); err != nil {
+		return fmt.Errorf("activate plan: %w", err)
+	}
+	return nil
+}
+
+// retryWithBackoff runs op up to attempts times with an exponentially-
+// growing delay between failures. Returns the last error on exhaustion.
+// Honours ctx cancellation between attempts — a cancelled context
+// short-circuits the wait rather than dragging the request through the
+// full backoff schedule.
+func retryWithBackoff(ctx context.Context, attempts int, base time.Duration, op func() error) error {
+	var last error
+	delay := base
+	for i := 0; i < attempts; i++ {
+		last = op()
+		if last == nil {
+			return nil
+		}
+		if i == attempts-1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		delay *= 2
+	}
+	return last
 }
 
 // WithAccounts wires the outbound ports the E7-S3d account switcher
@@ -315,10 +417,14 @@ func (h *Handler) redeemAndRedirect(w http.ResponseWriter, r *http.Request, logi
 // --- Billing flows (ADR-0019) ---
 
 // plansView is the template data for the plan-selection page.
+// AccountID rides alongside Subject so the form POST can carry both
+// through to CheckoutPost — the account_id is the Lago-side customer
+// external_id per E5-S2, while subject remains for log correlation.
 type plansView struct {
-	Subject string
-	Plans   []planRow
-	Error   string
+	Subject   string
+	AccountID string
+	Plans     []planRow
+	Error     string
 }
 
 // planRow is the per-plan render shape — pre-formatted price string so
@@ -351,7 +457,8 @@ func (h *Handler) PlansGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	subject := r.URL.Query().Get("subject")
-	view := plansView{Subject: subject}
+	accountID := r.URL.Query().Get("account")
+	view := plansView{Subject: subject, AccountID: accountID}
 	plans, err := h.billing.ListPlans(r.Context())
 	if err != nil {
 		h.logger.Error("billing: list plans failed", "error", err)
@@ -363,21 +470,36 @@ func (h *Handler) PlansGet(w http.ResponseWriter, r *http.Request) {
 	h.renderPlans(w, view)
 }
 
-// CheckoutPost handles plan submission. The form must carry `subject` and
-// `plan_code`; the handler creates a Stripe Checkout session via Lago
-// and redirects the user to Stripe's hosted page.
+// CheckoutPost handles plan submission. The form must carry `account`
+// (the Lago-side customer external_id per E5-S2 AC #163),
+// `subject` (the user id, kept for logging + audit correlation until
+// login-ui owns a signed session), and `plan_code`.
+//
+// When a plan activator is wired (E5-S2), the handler first runs the
+// composite: ensure Lago customer → open subscription → activate plan
+// on entitlements-service. That composite is idempotent and retried up
+// to provisionPlanMaxAttempts with exponential backoff so a transient
+// Lago blip does not surface as a 500 to the user. Only after the
+// composite succeeds does the handler create the Stripe Checkout
+// session — a paid-plan user redirects to Stripe with a real
+// subscription already recorded on both sides.
+//
+// When the plan activator is unwired (local dev, unwired composition),
+// the handler falls back to the pre-E5-S2 direct-to-Stripe path.
 //
 // Returns 503 when billing is not configured. 400 on missing fields, 500
-// on a Lago failure.
+// on a Lago failure that survives the backoff loop.
 //
 // @Summary      Start Stripe Checkout for the chosen plan
-// @Description  Creates a Stripe Checkout session via Lago and redirects
+// @Description  Provisions the Lago customer + subscription + account_plans row, then redirects to Stripe Checkout
 // @Tags         billing
 // @Accept       application/x-www-form-urlencoded
 // @Param        subject     formData  string  true  "Authenticated subject id"
+// @Param        account     formData  string  true  "Account id (Lago external_customer_id)"
 // @Param        plan_code   formData  string  true  "Lago plan code"
 // @Success      302  "Redirect to Stripe Checkout"
 // @Failure      400  "Missing required field"
+// @Failure      500  "Provisioning failed after retry"
 // @Failure      503  "Billing not configured"
 // @Router       /billing/checkout [post]
 func (h *Handler) CheckoutPost(w http.ResponseWriter, r *http.Request) {
@@ -385,20 +507,80 @@ func (h *Handler) CheckoutPost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "billing not configured", http.StatusServiceUnavailable)
 		return
 	}
+	form, ok := parseCheckoutForm(w, r)
+	if !ok {
+		return
+	}
+	if !h.provisionForCheckout(w, r, form) {
+		return
+	}
+	h.redirectToStripe(w, r, form)
+}
+
+// checkoutForm is the parsed submission from the plan-selection page.
+// Account is the Lago external_customer_id (E5-S2); Subject stays for
+// log correlation until login-ui owns a signed session; Email is
+// forwarded to Lago's EnsureCustomer when present.
+type checkoutForm struct {
+	Subject   string
+	AccountID string
+	PlanCode  string
+	Email     string
+}
+
+// parseCheckoutForm reads the wire form and validates required fields.
+// Writes the appropriate HTTP error and returns ok=false on any
+// failure so the caller can return without further logic.
+func parseCheckoutForm(w http.ResponseWriter, r *http.Request) (checkoutForm, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid form", http.StatusBadRequest)
-		return
+		return checkoutForm{}, false
 	}
-	subject := r.PostForm.Get("subject")
-	planCode := r.PostForm.Get("plan_code")
-	if subject == "" || planCode == "" {
+	form := checkoutForm{
+		Subject:   r.PostForm.Get("subject"),
+		AccountID: r.PostForm.Get("account"),
+		PlanCode:  r.PostForm.Get("plan_code"),
+		Email:     r.PostForm.Get("email"),
+	}
+	// account carries the entitlements-service account_id; it is the
+	// Lago external_customer_id per E5-S2. Empty falls back to subject
+	// so environments that pre-date the account_id threading (E7-S1c)
+	// still work in a degraded single-tenant mode.
+	if form.AccountID == "" {
+		form.AccountID = form.Subject
+	}
+	if form.Subject == "" || form.PlanCode == "" {
 		http.Error(w, "subject and plan_code are required", http.StatusBadRequest)
-		return
+		return checkoutForm{}, false
 	}
+	return form, true
+}
+
+// provisionForCheckout runs the E5-S2 composite when a plan activator
+// is wired. Returns false when the caller should stop (an error was
+// already written); true otherwise (including the unwired-activator
+// pass-through path).
+func (h *Handler) provisionForCheckout(w http.ResponseWriter, r *http.Request, form checkoutForm) bool {
+	if h.planActivator == nil {
+		return true
+	}
+	if _, err := h.provisionPlan(r.Context(), form.AccountID, form.Email, form.PlanCode); err != nil {
+		h.logger.Error("billing: provision plan composite failed",
+			"error", err, "account_id", form.AccountID)
+		http.Error(w, "could not start checkout", http.StatusInternalServerError)
+		return false
+	}
+	return true
+}
+
+// redirectToStripe creates the Lago-managed Stripe Checkout session and
+// bounces the browser to it. Failure surfaces as a generic 500 —
+// Lago-side detail lands in the log, not the response.
+func (h *Handler) redirectToStripe(w http.ResponseWriter, r *http.Request, form checkoutForm) {
 	session, err := h.billing.CreateCheckoutSession(r.Context(), ports.CheckoutSessionRequest{
-		CustomerID: subject,
-		PlanCode:   planCode,
+		CustomerID: form.AccountID,
+		PlanCode:   form.PlanCode,
 		SuccessURL: h.billingSuccessURL,
 		CancelURL:  h.billingCancelURL,
 	})

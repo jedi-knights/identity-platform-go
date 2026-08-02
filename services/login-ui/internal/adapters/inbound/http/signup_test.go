@@ -104,6 +104,24 @@ func TestSignUpPost_Success_RedirectsToPlansWithSubject(t *testing.T) {
 	}
 }
 
+func TestSignUpPost_Success_IncludesAccountIDWhenPresent(t *testing.T) {
+	reg := &fakeRegistrar{resp: &ports.RegisterResult{
+		UserID:    "u-new-42",
+		Email:     "alice@example.com",
+		Name:      "Alice",
+		AccountID: "acc-99",
+	}}
+	h := newSignUpHandler(reg)
+
+	w := httptest.NewRecorder()
+	h.SignUpPost(w, postSignUp("Alice", "alice@example.com", "hunter2"))
+
+	want := "/billing/plans?subject=u-new-42&account=acc-99"
+	if loc := w.Header().Get("Location"); loc != want {
+		t.Errorf("Location = %q, want %q", loc, want)
+	}
+}
+
 func TestSignUpPost_MissingFields_InlineError200(t *testing.T) {
 	h := newSignUpHandler(&fakeRegistrar{})
 

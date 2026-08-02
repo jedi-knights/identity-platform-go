@@ -64,6 +64,7 @@
       {{ range .Plans }}
         <form class="plan" method="post" action="/billing/checkout">
           <input type="hidden" name="subject" value="{{ $.Subject }}">
+          <input type="hidden" name="account" value="{{ $.AccountID }}">
           <input type="hidden" name="plan_code" value="{{ .Code }}">
           <div class="plan-info">
             <h2>{{ .Name }}</h2>
