@@ -83,8 +83,8 @@ var _ ports.RevocationChecker = (*RevocationChecker)(nil)
 
 **Negative / Trade-offs**
 
-- Redis becomes a single point of failure for token operations. Mitigated by Redis Sentinel (high availability) or Redis Cluster (horizontal scale) at the infrastructure layer.
-- A Redis outage blocks token issuance, revocation, and introspection. The fallback to in-memory is only for local development — it is not a production resilience strategy.
+- Redis becomes a single point of failure for token operations if deployed as a single node. **Under [ADR-0029](0029-reliable-horizontal-scalability-no-spofs.md), single-node Redis is a development-only configuration; production deployment requires Redis Sentinel, Redis Cluster, or a managed HA equivalent — not optional.**
+- A Redis outage blocks token issuance, revocation, and introspection. The fallback to in-memory is only for local development — it is not a production resilience strategy, and ADR-0029's startup guard prevents auth-server from launching in production with `AUTH_REDIS_URL` unset.
 - Raw JWT strings used as keys can be large (typically 200–400 bytes for HS256 tokens). Key size is manageable at typical token volumes but should be monitored.
 - Cross-service operational dependency: `auth-server` and `token-introspection-service` must be pointed at the same Redis instance. This is a deployment-time concern, not a code concern.
 

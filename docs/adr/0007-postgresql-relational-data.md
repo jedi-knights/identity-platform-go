@@ -89,9 +89,9 @@ var _ domain.UserRepository = (*UserRepository)(nil)
 
 **Negative / Trade-offs**
 
-- PostgreSQL becomes a single point of failure for each service. Mitigated by PostgreSQL high-availability configurations (streaming replication, pgBouncer, managed services such as RDS or Cloud SQL) at the infrastructure layer.
-- Write throughput is bounded by a single primary until read replicas are added. This is acceptable for the current scale and can be addressed independently of this ADR.
-- Local development now requires either a running PostgreSQL instance or the `DATABASE_URL` env var to be absent (falling back to in-memory). A `docker-compose.yml` at the repo root provides the standard local database setup.
+- PostgreSQL becomes a single point of failure for each service if deployed as a single primary. **Under [ADR-0029](0029-reliable-horizontal-scalability-no-spofs.md), single-primary Postgres is a development-only configuration; production deployment requires streaming replication with automatic failover, or a managed HA equivalent (Fly Managed Postgres HA, RDS Multi-AZ, Cloud SQL HA, Neon with automatic failover) — not optional.**
+- Write throughput is bounded by a single primary until read replicas are added. Read replicas are also the mechanism ADR-0029's HA requirement uses for automatic failover.
+- Local development now requires either a running PostgreSQL instance or the `DATABASE_URL` env var to be absent (falling back to in-memory). A `docker-compose.yml` at the repo root provides the standard local database setup. In production, the ADR-0029 startup guard prevents each Postgres-backed service from launching with its `*_DATABASE_URL` unset.
 - Schema migration failures at startup cause the service to exit. This is intentional — serving traffic against a mismatched schema is a worse failure mode than a clean startup abort.
 
 ## Alternatives Considered
