@@ -1,0 +1,64 @@
+# Fly.io config for login-ui. Deploy: fly deploy -c fly.login-ui.toml
+#
+# Public app — browsers are redirected here from auth-server's /oauth/authorize
+# with a login_challenge query param (ADR-0011). Unlike the backend services,
+# login-ui gets its own [http_service] block and a jk-login-ui.fly.dev hostname.
+
+app            = "jk-login-ui"
+primary_region = "iad"
+kill_signal    = "SIGTERM"
+kill_timeout   = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+  [build.args]
+    SERVICE_NAME = "login-ui"
+
+[env]
+  # Bind IPv6 so the app is reachable on Fly's .internal (6PN) network too —
+  # auth-server does not call login-ui over the private net (the handoff is
+  # browser → login-ui), but the [http_service] fronts both v4 and v6 traffic
+  # off the same listener.
+  LOGIN_UI_SERVER_HOST     = "[::]"
+  LOGIN_UI_SERVER_PORT     = "8087"
+  LOGIN_UI_LOG_FORMAT      = "json"
+  LOGIN_UI_LOG_LEVEL       = "info"
+  LOGIN_UI_LOG_ENVIRONMENT = "production"
+  # Inter-service URLs over the private network — these are server-to-server
+  # calls (login-ui → auth-server /internal/issue-code; login-ui →
+  # identity-service /auth/login), not browser redirects, so the .internal
+  # 6PN hostnames are the correct form.
+  LOGIN_UI_AUTH_SERVER_URL      = "http://jk-auth-server.internal:8080"
+  LOGIN_UI_IDENTITY_SERVICE_URL = "http://jk-identity-service.internal:8081"
+  # LOGIN_UI_AUTH_SERVER_SERVICE_TOKEN is set via `fly secrets set` — must
+  # match AUTH_LOGIN_UI_SERVICE_TOKEN on jk-auth-server (shared secret).
+  # LOGIN_UI_ENTITLEMENTS_SERVICE_URL and the LOGIN_UI_BILLING_* vars are
+  # intentionally unset — the switcher and billing routes degrade to 503
+  # until entitlements-service is deployed.
+
+# Public ingress — this is the one service in the stack that terminates
+# browser traffic directly rather than going through api-gateway, because
+# auth-server's /oauth/authorize 302s the user agent straight to
+# jk-login-ui.fly.dev/sign-in?login_challenge=...
+#
+# ADR-0029 requires N ≥ 2 machines per service in production. auto_stop
+# is off and min_machines_running = 2 so Fly keeps both machines up
+# through idle windows. Scale beyond 2 with `fly scale count N -a jk-login-ui`.
+[http_service]
+  internal_port        = 8087
+  force_https          = true
+  auto_stop_machines   = false
+  auto_start_machines  = true
+  min_machines_running = 2
+  processes            = ["app"]
+
+  [[http_service.checks]]
+    interval     = "15s"
+    timeout      = "5s"
+    grace_period = "10s"
+    method       = "GET"
+    path         = "/health"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "256mb"
