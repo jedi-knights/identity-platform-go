@@ -16,11 +16,19 @@ import (
 // RedirectURI is the E5-S4 return target the originating app supplied;
 // it rides as a hidden field through the sign-up POST so the plan
 // picker and checkout composite can honour it downstream.
+// LoginChallenge is the opaque auth-server login-challenge id when the
+// user reached /sign-up via the "Create one" link on /sign-in during an
+// active OAuth flow. When set, the checkout free-plan path consumes it
+// to mint an authorization code so the sign-up round-trip closes the
+// OAuth loop (E8-S2a) — otherwise free-plan completion only lands on
+// return_to without a code, and the originating app cannot establish a
+// session via its OIDC provider.
 type signUpView struct {
-	Name        string
-	Email       string
-	RedirectURI string
-	Error       string
+	Name           string
+	Email          string
+	RedirectURI    string
+	LoginChallenge string
+	Error          string
 }
 
 // SignUpGet renders the sign-up form. Returns 503 when the registrar
@@ -39,7 +47,8 @@ func (h *Handler) SignUpGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.renderSignUp(w, signUpView{
-		RedirectURI: r.URL.Query().Get("redirect_uri"),
+		RedirectURI:    r.URL.Query().Get("redirect_uri"),
+		LoginChallenge: r.URL.Query().Get("login_challenge"),
 	})
 }
 
@@ -82,9 +91,10 @@ func (h *Handler) SignUpPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := signUpView{
-		Name:        r.PostForm.Get("name"),
-		Email:       r.PostForm.Get("email"),
-		RedirectURI: r.PostForm.Get("redirect_uri"),
+		Name:           r.PostForm.Get("name"),
+		Email:          r.PostForm.Get("email"),
+		RedirectURI:    r.PostForm.Get("redirect_uri"),
+		LoginChallenge: r.PostForm.Get("login_challenge"),
 	}
 	password := r.PostForm.Get("password")
 	if view.Name == "" || view.Email == "" || password == "" {
@@ -106,7 +116,9 @@ func (h *Handler) SignUpPost(w http.ResponseWriter, r *http.Request) {
 	// per E5-S2; subject stays for log correlation until login-ui
 	// owns a signed session. return_to preserves the E5-S4 originating-
 	// app URI so the checkout completion path can send the user back.
-	http.Redirect(w, r, plansRedirectURL(result, view.RedirectURI), http.StatusFound)
+	// login_challenge (when non-empty) rides along so CheckoutPost can
+	// close the OAuth loop on a free-plan completion (E8-S2a).
+	http.Redirect(w, r, plansRedirectURL(result, view.RedirectURI, view.LoginChallenge), http.StatusFound)
 }
 
 // plansRedirectURL composes the post-signup redirect target. Extracted
@@ -116,7 +128,10 @@ func (h *Handler) SignUpPost(w http.ResponseWriter, r *http.Request) {
 // the E5-S4 originating-app URI verbatim — validation happens where the
 // value is *consumed* (checkout / /billing/return), not here, so the
 // user's picked plan-page URL is a faithful echo of what the app sent.
-func plansRedirectURL(result *ports.RegisterResult, returnTo string) string {
+// login_challenge is forwarded verbatim when non-empty so CheckoutPost
+// can call /internal/issue-code on a free-plan completion and close
+// the OAuth loop that started on auth-server (E8-S2a).
+func plansRedirectURL(result *ports.RegisterResult, returnTo, loginChallenge string) string {
 	q := url.Values{}
 	q.Set("subject", result.UserID)
 	if result.AccountID != "" {
@@ -124,6 +139,9 @@ func plansRedirectURL(result *ports.RegisterResult, returnTo string) string {
 	}
 	if returnTo != "" {
 		q.Set("return_to", returnTo)
+	}
+	if loginChallenge != "" {
+		q.Set("login_challenge", loginChallenge)
 	}
 	return "/billing/plans?" + q.Encode()
 }

@@ -456,12 +456,16 @@ func (h *Handler) redeemAndRedirect(w http.ResponseWriter, r *http.Request, logi
 // external_id per E5-S2, while subject remains for log correlation.
 // ReturnTo is the E5-S4 originating-app URL — carried verbatim on a
 // hidden field so it survives the plan-picker POST into checkout.
+// LoginChallenge rides on each plan form (hidden field) when the user
+// arrived via the OAuth sign-up path — CheckoutPost consumes it on
+// free-plan completion to close the OAuth loop (E8-S2a).
 type plansView struct {
-	Subject   string
-	AccountID string
-	ReturnTo  string
-	Plans     []planRow
-	Error     string
+	Subject        string
+	AccountID      string
+	ReturnTo       string
+	LoginChallenge string
+	Plans          []planRow
+	Error          string
 }
 
 // planRow is the per-plan render shape — pre-formatted price string so
@@ -496,7 +500,13 @@ func (h *Handler) PlansGet(w http.ResponseWriter, r *http.Request) {
 	subject := r.URL.Query().Get("subject")
 	accountID := r.URL.Query().Get("account")
 	returnTo := r.URL.Query().Get("return_to")
-	view := plansView{Subject: subject, AccountID: accountID, ReturnTo: returnTo}
+	loginChallenge := r.URL.Query().Get("login_challenge")
+	view := plansView{
+		Subject:        subject,
+		AccountID:      accountID,
+		ReturnTo:       returnTo,
+		LoginChallenge: loginChallenge,
+	}
 	// checkout=canceled is set by the Stripe cancel URL the checkout
 	// handler composes; render a friendly banner so the user knows
 	// their card was not charged and they can pick a plan again.
@@ -560,10 +570,19 @@ func (h *Handler) CheckoutPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tier == planTierFree {
-		// Free-plan short-circuit (E5-S3 + E5-S4): no card, no Stripe.
-		// If the originating app supplied an allowlisted return_to,
-		// send the user straight back there; otherwise fall through to
-		// the operator-configured success URL.
+		// Free-plan completion (E5-S3 + E5-S4): no card, no Stripe.
+		// If the user arrived via the OAuth sign-up path, the login
+		// challenge is still live — consume it so the RP's callback
+		// receives a real ?code= and the OAuth loop closes end-to-end
+		// (E8-S2a). The code issuer is only wired when LOGIN_UI_AUTH_
+		// SERVER_URL and the shared service token are set, so an
+		// unconfigured deployment falls back to the return_to path.
+		if form.LoginChallenge != "" && h.codeIssuer != nil {
+			h.redeemAndRedirect(w, r, form.LoginChallenge, form.Subject)
+			return
+		}
+		// Otherwise honour the operator-configured return_to allowlist
+		// and fall back to billingSuccessURL on empty/rejected input.
 		http.Redirect(w, r, h.freePlanSuccessURL(form.ReturnTo), http.StatusFound)
 		return
 	}
@@ -595,13 +614,18 @@ const planTierFree = "free"
 // log correlation until login-ui owns a signed session; Email is
 // forwarded to Lago's EnsureCustomer when present; ReturnTo is the
 // E5-S4 originating-app URI that CheckoutPost validates and honours
-// on the completion path.
+// on the completion path. LoginChallenge is the auth-server challenge
+// id when the user arrived via an OAuth sign-up flow — on free-plan
+// completion the handler consumes it via /internal/issue-code and
+// redirects to the RP's redirect_uri with ?code=&state=&iss= so the
+// OAuth loop closes (E8-S2a).
 type checkoutForm struct {
-	Subject   string
-	AccountID string
-	PlanCode  string
-	Email     string
-	ReturnTo  string
+	Subject        string
+	AccountID      string
+	PlanCode       string
+	Email          string
+	ReturnTo       string
+	LoginChallenge string
 }
 
 // parseCheckoutForm reads the wire form and validates required fields.
@@ -614,11 +638,12 @@ func parseCheckoutForm(w http.ResponseWriter, r *http.Request) (checkoutForm, bo
 		return checkoutForm{}, false
 	}
 	form := checkoutForm{
-		Subject:   r.PostForm.Get("subject"),
-		AccountID: r.PostForm.Get("account"),
-		PlanCode:  r.PostForm.Get("plan_code"),
-		Email:     r.PostForm.Get("email"),
-		ReturnTo:  r.PostForm.Get("return_to"),
+		Subject:        r.PostForm.Get("subject"),
+		AccountID:      r.PostForm.Get("account"),
+		PlanCode:       r.PostForm.Get("plan_code"),
+		Email:          r.PostForm.Get("email"),
+		ReturnTo:       r.PostForm.Get("return_to"),
+		LoginChallenge: r.PostForm.Get("login_challenge"),
 	}
 	// account carries the entitlements-service account_id; it is the
 	// Lago external_customer_id per E5-S2. Empty falls back to subject

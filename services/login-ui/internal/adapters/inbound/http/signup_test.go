@@ -50,6 +50,18 @@ func postSignUp(name, email, password string) *http.Request {
 	return r
 }
 
+// postSignUpWithChallenge mirrors postSignUp but adds a login_challenge
+// form field — used by the E8-S2a OAuth-loop-closure propagation tests.
+func postSignUpWithChallenge(name, email, password, challenge string) *http.Request {
+	body := strings.NewReader(
+		"name=" + name + "&email=" + email + "&password=" + password +
+			"&login_challenge=" + challenge,
+	)
+	r := httptest.NewRequest(http.MethodPost, "/sign-up", body)
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return r
+}
+
 // --- GET /sign-up ---
 
 func TestSignUpGet_Returns503WhenUnwired(t *testing.T) {
@@ -213,5 +225,47 @@ func TestNewRouter_SignUpRoutesReachable(t *testing.T) {
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusFound {
 		t.Errorf("POST /sign-up via router: status = %d, want 302", w.Code)
+	}
+}
+
+// --- E8-S2a: login_challenge propagation ---
+
+// TestSignUpGet_RendersLoginChallengeHiddenField asserts the challenge
+// id arriving on the query string survives into the rendered form as a
+// hidden field, so the subsequent POST can forward it to the plan
+// picker and (eventually) checkout.
+func TestSignUpGet_RendersLoginChallengeHiddenField(t *testing.T) {
+	h := newSignUpHandler(&fakeRegistrar{})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/sign-up?login_challenge=chall-42", nil)
+	h.SignUpGet(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `name="login_challenge" value="chall-42"`) {
+		t.Errorf("body missing login_challenge hidden field: %s", body)
+	}
+}
+
+// TestSignUpPost_PropagatesLoginChallengeToPlansRedirect asserts the
+// login_challenge from the form body is forwarded onto the plan picker
+// redirect, so CheckoutPost can later consume it on free-plan
+// completion to close the OAuth loop.
+func TestSignUpPost_PropagatesLoginChallengeToPlansRedirect(t *testing.T) {
+	reg := &fakeRegistrar{resp: &ports.RegisterResult{UserID: "u-new-42"}}
+	h := newSignUpHandler(reg)
+
+	w := httptest.NewRecorder()
+	h.SignUpPost(w, postSignUpWithChallenge("Alice", "alice@example.com", "hunter2", "chall-42"))
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302 (body: %s)", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	if !strings.Contains(loc, "login_challenge=chall-42") {
+		t.Errorf("Location = %q, want login_challenge=chall-42", loc)
 	}
 }
