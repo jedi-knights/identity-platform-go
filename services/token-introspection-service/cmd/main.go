@@ -11,12 +11,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	platform "github.com/jedi-knights/go-platform/container"
-	platformotel "github.com/jedi-knights/go-platform/otel"
-
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"github.com/jedi-knights/go-platform/httpserver"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/token-introspection-service/internal/config"
@@ -26,7 +25,7 @@ import (
 
 // @title           Token Introspection Service API
 // @version         1.0
-// @description     JWT token validation and metadata extraction per RFC 7662.
+// @description     RFC 7662 standalone OAuth 2.0 token introspection service.
 // @host            localhost:8083
 // @BasePath        /
 func main() {
@@ -39,7 +38,7 @@ func main() {
 func newRootCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "token-introspection-service",
-		Short: "Token Introspection Service",
+		Short: "RFC 7662 Token Introspection Service",
 		RunE:  run,
 	}
 }
@@ -50,37 +49,43 @@ func run(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	logger, err := observability.Setup(logging.Config{
-		Level:       cfg.Log.Level,
-		Format:      cfg.Log.Format,
-		ServiceName: "token-introspection-service",
-		Environment: cfg.Log.Environment,
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer startupCancel()
+
+	obs, err := observability.Setup(startupCtx, observability.Config{
+		ServiceName:    "token-introspection-service",
+		ServiceVersion: cfg.Tracing.ServiceVersion,
+		Environment:    cfg.Log.Environment,
+		LogLevel:       cfg.Log.Level,
+		LogFormat:      cfg.Log.Format,
+		OTLPEndpoint:   effectiveOTLPEndpoint(cfg),
+		OTLPProtocol:   cfg.Tracing.ExporterProtocol,
+		OTLPInsecure:   cfg.Tracing.ExporterInsecure,
+		SamplerRatio:   cfg.Tracing.SamplerRatio,
 	})
 	if err != nil {
 		return fmt.Errorf("setting up observability: %w", err)
 	}
+	defer shutdownWithTimeout(obs.Logger, "observability", 10*time.Second, obs.Shutdown)
 
-	startupCtx, startupCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer startupCancel()
-
-	shutdownTracing, err := setupTracing(startupCtx, cfg, logger)
+	metricsSrv, err := httpserver.StartMetricsServer("", "", obs.PromHandler)
 	if err != nil {
-		return err
+		return fmt.Errorf("starting metrics server: %w", err)
 	}
-	defer shutdownWithTimeout(logger, "tracing", 5*time.Second, shutdownTracing)
+	defer shutdownWithTimeout(obs.Logger, "metrics", 5*time.Second, metricsSrv.Shutdown)
+	obs.Logger.Info("metrics endpoint ready", "addr", httpserver.DefaultMetricsAddr, "path", httpserver.DefaultMetricsPath)
 
-	ctr, err := container.New(startupCtx, cfg, logger)
+	ctr, err := container.New(startupCtx, cfg, obs.Logger)
 	if err != nil {
 		return fmt.Errorf("creating container: %w", err)
 	}
-	defer shutdownWithTimeout(logger, "container", 30*time.Second, ctr.Close)
+	defer shutdownWithTimeout(obs.Logger, "container", 30*time.Second, ctr.Close)
 
 	handler := platform.MustResolve[*inboundhttp.Handler](startupCtx, ctr)
 	// otelhttp wraps the router so every inbound request becomes a
 	// server span; traceparent headers from the client are honoured by
 	// the W3C TraceContext propagator that go-platform/otel registers.
-	// The wrapper is a no-op when tracing is disabled.
-	router := otelhttp.NewHandler(inboundhttp.NewRouter(handler, logger), "token-introspection-service",
+	router := otelhttp.NewHandler(inboundhttp.NewRouter(handler, obs.Logger), "token-introspection-service",
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
 			return r.Method + " " + r.URL.Path
 		}),
@@ -95,7 +100,7 @@ func run(_ *cobra.Command, _ []string) error {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	logger.Info("starting token-introspection-service", "addr", addr)
+	obs.Logger.Info("starting token-introspection-service", "addr", addr)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -104,7 +109,7 @@ func run(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	logger.Info("shutting down server")
+	obs.Logger.Info("shutting down server")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -112,27 +117,15 @@ func run(_ *cobra.Command, _ []string) error {
 	return srv.Shutdown(ctx)
 }
 
-// setupTracing bootstraps the OTel SDK when INTROSPECT_TRACING_ENABLED is
-// set. When tracing is disabled it returns a no-op shutdown so the
-// caller's deferred shutdown still has a stable target.
-func setupTracing(ctx context.Context, cfg *config.Config, logger logging.Logger) (platformotel.Shutdown, error) {
+// effectiveOTLPEndpoint returns the configured OTLP endpoint when
+// tracing is enabled; empty otherwise. The empty value makes the
+// shared observability bootstrap wire the stdout exporter — useful
+// for local development without a collector.
+func effectiveOTLPEndpoint(cfg *config.Config) string {
 	if !cfg.Tracing.Enabled {
-		return func(context.Context) error { return nil }, nil
+		return ""
 	}
-	shutdown, err := platformotel.Init(ctx, platformotel.Config{
-		ServiceName:      "token-introspection-service",
-		ServiceVersion:   cfg.Tracing.ServiceVersion,
-		Environment:      cfg.Log.Environment,
-		ExporterEndpoint: cfg.Tracing.ExporterEndpoint,
-		ExporterProtocol: cfg.Tracing.ExporterProtocol,
-		ExporterInsecure: cfg.Tracing.ExporterInsecure,
-		SamplerRatio:     cfg.Tracing.SamplerRatio,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("setting up tracing: %w", err)
-	}
-	logger.Info("opentelemetry bootstrap complete", "exporter", cfg.Tracing.ExporterEndpoint)
-	return shutdown, nil
+	return cfg.Tracing.ExporterEndpoint
 }
 
 // shutdownWithTimeout runs fn with its own bounded context and logs any

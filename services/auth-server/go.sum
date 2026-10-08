@@ -78,6 +78,8 @@ github.com/jedi-knights/go-platform v0.10.0 h1:WaqCjz7FTZ/T3h+z5oWcYEgaUwQjfc6pl
 github.com/jedi-knights/go-platform v0.10.0/go.mod h1:/WGT1fhxMlxUD3RYttGmVY7T3m0NoTOCDkiVu4E3jGo=
 github.com/jedi-knights/go-platform v0.10.1-0.20261008104051-a96f33517fd5 h1:rKYtgHa3dSFHdZjStgZYFZga7wQEyawZ6YH/XcsrBWc=
 github.com/jedi-knights/go-platform v0.10.1-0.20261008104051-a96f33517fd5/go.mod h1:d2kPNliCYLaRFiZvzDtLCs9esWxsw0ho6+biBF2O9Ss=
+github.com/jedi-knights/go-platform v1.0.0 h1:tc+myf1vcC9Wswl4an9+Mp4e3i92cTtSkzrenj2JfjE=
+github.com/jedi-knights/go-platform v1.0.0/go.mod h1:d2kPNliCYLaRFiZvzDtLCs9esWxsw0ho6+biBF2O9Ss=
 github.com/jonboulle/clockwork v0.5.0 h1:Hyh9A8u51kptdkR+cqRpT1EebBwTn1oK9YfGYbdFz6I=
 github.com/jonboulle/clockwork v0.5.0/go.mod h1:3mZlmanh0g2NDKO5TWZVJAfofYk64M7XN3SzBPjZF60=
 github.com/josharian/intern v1.0.0 h1:vlS4z54oSdjm0bgjRigI+G1HpF+tI+9rE5LLzOg8HmY=

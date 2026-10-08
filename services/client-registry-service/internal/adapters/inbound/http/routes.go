@@ -7,7 +7,7 @@ import (
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 
-	"github.com/jedi-knights/go-platform/httputil"
+	"github.com/jedi-knights/go-platform/httpmw"
 
 	_ "github.com/ocrosby/identity-platform-go/services/client-registry-service/docs"
 )
@@ -48,9 +48,5 @@ func NewRouter(
 	))
 
 	// Apply middleware chain (Chain of Responsibility pattern).
-	return httputil.RecoveryMiddleware(logger)(
-		httputil.LoggingMiddleware(logger)(
-			httputil.TraceIDMiddleware(mux),
-		),
-	)
+	return httpmw.Stack(logger)(mux)
 }

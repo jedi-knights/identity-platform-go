@@ -6,8 +6,7 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
-
-	"github.com/jedi-knights/go-platform/httputil"
+	"github.com/jedi-knights/go-platform/httpmw"
 
 	_ "github.com/ocrosby/identity-platform-go/services/auth-server/docs"
 )
@@ -70,10 +69,9 @@ func NewRouter(h *Handler, jwks *JWKSHandler, userInfo *UserInfoHandler, metadat
 		mux.HandleFunc("GET /.well-known/openid-configuration", metadata.OIDCMetadata)
 	}
 
-	// Apply middleware chain (Chain of Responsibility pattern).
-	return httputil.RecoveryMiddleware(logger)(
-		httputil.LoggingMiddleware(logger)(
-			httputil.TraceIDMiddleware(mux),
-		),
-	)
+	// Apply middleware chain. go-platform v1.0.0 moved these out of
+	// httputil into httpmw; Stack composes RequestID → TraceID →
+	// Recovery → Logging in the required order so trace_id is already
+	// in context when Logging reads it.
+	return httpmw.Stack(logger)(mux)
 }

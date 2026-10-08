@@ -15,7 +15,7 @@ import (
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	platform "github.com/jedi-knights/go-platform/container"
-	"github.com/jedi-knights/go-platform/httputil"
+	"github.com/jedi-knights/go-platform/httpserver"
 	platformotel "github.com/jedi-knights/go-platform/otel"
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/inbound/http"
@@ -69,12 +69,12 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 	defer shutdownWithTimeout(obs.Logger, "observability", 10*time.Second, obs.Shutdown)
 
-	metricsSrv, err := httputil.StartMetricsServer("", "", obs.PromHandler)
+	metricsSrv, err := httpserver.StartMetricsServer("", "", obs.PromHandler)
 	if err != nil {
 		return fmt.Errorf("starting metrics server: %w", err)
 	}
 	defer shutdownWithTimeout(obs.Logger, "metrics", 5*time.Second, metricsSrv.Shutdown)
-	obs.Logger.Info("metrics endpoint ready", "addr", httputil.DefaultMetricsAddr, "path", httputil.DefaultMetricsPath)
+	obs.Logger.Info("metrics endpoint ready", "addr", httpserver.DefaultMetricsAddr, "path", httpserver.DefaultMetricsPath)
 
 	ctr, err := container.New(startCtx, cfg, obs.Logger)
 	if err != nil {

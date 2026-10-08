@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
-	"github.com/jedi-knights/go-platform/httputil"
+	"github.com/jedi-knights/go-platform/httpmw"
 )
 
 // NewRouter builds the login-ui HTTP mux and wraps it with the standard
@@ -28,9 +28,5 @@ func NewRouter(h *Handler, logger logging.Logger) http.Handler {
 	mux.HandleFunc("GET /accounts", h.AccountsGet)
 	mux.HandleFunc("POST /accounts", h.AccountsPost)
 
-	return httputil.RecoveryMiddleware(logger)(
-		httputil.LoggingMiddleware(logger)(
-			httputil.TraceIDMiddleware(mux),
-		),
-	)
+	return httpmw.Stack(logger)(mux)
 }

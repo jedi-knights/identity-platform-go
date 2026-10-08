@@ -7,7 +7,7 @@ import (
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 
-	"github.com/jedi-knights/go-platform/httputil"
+	"github.com/jedi-knights/go-platform/httpmw"
 
 	_ "github.com/ocrosby/identity-platform-go/services/identity-service/docs"
 )
@@ -32,9 +32,5 @@ func NewRouter(h *Handler, logger logging.Logger) http.Handler {
 	// Outermost runs first on the way in and last on the way out, so Recovery wraps
 	// everything (catches panics from inner middleware too) and TraceID runs closest
 	// to the handler (trace ID is available in all log lines).
-	return httputil.RecoveryMiddleware(logger)(
-		httputil.LoggingMiddleware(logger)(
-			httputil.TraceIDMiddleware(mux),
-		),
-	)
+	return httpmw.Stack(logger)(mux)
 }

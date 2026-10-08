@@ -7,7 +7,7 @@ import (
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 
-	"github.com/jedi-knights/go-platform/httputil"
+	"github.com/jedi-knights/go-platform/httpmw"
 	"github.com/jedi-knights/go-platform/jwtutil"
 
 	_ "github.com/ocrosby/identity-platform-go/services/example-resource-service/docs"
@@ -78,9 +78,5 @@ func NewRouter(h *Handler, logger logging.Logger, signingKey []byte, keySource j
 
 	// TraceIDMiddleware must be outermost so trace IDs are in context when
 	// LoggingMiddleware reads them (it captures ctx before calling next).
-	return httputil.TraceIDMiddleware(
-		httputil.RecoveryMiddleware(logger)(
-			httputil.LoggingMiddleware(logger)(mux),
-		),
-	)
+	return httpmw.Stack(logger)(mux)
 }
