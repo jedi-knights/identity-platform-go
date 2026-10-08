@@ -2,18 +2,16 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
 	platform "github.com/jedi-knights/go-platform/container"
+	"github.com/jedi-knights/go-platform/httpserver"
 	platformotel "github.com/jedi-knights/go-platform/otel"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -85,30 +83,15 @@ func run(_ *cobra.Command, _ []string) error {
 	)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           router,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
-
 	logger.Info("starting entitlements-service", "addr", addr)
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-
-	if err := listenAndWait(srv, quit); err != nil {
+	// Run serves until SIGINT/SIGTERM, then drains in-flight requests within
+	// the standard shutdown budget.
+	if err := httpserver.New(addr, router).Run(context.Background()); err != nil {
 		return err
 	}
-
-	logger.Info("shutting down server")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	return srv.Shutdown(ctx)
+	logger.Info("server stopped")
+	return nil
 }
 
 // setupTracing bootstraps the OTel SDK when
@@ -118,7 +101,7 @@ func setupTracing(ctx context.Context, cfg *config.Config, logger logging.Logger
 	if !cfg.Tracing.Enabled {
 		return func(context.Context) error { return nil }, nil
 	}
-	shutdown, err := platformotel.Init(ctx, platformotel.Config{
+	shutdown, err := platformotel.Init(ctx, platformotel.Config{ //nolint:staticcheck // SA1019: tracing-only today; moving to otel.New adds a metrics listener and is a separate change
 		ServiceName:      "entitlements-service",
 		ServiceVersion:   cfg.Tracing.ServiceVersion,
 		Environment:      cfg.Log.Environment,
@@ -139,20 +122,5 @@ func shutdownWithTimeout(logger logging.Logger, name string, timeout time.Durati
 	defer cancel()
 	if err := fn(ctx); err != nil {
 		logger.Error(name+" shutdown error", "err", err)
-	}
-}
-
-func listenAndWait(srv *http.Server, quit <-chan os.Signal) error {
-	serverErr := make(chan error, 1)
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serverErr <- err
-		}
-	}()
-	select {
-	case err := <-serverErr:
-		return fmt.Errorf("server error: %w", err)
-	case <-quit:
-		return nil
 	}
 }
