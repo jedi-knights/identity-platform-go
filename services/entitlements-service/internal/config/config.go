@@ -18,6 +18,7 @@ type Config struct {
 	Database DatabaseConfig `mapstructure:"database"`
 	Audit    AuditConfig    `mapstructure:"audit"`
 	Tracing  TracingConfig  `mapstructure:"tracing"`
+	Metrics  MetricsConfig  `mapstructure:"metrics"`
 	Invites  InvitesConfig  `mapstructure:"invites"`
 }
 
@@ -64,6 +65,15 @@ type AuditConfig struct {
 	SkipMigration bool   `mapstructure:"skip_migration"` // ENTITLEMENTS_AUDIT_SKIP_MIGRATION
 }
 
+// MetricsConfig configures the Prometheus scrape listener started alongside the
+// main server.
+type MetricsConfig struct {
+	// Addr is the listen address. Empty selects the fleet default (:9464), which
+	// every fly.<svc>.toml [metrics] section assumes. Override when running several
+	// services directly on one host so their scrape ports do not collide.
+	Addr string `mapstructure:"addr"` // ENTITLEMENTS_METRICS_ADDR
+}
+
 // TracingConfig configures the OpenTelemetry SDK bootstrap.
 type TracingConfig struct {
 	Enabled          bool    `mapstructure:"enabled"`           // ENTITLEMENTS_TRACING_ENABLED
@@ -93,6 +103,7 @@ func Load() (*Config, error) {
 	v.SetDefault("tracing.exporter_protocol", "")
 	v.SetDefault("tracing.exporter_insecure", false)
 	v.SetDefault("tracing.sampler_ratio", 0.0)
+	v.SetDefault("metrics.addr", "") // empty: fleet default :9464
 	v.SetDefault("invites.email_sender", "stdout")
 	v.SetDefault("invites.signup_url_pattern", "")
 	v.SetDefault("invites.ttl_hours", 168) // 7 days per E7-S2 AC

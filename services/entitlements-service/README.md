@@ -84,7 +84,8 @@ Env vars (all optional except in production):
 | `ENTITLEMENTS_DATABASE_URL` | *(empty)* | Postgres DSN — when unset, in-memory adapter is used |
 | `ENTITLEMENTS_AUDIT_DURABLE_DSN` | *(empty)* | Audit-event Postgres DSN (ADR-0018/0019) |
 | `ENTITLEMENTS_AUDIT_SKIP_MIGRATION` | `false` | skip audit-schema CREATE TABLE |
-| `ENTITLEMENTS_TRACING_ENABLED` | `false` | bootstrap OTel SDK |
+| `ENTITLEMENTS_TRACING_ENABLED` | `false` | export traces (metrics and span-aware logs run regardless) |
+| `ENTITLEMENTS_METRICS_ADDR` | `:9464` | Prometheus scrape listener (`/metrics`); change when running several services on one host |
 
 ## Running locally
 

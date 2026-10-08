@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -19,7 +20,6 @@ import (
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/identity-service/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/config"
 	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/container"
-	"github.com/ocrosby/identity-platform-go/services/identity-service/internal/observability"
 )
 
 // @title           Identity Service API
@@ -48,24 +48,15 @@ func run(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	logger, err := observability.Setup(logging.Config{
-		Level:       cfg.Log.Level,
-		Format:      cfg.Log.Format,
-		ServiceName: "identity-service",
-		Environment: cfg.Log.Environment,
-	})
-	if err != nil {
-		return fmt.Errorf("setting up observability: %w", err)
-	}
-
 	startCtx, startCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer startCancel()
 
-	shutdownTracing, err := setupTracing(startCtx, cfg, logger)
+	obs, shutdownObs, err := setupObservability(startCtx, cfg)
 	if err != nil {
 		return err
 	}
-	defer shutdownWithTimeout(logger, "tracing", 5*time.Second, shutdownTracing)
+	logger := obs.Logger
+	defer shutdownWithTimeout(logger, "observability", 5*time.Second, shutdownObs)
 
 	ctr, err := container.New(startCtx, cfg, logger)
 	if err != nil {
@@ -96,27 +87,43 @@ func run(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-// setupTracing bootstraps the OTel SDK when IDENTITY_TRACING_ENABLED is
-// set. When tracing is disabled it returns a no-op shutdown so the
-// caller's deferred shutdown still has a stable target.
-func setupTracing(ctx context.Context, cfg *config.Config, logger logging.Logger) (platformotel.Shutdown, error) {
+// setupObservability wires traces, metrics, and logs through otel.New and
+// starts the Prometheus scrape listener (IDENTITY_METRICS_ADDR, default :9464).
+// Trace export is controlled by IDENTITY_TRACING_ENABLED: when off the tracer never
+// samples, but metrics and the span-aware logger still run. The returned
+// shutdown stops the listener and flushes the providers.
+func setupObservability(ctx context.Context, cfg *config.Config) (*platformotel.Observability, func(context.Context) error, error) {
+	sampler := cfg.Tracing.SamplerRatio
 	if !cfg.Tracing.Enabled {
-		return func(context.Context) error { return nil }, nil
+		sampler = -1 // negative ratio is a parent-based never-sample; see otel.Config.SamplerRatio
 	}
-	shutdown, err := platformotel.Init(ctx, platformotel.Config{ //nolint:staticcheck // SA1019: tracing-only today; moving to otel.New adds a metrics listener and is a separate change
+	obs, err := platformotel.New(ctx, platformotel.Config{
 		ServiceName:      "identity-service",
 		ServiceVersion:   cfg.Tracing.ServiceVersion,
 		Environment:      cfg.Log.Environment,
 		ExporterEndpoint: cfg.Tracing.ExporterEndpoint,
 		ExporterProtocol: cfg.Tracing.ExporterProtocol,
 		ExporterInsecure: cfg.Tracing.ExporterInsecure,
-		SamplerRatio:     cfg.Tracing.SamplerRatio,
+		SamplerRatio:     sampler,
+		LogLevel:         cfg.Log.Level,
+		LogFormat:        cfg.Log.Format,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("setting up tracing: %w", err)
+		return nil, nil, fmt.Errorf("setting up observability: %w", err)
 	}
-	logger.Info("opentelemetry bootstrap complete", "exporter", cfg.Tracing.ExporterEndpoint)
-	return shutdown, nil
+
+	metricsSrv, err := httpserver.StartMetricsServer(cfg.Metrics.Addr, "", obs.PromHandler)
+	if err != nil {
+		_ = obs.Shutdown(ctx) // best-effort cleanup; the listen error is the actionable one
+		return nil, nil, fmt.Errorf("starting metrics server: %w", err)
+	}
+	obs.Logger.Info("observability ready",
+		"tracing_enabled", cfg.Tracing.Enabled, "metrics_addr", metricsSrv.Server.Addr)
+
+	shutdown := func(sctx context.Context) error {
+		return errors.Join(metricsSrv.Shutdown(sctx), obs.Shutdown(sctx))
+	}
+	return obs, shutdown, nil
 }
 
 // shutdownWithTimeout runs fn with its own bounded context and logs any

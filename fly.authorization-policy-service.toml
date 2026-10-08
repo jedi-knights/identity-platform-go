@@ -28,6 +28,12 @@ kill_timeout   = "30s"
     timeout      = "5s"
     grace_period = "10s"
 
+[metrics]
+  # Fleet-standard Prometheus scrape endpoint (httpserver.DefaultMetricsAddr/Path),
+  # served by the service itself via otel.New. Scraped by Fly's hosted Prometheus.
+  port = 9464
+  path = "/metrics"
+
 [[vm]]
   size   = "shared-cpu-1x"
   memory = "256mb"
