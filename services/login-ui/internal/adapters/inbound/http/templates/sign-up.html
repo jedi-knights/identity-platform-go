@@ -10,6 +10,7 @@
   {{if .Error}}<p role="alert" data-testid="error">{{.Error}}</p>{{end}}
   <form method="POST" action="/sign-up" data-testid="sign-up-form">
     <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
+    <input type="hidden" name="login_challenge" value="{{.LoginChallenge}}">
     <label>Name <input type="text" name="name" required autocomplete="name" value="{{.Name}}" data-testid="name"></label>
     <label>Email <input type="email" name="email" required autocomplete="email" value="{{.Email}}" data-testid="email"></label>
     <label>Password <input type="password" name="password" required autocomplete="new-password" data-testid="password"></label>

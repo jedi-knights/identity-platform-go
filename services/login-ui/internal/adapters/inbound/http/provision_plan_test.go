@@ -295,3 +295,107 @@ func TestCheckoutPost_PaidTierCancelURLCarriesSubjectAndFlag(t *testing.T) {
 		t.Errorf("cancel URL missing subject/account: %q", cancel)
 	}
 }
+
+// --- E8-S2a: OAuth loop closure on free-plan completion ---
+
+// newOAuthProvisioningHandler wires a code issuer alongside the billing
+// + plan activator. Mirrors newProvisioningHandler so the free-plan +
+// login_challenge tests can assert on IssueCode interactions.
+func newOAuthProvisioningHandler(t *testing.T, b ports.BillingClient, pa ports.AccountPlanActivator, ci ports.AuthCodeIssuer) *authhttp.Handler {
+	t.Helper()
+	logger := logging.New(logging.Config{Output: io.Discard})
+	return authhttp.NewHandler(nil, ci, logger).
+		WithBilling(b, "https://login-ui.test/billing/return", "https://login-ui.test/billing/plans").
+		WithPlanActivator(pa)
+}
+
+// TestCheckoutPost_FreeTier_WithLoginChallenge_ClosesOAuthLoop verifies
+// the E8-S2a happy path: a free-plan completion inside an active OAuth
+// flow consumes the challenge via /internal/issue-code and 302s to the
+// RP's redirect_uri with ?code=&state=&iss=. Without this, Touchline's
+// Auth.js has no code to exchange and no session gets established.
+func TestCheckoutPost_FreeTier_WithLoginChallenge_ClosesOAuthLoop(t *testing.T) {
+	b := &billingWithProvisioning{
+		subResp:      &ports.SubscriptionResult{LagoID: "sub-free"},
+		checkoutResp: &ports.CheckoutSession{URL: "https://checkout.stripe.test/should-not-hit"},
+	}
+	pa := &fakePlanActivator{tier: "free"}
+	ci := &fakeCodeIssuer{resp: &ports.IssueCodeResponse{
+		Code:        "code-abc",
+		RedirectURI: "https://touchline.test/api/auth/callback/identity-platform",
+		State:       "state-xyz",
+		Issuer:      "https://identity.test",
+	}}
+	h := newOAuthProvisioningHandler(t, b, pa, ci)
+
+	form := url.Values{
+		"subject":         {"u-1"},
+		"account":         {"acc-1"},
+		"plan_code":       {"touchline-free"},
+		"login_challenge": {"chall-42"},
+	}
+	w := postCheckout(t, h, form)
+
+	assertOAuthLoopClosed(t, w, ci)
+}
+
+// assertOAuthLoopClosed centralizes the free-plan + login_challenge
+// expectations. Extracted so TestCheckoutPost_FreeTier_WithLoginChallenge_
+// ClosesOAuthLoop stays under the gocyclo budget while still asserting
+// on every piece of the OAuth loop closure.
+func assertOAuthLoopClosed(t *testing.T, w *httptest.ResponseRecorder, ci *fakeCodeIssuer) {
+	t.Helper()
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302 (body: %s)", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	if !strings.HasPrefix(loc, "https://touchline.test/api/auth/callback/identity-platform?") {
+		t.Fatalf("Location = %q, want prefix touchline.test callback", loc)
+	}
+	checks := []struct {
+		msg string
+		ok  bool
+	}{
+		{"IssueCode.LoginChallenge != chall-42", ci.gotReq.LoginChallenge == "chall-42"},
+		{"IssueCode.SessionID != u-1 (the fresh subject)", ci.gotReq.SessionID == "u-1"},
+		{"Location missing code=code-abc", strings.Contains(loc, "code=code-abc")},
+		{"Location missing state=state-xyz", strings.Contains(loc, "state=state-xyz")},
+		{"Location missing iss claim", strings.Contains(loc, "iss=https%3A%2F%2Fidentity.test")},
+		{"free tier must NOT go to Stripe", !strings.Contains(loc, "stripe")},
+	}
+	for _, c := range checks {
+		if !c.ok {
+			t.Errorf("%s (loc=%q, ci.gotReq=%+v)", c.msg, loc, ci.gotReq)
+		}
+	}
+}
+
+// TestCheckoutPost_FreeTier_WithoutLoginChallenge_FallsBackToReturnTo
+// is the regression test for the pre-E8-S2a behavior: free-plan with
+// no login_challenge keeps the operator-configured return_to path.
+func TestCheckoutPost_FreeTier_WithoutLoginChallenge_FallsBackToReturnTo(t *testing.T) {
+	b := &billingWithProvisioning{
+		subResp:      &ports.SubscriptionResult{LagoID: "sub-free"},
+		checkoutResp: &ports.CheckoutSession{URL: "https://checkout.stripe.test/should-not-hit"},
+	}
+	pa := &fakePlanActivator{tier: "free"}
+	ci := &fakeCodeIssuer{}
+	h := newOAuthProvisioningHandler(t, b, pa, ci)
+
+	form := url.Values{
+		"subject":   {"u-1"},
+		"account":   {"acc-1"},
+		"plan_code": {"touchline-free"},
+	}
+	w := postCheckout(t, h, form)
+
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302 (body: %s)", w.Code, w.Body.String())
+	}
+	if loc := w.Header().Get("Location"); loc != "https://login-ui.test/billing/return" {
+		t.Errorf("Location = %q, want billing/return fallback", loc)
+	}
+	if ci.gotReq.LoginChallenge != "" {
+		t.Errorf("IssueCode must not be called without login_challenge; got req = %+v", ci.gotReq)
+	}
+}
