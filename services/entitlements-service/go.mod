@@ -6,7 +6,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jedi-knights/go-logging v0.1.0
-	github.com/jedi-knights/go-platform v1.0.0
+	github.com/jedi-knights/go-platform v1.1.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0
