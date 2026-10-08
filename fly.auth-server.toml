@@ -21,6 +21,13 @@ kill_timeout   = "30s"
   AUTH_LOG_ENVIRONMENT      = "production"
   AUTH_JWT_ISSUER           = "identity-platform"
   AUTH_TOKEN_TTL_SECONDS    = "3600"
+  # OIDC + RFC 8414 metadata (ADR-0010 / ADR-0012). Both must be set for
+  # /.well-known/openid-configuration and /.well-known/oauth-authorization-server
+  # to register — the metadata handler returns nil when PublicBaseURL is empty,
+  # and OIDC mode is disabled when OIDCIssuer is empty. The public base is the
+  # gateway's hostname (clients reach the AS through jk-api-gateway).
+  AUTH_METADATA_PUBLIC_BASE_URL = "https://jk-api-gateway.fly.dev"
+  AUTH_JWT_OIDC_ISSUER          = "https://jk-api-gateway.fly.dev"
   # No dev client seeding in production. Also a no-op while AUTH_CLIENT_REGISTRY_URL
   # is set (auth-server delegates client validation to client-registry-service);
   # register real clients via client-registry-service's POST /clients.
