@@ -20,6 +20,7 @@ A production-style **OAuth 2.0 / OIDC** reference platform built in Go, demonstr
 - [Project Structure](#project-structure)
 - [Architecture Decision Records](#architecture-decision-records)
 - [Deployment (Fly.io)](#deployment-flyio)
+- [Horizontal Scalability](#horizontal-scalability)
 - [Release Process](#release-process)
 - [License](#license)
 
@@ -749,6 +750,82 @@ curl -fsS localhost:8081/health               # expect 200
 
 End-to-end, request a token from the seeded `test-client` through the gateway at
 `https://jk-api-gateway.fly.dev/oauth/token` and call `/resources` with it.
+
+---
+
+## Horizontal Scalability
+
+**Production deployment of this platform has no application-controllable single points of failure.** Every service runs at N ≥ 2 machines per region behind Fly's proxy, every stateful backing service is deployed in HA mode with automatic failover, and every service refuses to start in production without its durable state URL set. This is the reference implementation's teaching claim: *how* to build a horizontally scalable identity platform, not just what one looks like at N=1.
+
+The full contract lives in [ADR-0029](docs/adr/0029-reliable-horizontal-scalability-no-spofs.md). This section is the operational summary.
+
+### Requirements — non-negotiable in production
+
+| Requirement | Why | How |
+|---|---|---|
+| No SPOF at the Redis layer | Redis holds tokens, refresh tokens, authorization codes, login challenges, PAR requests, device codes, and every replay-protection `jti` cache. A single-node Redis outage blocks issuance, revocation, and introspection. | Redis Sentinel (≥3 sentinels, ≥1 replica), Redis Cluster (≥3 primaries, ≥1 replica per primary), or a managed HA equivalent (Upstash Global with automatic failover, Fly Redis with replicas, AWS ElastiCache Multi-AZ) |
+| No SPOF at the Postgres layer | Postgres holds users, credentials, clients, roles, policies, resources. Single-primary loss blocks every write path. | Streaming replication with automatic failover, or a managed HA equivalent (Fly Managed Postgres HA cluster, RDS Multi-AZ, Cloud SQL HA, Neon with automatic failover) |
+| N ≥ 2 machines per service | Rolling deploy, single-machine failure, and Fly machine restarts must not cause an outage. | `min_machines_running = 2` in every `fly.<service>.toml`, or `fly scale count 2 -a <app>` |
+| Fail-fast on missing durable state | The memory fallback is silent — the service can't know its own replica count and can't detect the incorrect deployment on its own. | Startup guard: when `*_LOG_ENVIRONMENT=production` and the required state URL is empty, the service exits with a non-zero status |
+| Readiness gates on backing-store reachability | Fly's proxy must drain machines whose Redis or Postgres connectivity has degraded. | `/ready` (or platform-equivalent readiness probe) checks backing-store reachability. `/health` remains liveness-only |
+| Retries with backoff on failover windows | Postgres primary failover and Redis Sentinel failover produce a bounded window of write failures (seconds). | Exponential backoff with jitter on outbound calls; ≤3 attempts for reads, ≤1 for non-idempotent writes; circuit breaker on outbound HTTP to sibling services |
+
+Multi-region deployment is **architecturally compatible** with this design (services are stateless, adapters are env-driven, Fly's `primary_region` + `[[regions]]` block supports it operationally) but is not required by ADR-0029 — a well-configured single-region deployment satisfies the "no application-controllable SPOFs" bar. Two known follow-up dependencies must be closed before an actual multi-region deployment: (1) cross-region JWKS distribution — signing keys are currently per-process env vars, so rotation windows leave one region ahead of another; (2) cross-region refresh-token reuse-detection consistency — [ADR-0014](docs/adr/0014-refresh-token-rotation-replay.md)'s rotate-on-use is race-free only under a strongly-consistent Redis topology. See [ADR-0029 §6](docs/adr/0029-reliable-horizontal-scalability-no-spofs.md) for detail.
+
+### State-path inventory
+
+Every state path resolves to a shared HA store in production. In development, memory adapters remain the default per ADR-0004 — the fallback exists so contributors can run one service with `go run ./cmd/serve.go` and zero external dependencies.
+
+| Service | Ephemeral state (Redis, HA) | Relational state (Postgres, HA) | Production env vars |
+|---|---|---|---|
+| `auth-server` | access tokens, refresh tokens, authorization codes, login challenges, PAR requests, device authorizations, client-assertion `jti` replay, DPoP proof `jti` replay | — (delegates client lookup to `client-registry-service`) | `AUTH_REDIS_URL` |
+| `token-introspection-service` | revocation lookup | — | `INTROSPECT_REDIS_URL` |
+| `authorization-policy-service` | policy-decision cache (60s TTL, fails open on Redis errors) | roles, policies | `POLICY_REDIS_URL` + `POLICY_DATABASE_URL` |
+| `client-registry-service` | — | clients + secrets | `CLIENT_DATABASE_URL` |
+| `identity-service` | — | users + credentials | `IDENTITY_DATABASE_URL` |
+
+Adapter implementations for every path already ship — see `services/<name>/internal/adapters/outbound/{memory,redis,postgres}/`. The container wiring in each service's `internal/container/container.go` selects the durable adapter when the env var above is set. Under ADR-0029 the production fallback path is *not* memory; it is exit-with-error.
+
+### Development vs production behavior
+
+| Behavior | Development (`*_LOG_ENVIRONMENT` unset or `development`) | Production (`*_LOG_ENVIRONMENT=production`) |
+|---|---|---|
+| State URL unset | Log a warning, fall back to in-memory adapter, continue | Log the missing variable, exit with non-zero status |
+| Backing store unreachable at startup | Retry with backoff, continue serving with degraded functionality | `/ready` fails; Fly drains the machine; retries with backoff continue until reachable |
+| Machine count | 1 (default) | ≥2 per service, per region |
+
+The fatal-in-production guard is the design commitment from ADR-0029 §3. It is not "operator discipline"; it is a startup check that a production service refuses to run without its durable state configured.
+
+### Scaling procedure
+
+1. **Provision HA backing services** — one-time per environment. HA Fly Managed Postgres cluster (`fly mpg create --ha` or equivalent), HA Redis (Upstash Global, Fly Redis with replicas, or a managed HA offering). Single-node Redis and single-primary Postgres are development-only configurations.
+2. **Attach durable state URLs as Fly secrets** — see the [Secrets](#secrets) subsection. Every `*_URL` in the state-path inventory must be set for every service intended to scale.
+3. **Confirm secrets are set:**
+   ```bash
+   fly secrets list -a jk-auth-server                    | grep -E 'AUTH_REDIS_URL'
+   fly secrets list -a jk-token-introspection-service    | grep -E 'INTROSPECT_REDIS_URL'
+   fly secrets list -a jk-authorization-policy-service   | grep -E 'POLICY_(REDIS|DATABASE)_URL'
+   fly secrets list -a jk-client-registry-service        | grep -E 'CLIENT_DATABASE_URL'
+   fly secrets list -a jk-identity-service               | grep -E 'IDENTITY_DATABASE_URL'
+   ```
+   Under the ADR-0029 startup guard, a missing secret in production means the service will refuse to start on next deploy. Fix before deploying, not after.
+4. **Scale to N ≥ 2** per service:
+   ```bash
+   fly scale count 2 -a jk-auth-server
+   fly scale count 2 -a jk-identity-service
+   fly scale count 2 -a jk-client-registry-service
+   fly scale count 2 -a jk-token-introspection-service
+   fly scale count 2 -a jk-authorization-policy-service
+   ```
+5. **Verify HA end-to-end.** Drive traffic through the gateway: mint a token, introspect it, revoke it, re-introspect it. All four operations must observe consistent state regardless of which replica served each request. Then trigger a failover event (`fly machine restart` on one machine per service, then on a Redis or Postgres node if the managed offering exposes that operation) and confirm the same four-step check still passes with no visible errors.
+
+### Services not yet in production
+
+`login-ui`, `entitlements-service`, and `example-resource-service` are in the repo but not in `.github/workflows/deploy.yml`. Before adding any to the deploy matrix:
+
+- **`login-ui`** — holds no per-request session state today. Handler comments mark the promissory notes where a signed session cookie will land (`services/login-ui/internal/adapters/inbound/http/handler.go`, search for `signed session cookie`). Under ADR-0029, when session state is introduced it must be either self-contained (signed + encrypted cookie, no server state) or backed by the HA Redis instance — no per-machine session store.
+- **`entitlements-service`** — has a Postgres adapter; the startup guard requires `ENTITLEMENTS_DATABASE_URL` under `production`. Add it as a Fly secret before the first production deploy.
+- **`example-resource-service`** — reference/demo consumer, intentionally excluded from the deploy matrix. If deployed, requires the same guard-gated `*_DATABASE_URL` treatment plus a JWT verification config.
 
 ---
 
