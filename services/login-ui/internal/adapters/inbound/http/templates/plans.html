@@ -60,24 +60,25 @@
   {{ end }}
 
   {{ if .Plans }}
-    <div class="plans">
+    <div class="plans" data-testid="plans">
       {{ range .Plans }}
-        <form class="plan" method="post" action="/billing/checkout">
+        <form class="plan" method="post" action="/billing/checkout" data-testid="plan-{{ .Code }}">
           <input type="hidden" name="subject" value="{{ $.Subject }}">
           <input type="hidden" name="account" value="{{ $.AccountID }}">
           <input type="hidden" name="return_to" value="{{ $.ReturnTo }}">
+          <input type="hidden" name="login_challenge" value="{{ $.LoginChallenge }}">
           <input type="hidden" name="plan_code" value="{{ .Code }}">
           <div class="plan-info">
             <h2>{{ .Name }}</h2>
             {{ if .Description }}<p>{{ .Description }}</p>{{ end }}
             <p class="plan-price">{{ .DisplayPrice }} {{ if .Interval }}/ {{ .Interval }}{{ end }}</p>
           </div>
-          <button type="submit">Subscribe</button>
+          <button type="submit" data-testid="subscribe-{{ .Code }}" aria-label="Subscribe to {{ .Name }}">Subscribe</button>
         </form>
       {{ end }}
     </div>
   {{ else }}
-    <p class="empty">No plans are available right now. Please check back later.</p>
+    <p class="empty" data-testid="plans-empty">No plans are available right now. Please check back later.</p>
   {{ end }}
 </body>
 </html>

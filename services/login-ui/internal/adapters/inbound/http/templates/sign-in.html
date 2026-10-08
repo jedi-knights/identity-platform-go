@@ -7,11 +7,12 @@
 <body>
   <h1>Sign in</h1>
   {{if .Error}}<p role="alert" data-testid="error">{{.Error}}</p>{{end}}
-  <form method="POST" action="/sign-in">
+  <form method="POST" action="/sign-in" data-testid="sign-in-form">
     <input type="hidden" name="login_challenge" value="{{.LoginChallenge}}">
-    <label>Email <input type="email" name="email" required autocomplete="username"></label>
-    <label>Password <input type="password" name="password" required autocomplete="current-password"></label>
-    <button type="submit">Sign in</button>
+    <label>Email <input type="email" name="email" required autocomplete="username" data-testid="email"></label>
+    <label>Password <input type="password" name="password" required autocomplete="current-password" data-testid="password"></label>
+    <button type="submit" data-testid="submit">Sign in</button>
   </form>
+  <p>No account yet? <a href="/sign-up{{if .LoginChallenge}}?login_challenge={{.LoginChallenge}}{{end}}" data-testid="link-signup">Create one</a>.</p>
 </body>
 </html>
