@@ -88,11 +88,6 @@ func (h *Handler) CreatePersonalAccount(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// Health handles GET /health.
-func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
 // writeJSON serialises v as JSON and writes it with status.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

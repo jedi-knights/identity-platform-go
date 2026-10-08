@@ -119,7 +119,7 @@ func setupTracing(ctx context.Context, cfg *config.Config, logger logging.Logger
 	if !cfg.Tracing.Enabled {
 		return func(context.Context) error { return nil }, nil
 	}
-	shutdown, err := platformotel.Init(ctx, platformotel.Config{
+	shutdown, err := platformotel.Init(ctx, platformotel.Config{ //nolint:staticcheck // SA1019: tracing-only today; moving to otel.New adds a metrics listener and is a separate change
 		ServiceName:      "authorization-policy-service",
 		ServiceVersion:   cfg.Tracing.ServiceVersion,
 		Environment:      cfg.Log.Environment,
