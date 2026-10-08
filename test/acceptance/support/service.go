@@ -33,6 +33,19 @@ func FreePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
+// metricsAddrEnv maps a service name to its <PREFIX>_METRICS_ADDR variable.
+// Every service binds the Prometheus scrape listener on :9464 by default, so
+// topologies that start several services on one host must give each an
+// ephemeral port or the second one fails to start (address already in use).
+var metricsAddrEnv = map[string]string{
+	"auth-server":                 "AUTH_METRICS_ADDR",
+	"token-introspection-service": "INTROSPECT_METRICS_ADDR",
+	"example-resource-service":    "RESOURCE_METRICS_ADDR",
+	"client-registry-service":     "CLIENT_METRICS_ADDR",
+	"identity-service":            "IDENTITY_METRICS_ADDR",
+	"login-ui":                    "LOGIN_UI_METRICS_ADDR",
+}
+
 // StartService spawns binaryPath with the current process's environment
 // plus env, and waits for it to accept TCP connections on port before
 // returning. If the process exits before becoming ready, its captured
@@ -40,7 +53,11 @@ func FreePort() (int, error) {
 // the full timeout.
 func StartService(ctx context.Context, name, binaryPath string, port int, env []string) (*RunningService, error) {
 	cmd := exec.CommandContext(ctx, binaryPath)
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = os.Environ()
+	if v, ok := metricsAddrEnv[name]; ok {
+		cmd.Env = append(cmd.Env, v+"=127.0.0.1:0") // ephemeral scrape port; caller env below may override
+	}
+	cmd.Env = append(cmd.Env, env...)
 	output := &bytes.Buffer{}
 	cmd.Stdout = output
 	cmd.Stderr = output
