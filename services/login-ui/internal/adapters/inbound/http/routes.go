@@ -4,14 +4,12 @@ import (
 	"net/http"
 
 	"github.com/jedi-knights/go-logging/pkg/logging"
-	"github.com/jedi-knights/go-platform/httputil"
+	"github.com/jedi-knights/go-platform/httpmw"
 )
 
-// NewRouter builds the login-ui HTTP mux and wraps it with the standard
-// trace-id / logging / recovery middleware chain. Outermost-first ordering
-// matches the rest of the platform's services: Recovery wraps Logging
-// wraps TraceID so a panic surfaces a structured 500 with a trace id
-// already attached.
+// NewRouter builds the login-ui HTTP mux and wraps it with the platform
+// middleware stack (httpmw.Stack): request ID, trace ID, panic recovery, and
+// access logging, in that order.
 func NewRouter(h *Handler, logger logging.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", h.Health)
@@ -28,9 +26,5 @@ func NewRouter(h *Handler, logger logging.Logger) http.Handler {
 	mux.HandleFunc("GET /accounts", h.AccountsGet)
 	mux.HandleFunc("POST /accounts", h.AccountsPost)
 
-	return httputil.RecoveryMiddleware(logger)(
-		httputil.LoggingMiddleware(logger)(
-			httputil.TraceIDMiddleware(mux),
-		),
-	)
+	return httpmw.Stack(logger)(mux)
 }
