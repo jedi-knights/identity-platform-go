@@ -8,13 +8,13 @@
   <h1>Sign up</h1>
   <p>Create your account. You'll pick a plan on the next screen.</p>
   {{if .Error}}<p role="alert" data-testid="error">{{.Error}}</p>{{end}}
-  <form method="POST" action="/sign-up">
+  <form method="POST" action="/sign-up" data-testid="sign-up-form">
     <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
-    <label>Name <input type="text" name="name" required autocomplete="name" value="{{.Name}}"></label>
-    <label>Email <input type="email" name="email" required autocomplete="email" value="{{.Email}}"></label>
-    <label>Password <input type="password" name="password" required autocomplete="new-password"></label>
-    <button type="submit">Create account</button>
+    <label>Name <input type="text" name="name" required autocomplete="name" value="{{.Name}}" data-testid="name"></label>
+    <label>Email <input type="email" name="email" required autocomplete="email" value="{{.Email}}" data-testid="email"></label>
+    <label>Password <input type="password" name="password" required autocomplete="new-password" data-testid="password"></label>
+    <button type="submit" data-testid="submit">Create account</button>
   </form>
-  <p>Already have an account? <a href="/sign-in">Sign in</a>.</p>
+  <p>Already have an account? <a href="/sign-in" data-testid="link-signin">Sign in</a>.</p>
 </body>
 </html>
