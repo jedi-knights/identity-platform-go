@@ -20,6 +20,7 @@ type Config struct {
 	Log                 LogConfig                        `mapstructure:"log"`
 	ClientRegistry      ClientRegistryConfig             `mapstructure:"client_registry"`
 	IdentityService     IdentityServiceConfig            `mapstructure:"identity_service"`
+	EntitlementsService EntitlementsServiceConfig        `mapstructure:"entitlements_service"`
 	Redis               RedisConfig                      `mapstructure:"redis"`
 	Policy              PolicyConfig                     `mapstructure:"policy"`
 	Introspection       IntrospectionConfig              `mapstructure:"introspection"`
@@ -231,6 +232,14 @@ type IdentityServiceConfig struct {
 	URL string `mapstructure:"url"` // AUTH_IDENTITY_SERVICE_URL
 }
 
+// EntitlementsServiceConfig holds the URL for entitlements-service.
+// When URL is empty, the plan_ids claim is omitted from issued
+// id_tokens (Epic 8 / E8-S4). Non-fatal — token issuance degrades
+// gracefully rather than coupling to entitlements availability.
+type EntitlementsServiceConfig struct {
+	URL string `mapstructure:"url"` // AUTH_ENTITLEMENTS_SERVICE_URL
+}
+
 // AuditConfig configures the agent-audit emitter (ADR-0018 / ADR-0019).
 // The emitter is always wired with the best-effort stderr JSON sink;
 // the durable Postgres sink is added when DurableDSN is set.
@@ -283,6 +292,7 @@ func Load() (*Config, error) {
 	v.SetDefault("log.environment", "development")
 	v.SetDefault("client_registry.url", "")
 	v.SetDefault("identity_service.url", "")
+	v.SetDefault("entitlements_service.url", "")
 	v.SetDefault("redis.url", "")
 	v.SetDefault("jwt.audience", []string{})
 	v.SetDefault("introspection.secret", "")
