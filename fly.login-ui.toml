@@ -62,3 +62,13 @@ kill_timeout   = "30s"
 [[vm]]
   size   = "shared-cpu-1x"
   memory = "256mb"
+
+# Prometheus scrape target per the fleet-wide observability strategy.
+# The service exposes /metrics on :9464 (OTel's conventional port) via
+# go-platform/httpserver so Fly's hosted Prometheus can pull Go runtime
+# + OTel contrib runtime instrumentation metrics plus any
+# service-registered counters without routing through the main HTTP
+# mux's auth/CORS stack.
+[metrics]
+  port = 9464
+  path = "/metrics"
