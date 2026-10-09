@@ -96,6 +96,31 @@ type ActiveAccountFetcher interface {
 	GetActiveAccount(ctx context.Context, userID string) (accountID string, err error)
 }
 
+// UserPlansFetcher is the outbound port for resolving the identity-
+// platform plan ids active on the user's currently-selected account
+// (Epic 8 / E8-S4). Backed by entitlements-service's
+// GET /users/{id}/seats — the adapter filters the returned seat list
+// down to the seat whose account_id matches activeAccountID and
+// returns the plan ids on that seat.
+//
+// Empty slice (nil error) is the "no plan on this account" signal —
+// the caller passes it through to omitempty at claim-construction time
+// and the claim is dropped from the issued token. A non-nil error is a
+// fetch failure; the caller logs and issues the token without the
+// claim, matching the ActiveAccountFetcher non-fatal fallback so an
+// entitlements-service outage never takes down token issuance.
+//
+// When auth-server is run without AUTH_ENTITLEMENTS_SERVICE_URL the
+// implementation is nil — every strategy behaves as if entitlements-
+// service were unwired and omits the claim.
+//
+// activeAccountID may be empty: a user who has never selected an
+// account has no plan context, so an empty activeAccountID short-
+// circuits to an empty slice without hitting entitlements-service.
+type UserPlansFetcher interface {
+	GetUserPlans(ctx context.Context, userID, activeAccountID string) (planIDs []string, err error)
+}
+
 // ClientJWKSFetcher is the outbound port for resolving an RFC 7523
 // client-assertion signing key (ADR-0023). Unlike this platform's own
 // JWKS (one document, fixed at process startup — see

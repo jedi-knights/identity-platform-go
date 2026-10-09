@@ -36,6 +36,14 @@ type IDTokenIssuance struct {
 	// access token (Epic 7 / E7-S3c). Empty omits the claim.
 	ActiveAccountID string
 
+	// PlanIDs carries the identity-platform plan ids active on the
+	// user's currently-selected account (Epic 8 / E8-S4). OIDC relying
+	// parties (Touchline first) mirror this into their local users
+	// table so plan-gated UI decisions resolve from a local lookup
+	// instead of a per-request entitlements-service round trip. Nil /
+	// empty slice omits the claim via omitempty.
+	PlanIDs []string
+
 	IssuedAt  time.Time
 	ExpiresAt time.Time
 }
@@ -87,6 +95,7 @@ func (g *IDTokenGenerator) Generate(_ context.Context, req IDTokenIssuance) (str
 		EmailVerified:   req.EmailVerified,
 		Name:            req.Name,
 		ActiveAccountID: req.ActiveAccountID,
+		PlanIDs:         append([]string(nil), req.PlanIDs...),
 	}
 	if !req.AuthTime.IsZero() {
 		claims.AuthTime = req.AuthTime.Unix()

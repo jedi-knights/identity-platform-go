@@ -33,8 +33,13 @@ kill_timeout   = "30s"
   # register real clients via client-registry-service's POST /clients.
   AUTH_DEV_SEED_CLIENTS     = "false"
   # Inter-service URLs over the private network.
-  AUTH_CLIENT_REGISTRY_URL  = "http://jk-client-registry-service.internal:8082"
-  AUTH_IDENTITY_SERVICE_URL = "http://jk-identity-service.internal:8081"
+  AUTH_CLIENT_REGISTRY_URL      = "http://jk-client-registry-service.internal:8082"
+  AUTH_IDENTITY_SERVICE_URL     = "http://jk-identity-service.internal:8081"
+  # E8-S4: entitlements-service is queried at code-exchange time to stamp
+  # the plan_ids claim onto the issued id_token. Nil-safe — when
+  # entitlements-service is unavailable or the user has no active account,
+  # the claim is omitted via omitempty rather than failing token issuance.
+  AUTH_ENTITLEMENTS_SERVICE_URL = "http://jk-entitlements-service.internal:8086"
 
 # Machine-level health check (no public routing required).
 [checks]

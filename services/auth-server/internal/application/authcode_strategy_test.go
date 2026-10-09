@@ -510,3 +510,93 @@ func TestAuthorizationCodeStrategy_Handle_FetcherErrorIsNonFatal(t *testing.T) {
 		t.Errorf("saved.ActiveAccountID = %q, want empty on fetcher error (non-fatal)", saved.ActiveAccountID)
 	}
 }
+
+// --- E8-S4: plan_ids claim wiring ---
+
+// fakeUserPlansFetcher is a controllable ports.UserPlansFetcher stand-
+// in for tests that need to verify the strategy's fetch-and-stamp
+// behaviour, plus the non-fatal fallback when the fetch fails.
+type fakeUserPlansFetcher struct {
+	resp []string
+	err  error
+	// gotUserID and gotActiveAccountID record the arguments the
+	// strategy passed on the last call so tests can assert the
+	// fetcher saw (code.Subject, resolvedActiveAccountID).
+	gotUserID          string
+	gotActiveAccountID string
+}
+
+func (f *fakeUserPlansFetcher) GetUserPlans(_ context.Context, userID, activeAccountID string) ([]string, error) {
+	f.gotUserID = userID
+	f.gotActiveAccountID = activeAccountID
+	return f.resp, f.err
+}
+
+// newAuthCodeFixturesWithIDToken returns fixtures wired with a real
+// IDTokenGenerator so maybeIssueIDToken runs the plan_ids resolution
+// path (which only fires when the strategy was configured for OIDC).
+func newAuthCodeFixturesWithIDToken(t *testing.T) *authCodeFixtures {
+	t.Helper()
+	f := newAuthCodeFixtures(t)
+	ks := newTestKeySet(t, "kid-test-plans")
+	idGen := application.NewIDTokenGenerator(ks, "https://auth.test")
+	// Rebuild the strategy with the generator wired. The fixtures'
+	// mocks are reused verbatim — mutating f.strategy keeps the test
+	// data flow (f.req, f.tokenRepo) consistent.
+	f.strategy = application.NewAuthorizationCodeStrategy(
+		f.clientAuth, f.codeRepo, f.tokenRepo, f.refreshTokenRepo,
+		&mockTokenGen{}, nil, nil, idGen,
+		time.Hour, 7*24*time.Hour, 5*time.Minute, nil,
+	)
+	return f
+}
+
+// TestAuthorizationCodeStrategy_Handle_CallsUserPlansFetcher asserts
+// the fetcher receives (code.Subject, resolvedActiveAccountID) on a
+// successful code redemption that issues an id_token. The claim
+// emission wire-shape is already pinned by go-platform/jwtutil tests;
+// this test pins the strategy-to-fetcher integration point.
+func TestAuthorizationCodeStrategy_Handle_CallsUserPlansFetcher(t *testing.T) {
+	f := newAuthCodeFixturesWithIDToken(t)
+	af := &fakeActiveAccountFetcher{resp: "acc-abc"}
+	pf := &fakeUserPlansFetcher{resp: []string{"plan-free"}}
+	f.strategy.WithActiveAccountFetcher(af).WithUserPlansFetcher(pf)
+
+	if _, err := f.strategy.Handle(context.Background(), f.req); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if pf.gotUserID != "user-1" {
+		t.Errorf("fetcher.userID = %q, want user-1 (code subject)", pf.gotUserID)
+	}
+	if pf.gotActiveAccountID != "acc-abc" {
+		t.Errorf("fetcher.activeAccountID = %q, want acc-abc", pf.gotActiveAccountID)
+	}
+}
+
+// TestAuthorizationCodeStrategy_Handle_UnwiredPlansFetcherIsNonFatal
+// pins the degradation contract: an unset AUTH_ENTITLEMENTS_SERVICE_URL
+// must not take down token issuance.
+func TestAuthorizationCodeStrategy_Handle_UnwiredPlansFetcherIsNonFatal(t *testing.T) {
+	f := newAuthCodeFixturesWithIDToken(t)
+	// Deliberately do NOT wire the plans fetcher.
+	f.strategy.WithActiveAccountFetcher(&fakeActiveAccountFetcher{resp: "acc-abc"})
+
+	if _, err := f.strategy.Handle(context.Background(), f.req); err != nil {
+		t.Fatalf("Handle must succeed with unwired plans fetcher: %v", err)
+	}
+}
+
+// TestAuthorizationCodeStrategy_Handle_PlansFetcherErrorIsNonFatal
+// pins the same fallback behaviour the active-account fetcher has: a
+// fetch failure must not surface to the user.
+func TestAuthorizationCodeStrategy_Handle_PlansFetcherErrorIsNonFatal(t *testing.T) {
+	f := newAuthCodeFixturesWithIDToken(t)
+	pf := &fakeUserPlansFetcher{err: errors.New("entitlements-service down")}
+	f.strategy.
+		WithActiveAccountFetcher(&fakeActiveAccountFetcher{resp: "acc-abc"}).
+		WithUserPlansFetcher(pf)
+
+	if _, err := f.strategy.Handle(context.Background(), f.req); err != nil {
+		t.Fatalf("Handle must succeed despite plans fetcher error: %v", err)
+	}
+}

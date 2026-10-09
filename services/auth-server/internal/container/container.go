@@ -22,6 +22,7 @@ import (
 
 	inboundhttp "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/inbound/http"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/clientregistry"
+	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/entitlementsservice"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/identityservice"
 	jwksadapter "github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/jwks"
 	"github.com/ocrosby/identity-platform-go/services/auth-server/internal/adapters/outbound/memory"
@@ -81,6 +82,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, userAuthenticatorProvider)
 	platform.Register(c, userClaimsFetcherProvider)
 	platform.Register(c, activeAccountFetcherProvider)
+	platform.Register(c, userPlansFetcherProvider)
 	platform.Register(c, idTokenGeneratorProvider)
 	platform.Register(c, permissionsFetcherProvider)
 	platform.Register(c, signingKeySetProvider)
@@ -401,6 +403,19 @@ func activeAccountFetcherProvider(ctx context.Context, c *platform.Container) (p
 	return identityservice.NewActiveAccountFetcher(cfg.IdentityService.URL, httpClient), nil
 }
 
+// userPlansFetcherProvider wires the Epic 8 / E8-S4 outbound port.
+// Nil when AUTH_ENTITLEMENTS_SERVICE_URL is unset — the
+// authorization_code strategy then omits plan_ids from the issued
+// id_token, mirroring active_account_id's non-fatal degradation.
+func userPlansFetcherProvider(ctx context.Context, c *platform.Container) (ports.UserPlansFetcher, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	if cfg.EntitlementsService.URL == "" {
+		return nil, nil
+	}
+	return entitlementsservice.NewUserPlansFetcher(cfg.EntitlementsService.URL, httpClient), nil
+}
+
 // idTokenGeneratorProvider wires the OIDC ID-token generator. Nil when
 // AUTH_JWT_OIDC_ISSUER is empty or the signing alg is HS256 — the
 // authorization_code strategy then keeps the OAuth-only response shape.
@@ -560,8 +575,12 @@ func authorizationCodeStrategyProvider(ctx context.Context, c *platform.Containe
 	// is unset; passing nil to WithActiveAccountFetcher clears the wiring
 	// (Epic 7 / E7-S3c).
 	activeAccountFetcher, _ := platform.Resolve[ports.ActiveAccountFetcher](ctx, c)
+	// userPlansFetcher is nil-resolved when AUTH_ENTITLEMENTS_SERVICE_URL
+	// is unset; the issued id_token then omits plan_ids via omitempty
+	// (Epic 8 / E8-S4).
+	userPlansFetcher, _ := platform.Resolve[ports.UserPlansFetcher](ctx, c)
 	strategy := application.NewAuthorizationCodeStrategy(cw.authenticator, codeRepo, repos.token, repos.refresh, gen, fetcher, claimsFetcher, idTokenGen, ttl, refreshTTL, idTokenTTL, assertionAuth)
-	return strategy.WithActiveAccountFetcher(activeAccountFetcher), nil
+	return strategy.WithActiveAccountFetcher(activeAccountFetcher).WithUserPlansFetcher(userPlansFetcher), nil
 }
 
 func refreshTokenStrategyProvider(ctx context.Context, c *platform.Container) (*application.RefreshTokenStrategy, error) {
