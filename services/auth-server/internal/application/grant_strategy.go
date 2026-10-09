@@ -643,6 +643,14 @@ type AuthorizationCodeStrategy struct {
 	// [AuthorizationCodeStrategy.WithActiveAccountFetcher] at the
 	// composition root.
 	activeAccountFetcher ports.ActiveAccountFetcher
+
+	// userPlansFetcher resolves the plan ids active on the user's
+	// currently-selected account (Epic 8 / E8-S4). Nil = not wired;
+	// tokens issue without the plan_ids claim. Non-fatal on fetch
+	// failure — mirrors activeAccountFetcher's log-and-continue
+	// contract so an entitlements-service outage never takes down
+	// token issuance.
+	userPlansFetcher ports.UserPlansFetcher
 }
 
 // NewAuthorizationCodeStrategy wires the strategy with every collaborator
@@ -688,6 +696,15 @@ func NewAuthorizationCodeStrategy(
 // strategy behaves as if identity-service is unwired.
 func (s *AuthorizationCodeStrategy) WithActiveAccountFetcher(f ports.ActiveAccountFetcher) *AuthorizationCodeStrategy {
 	s.activeAccountFetcher = f
+	return s
+}
+
+// WithUserPlansFetcher wires the Epic 8 / E8-S4 outbound port that
+// resolves plan ids on the user's selected account at token issuance.
+// Chainable; passing nil clears the wiring — the strategy issues
+// id_tokens without the plan_ids claim (claim omitted via omitempty).
+func (s *AuthorizationCodeStrategy) WithUserPlansFetcher(f ports.UserPlansFetcher) *AuthorizationCodeStrategy {
+	s.userPlansFetcher = f
 	return s
 }
 
@@ -868,8 +885,14 @@ func (s *AuthorizationCodeStrategy) maybeIssueIDToken(ctx context.Context, clien
 		AuthTime:        code.IssuedAt,
 		AMR:             []string{"pwd"},
 		ActiveAccountID: activeAccountID,
-		IssuedAt:        now,
-		ExpiresAt:       now.Add(s.idTokenTTL),
+		// E8-S4: plan ids on the user's selected account travel on the
+		// id_token so OIDC relying parties mirror them into their local
+		// users table instead of calling entitlements-service per
+		// request. Nil when the fetcher is unwired, the user has no
+		// active account, or no plan is active on that account.
+		PlanIDs:   s.resolvePlanIDs(ctx, code.Subject, activeAccountID),
+		IssuedAt:  now,
+		ExpiresAt: now.Add(s.idTokenTTL),
 	}
 	s.populateProfileClaims(ctx, code, &issuance)
 	return s.idTokenGen.Generate(ctx, issuance)
@@ -891,6 +914,24 @@ func (s *AuthorizationCodeStrategy) resolveActiveAccount(ctx context.Context, su
 		return ""
 	}
 	return id
+}
+
+// resolvePlanIDs queries the outbound port for the plan ids active on
+// the user's selected account (Epic 8 / E8-S4). Returns nil when the
+// port is unwired, the entitlements-service call fails, the user has
+// not selected an account, or no plan is active on it — non-fatal in
+// the same way resolveActiveAccount is. Callers pass the result
+// through omitempty at claim-construction time, so a nil slice drops
+// the plan_ids claim from the issued id_token.
+func (s *AuthorizationCodeStrategy) resolvePlanIDs(ctx context.Context, subject, activeAccountID string) []string {
+	if s.userPlansFetcher == nil {
+		return nil
+	}
+	ids, err := s.userPlansFetcher.GetUserPlans(ctx, subject, activeAccountID)
+	if err != nil {
+		return nil
+	}
+	return ids
 }
 
 // populateProfileClaims fetches user claims when the scope set requests them
