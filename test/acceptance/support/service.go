@@ -38,12 +38,14 @@ func FreePort() (int, error) {
 // topologies that start several services on one host must give each an
 // ephemeral port or the second one fails to start (address already in use).
 var metricsAddrEnv = map[string]string{
-	"auth-server":                 "AUTH_METRICS_ADDR",
-	"token-introspection-service": "INTROSPECT_METRICS_ADDR",
-	"example-resource-service":    "RESOURCE_METRICS_ADDR",
-	"client-registry-service":     "CLIENT_METRICS_ADDR",
-	"identity-service":            "IDENTITY_METRICS_ADDR",
-	"login-ui":                    "LOGIN_UI_METRICS_ADDR",
+	"auth-server":                  "AUTH_METRICS_ADDR",
+	"token-introspection-service":  "INTROSPECT_METRICS_ADDR",
+	"example-resource-service":     "RESOURCE_METRICS_ADDR",
+	"client-registry-service":      "CLIENT_METRICS_ADDR",
+	"identity-service":             "IDENTITY_METRICS_ADDR",
+	"login-ui":                     "LOGIN_UI_METRICS_ADDR",
+	"authorization-policy-service": "POLICY_METRICS_ADDR",
+	"entitlements-service":         "ENTITLEMENTS_METRICS_ADDR",
 }
 
 // StartService spawns binaryPath with the current process's environment
