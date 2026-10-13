@@ -9,7 +9,7 @@ require (
 	github.com/cucumber/messages/go/v21 v21.0.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
-	github.com/jedi-knights/go-platform v1.0.0
+	github.com/jedi-knights/go-platform v1.1.0
 	github.com/russellhaering/goxmldsig v1.6.0
 	github.com/testcontainers/testcontainers-go/modules/redis v0.43.0
 )
