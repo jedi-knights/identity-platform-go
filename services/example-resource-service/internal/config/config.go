@@ -22,6 +22,16 @@ type Config struct {
 	Database      DatabaseConfig      `mapstructure:"database"`
 	Policy        PolicyConfig        `mapstructure:"policy"`
 	Tracing       TracingConfig       `mapstructure:"tracing"`
+	Metrics       MetricsConfig       `mapstructure:"metrics"`
+}
+
+// MetricsConfig configures the Prometheus scrape listener started alongside the
+// main server.
+type MetricsConfig struct {
+	// Addr is the listen address. Empty selects the fleet default (:9464), which
+	// every fly.<svc>.toml [metrics] section assumes. Override when running several
+	// services directly on one host so their scrape ports do not collide.
+	Addr string `mapstructure:"addr"` // RESOURCE_METRICS_ADDR
 }
 
 // TracingConfig configures the OpenTelemetry SDK bootstrap. Every field
@@ -114,6 +124,7 @@ func Load() (*Config, error) {
 	v.SetDefault("tracing.exporter_protocol", "")
 	v.SetDefault("tracing.exporter_insecure", false)
 	v.SetDefault("tracing.sampler_ratio", 0.0)
+	v.SetDefault("metrics.addr", "") // empty: fleet default :9464
 
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
