@@ -111,6 +111,19 @@ type EmailConfig struct {
 	TokenTTLSeconds              int    `mapstructure:"token_ttl_secs"`
 	PasswordResetURLTemplate     string `mapstructure:"password_reset_url_template"`
 	PasswordResetTokenTTLSeconds int    `mapstructure:"password_reset_token_ttl_secs"`
+
+	// From is the sender address for every outgoing email, e.g.
+	// "Identity <noreply@example.com>". Required when Sender is "smtp".
+	// IDENTITY_EMAIL_FROM.
+	From string `mapstructure:"from"`
+
+	// SMTP* configure the "smtp" sender (submission port with STARTTLS).
+	// SMTPPassword is a secret: set it with `fly secrets set`, never in
+	// fly.toml. IDENTITY_EMAIL_SMTP_{HOST,PORT,USERNAME,PASSWORD}.
+	SMTPHost     string `mapstructure:"smtp_host"`
+	SMTPPort     int    `mapstructure:"smtp_port"`
+	SMTPUsername string `mapstructure:"smtp_username"`
+	SMTPPassword string `mapstructure:"smtp_password"`
 }
 
 // DatabaseConfig holds PostgreSQL connection settings.
@@ -149,6 +162,11 @@ func Load() (*Config, error) {
 	v.SetDefault("email.token_ttl_secs", 86400) // 24h
 	v.SetDefault("email.password_reset_url_template", "")
 	v.SetDefault("email.password_reset_token_ttl_secs", 3600) // 1h
+	v.SetDefault("email.from", "")
+	v.SetDefault("email.smtp_host", "")
+	v.SetDefault("email.smtp_port", 587)
+	v.SetDefault("email.smtp_username", "")
+	v.SetDefault("email.smtp_password", "")
 	v.SetDefault("ratelimit.reset_request_max", 5)
 	v.SetDefault("ratelimit.reset_request_window_secs", 3600) // 1h
 	v.SetDefault("ratelimit.reset_redeem_max", 10)
