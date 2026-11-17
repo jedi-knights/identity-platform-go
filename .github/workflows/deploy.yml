@@ -17,7 +17,8 @@ jobs:
     # Last 30 successful deploys per service: median ~60s, slowest ~530s.
     # Fly's Depot builder has stalled for 2.5-4.5h before failing, so cap
     # well above the slowest success but far below the 6h GitHub default.
-    timeout-minutes: 15
+    # Sized for the Deploy step below: 2 attempts x 10 min + setup headroom.
+    timeout-minutes: 25
     strategy:
       # Independent apps — keep deploying the rest if one fails.
       fail-fast: false
@@ -35,7 +36,20 @@ jobs:
       - name: Set up flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
 
+      # Fly's Depot remote builder fails transiently (deadline_exceeded /
+      # canceled push: runs 38383792449, 37846241504, and the #248 merge).
+      # A fresh attempt has succeeded within minutes each time, and
+      # `flyctl deploy` is idempotent, so retry once. Each attempt is capped
+      # at 10 min (slowest past success ~9 min) so a stalled builder fails
+      # fast instead of consuming the job budget.
       - name: Deploy
-        run: flyctl deploy -c fly.${{ matrix.service }}.toml --remote-only
+        run: |
+          for attempt in 1 2; do
+            if timeout 10m flyctl deploy -c fly.${{ matrix.service }}.toml --remote-only; then
+              exit 0
+            fi
+            echo "::warning::Deploy attempt $attempt of 2 failed for ${{ matrix.service }}"
+          done
+          exit 1
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
