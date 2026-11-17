@@ -36,7 +36,9 @@ jobs:
       - name: Run golangci-lint (${{ matrix.module }})
         uses: golangci/golangci-lint-action@v9.2.0
         with:
-          version: latest
+          # Pinned to match Taskfile.yml's install-tools. `latest` let a new
+          # errcheck release fail CI while local v2.11.4 passed. Bump both together.
+          version: v2.15.0
           args: --timeout=5m
           working-directory: ${{ matrix.module }}
 
