@@ -40,18 +40,20 @@ func NewPasswordResetter(baseURL string, httpClient *http.Client) *PasswordReset
 // 204 whether or not the address is registered, so success carries no
 // information about the account.
 func (p *PasswordResetter) RequestReset(ctx context.Context, email string) error {
-	return p.post(ctx, "/auth/request-password-reset", map[string]string{"email": email}, http.StatusNoContent)
+	return p.post(ctx, "/auth/request-password-reset", map[string]string{"email": email}, "", http.StatusNoContent)
 }
 
-// ResetPassword redeems a reset token and sets the new password.
-func (p *PasswordResetter) ResetPassword(ctx context.Context, token, newPassword string) error {
-	return p.post(ctx, "/auth/reset-password", map[string]string{"token": token, "new_password": newPassword}, http.StatusOK)
+// ResetPassword redeems a reset token and sets the new password. clientIP, when
+// non-empty, is sent as X-Forwarded-For so identity-service can key its redeem
+// rate limit on the end user (it honors the header only from trusted peers).
+func (p *PasswordResetter) ResetPassword(ctx context.Context, token, newPassword, clientIP string) error {
+	return p.post(ctx, "/auth/reset-password", map[string]string{"token": token, "new_password": newPassword}, clientIP, http.StatusOK)
 }
 
 // post sends body as JSON and maps the upstream status to an apperrors
 // category. wantStatus is the one success status for the endpoint. Error
 // messages never include the request body: it carries a token and password.
-func (p *PasswordResetter) post(ctx context.Context, path string, body any, wantStatus int) (retErr error) {
+func (p *PasswordResetter) post(ctx context.Context, path string, body any, clientIP string, wantStatus int) (retErr error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return apperrors.Wrap(apperrors.ErrCodeInternal, "marshalling password-reset request", err)
@@ -61,6 +63,9 @@ func (p *PasswordResetter) post(ctx context.Context, path string, body any, want
 		return apperrors.Wrap(apperrors.ErrCodeInternal, "building password-reset request", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if clientIP != "" {
+		req.Header.Set("X-Forwarded-For", clientIP)
+	}
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {

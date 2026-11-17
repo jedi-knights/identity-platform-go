@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -309,11 +310,35 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	log := platform.MustResolve[logging.Logger](ctx, c)
 	cfg := platform.MustResolve[*config.Config](ctx, c)
 	rl := cfg.RateLimit
+	proxies, err := parseTrustedProxies(rl.TrustedProxies)
+	if err != nil {
+		return nil, err
+	}
 	return inboundhttp.NewHandler(authSvc, authSvc, verifierSvc, authSvc, prefsSvc, resetSvc, log).
 		WithResetRateLimits(inboundhttp.ResetRateLimits{
-			RequestMax:    rl.ResetRequestMax,
-			RequestWindow: time.Duration(rl.ResetRequestWindowSecs) * time.Second,
-			RedeemMax:     rl.ResetRedeemMax,
-			RedeemWindow:  time.Duration(rl.ResetRedeemWindowSecs) * time.Second,
+			RequestMax:     rl.ResetRequestMax,
+			RequestWindow:  time.Duration(rl.ResetRequestWindowSecs) * time.Second,
+			RedeemMax:      rl.ResetRedeemMax,
+			RedeemWindow:   time.Duration(rl.ResetRedeemWindowSecs) * time.Second,
+			TrustedProxies: proxies,
 		}), nil
+}
+
+// parseTrustedProxies parses a comma-separated CIDR list. A malformed entry is
+// a startup error: silently dropping it would leave the limiter keyed on the
+// proxy's IP with no sign anything was misconfigured.
+func parseTrustedProxies(list string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, part := range strings.Split(list, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		p, err := netip.ParsePrefix(part)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ratelimit.trusted_proxies entry %q: %w", part, err)
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
