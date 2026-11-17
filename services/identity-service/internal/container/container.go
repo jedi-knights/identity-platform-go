@@ -167,19 +167,35 @@ func sqliteRepositoriesProvider(ctx context.Context, c *platform.Container, dsn 
 }
 
 // emailSenderProvider selects an email-sender adapter based on
-// cfg.Email.Sender. stdout is the default; noop drops messages silently.
-// Unknown senders are rejected at startup so misconfiguration surfaces
-// immediately.
+// cfg.Email.Sender. stdout is the default; noop drops messages silently;
+// smtp delivers through a relay. Unknown senders and incomplete smtp settings
+// are rejected at startup so misconfiguration surfaces immediately.
 func emailSenderProvider(ctx context.Context, c *platform.Container) (domain.EmailSender, error) {
 	cfg := platform.MustResolve[*config.Config](ctx, c)
 	log := platform.MustResolve[logging.Logger](ctx, c)
-	switch cfg.Email.Sender {
+	return newEmailSender(cfg.Email, log)
+}
+
+func newEmailSender(cfg config.EmailConfig, log logging.Logger) (domain.EmailSender, error) {
+	switch cfg.Sender {
 	case "", "stdout":
 		return email.NewStdoutSender(log), nil
 	case "noop":
 		return email.NewNoopSender(), nil
+	case "smtp":
+		s, err := email.NewSMTPSender(email.SMTPConfig{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			Username: cfg.SMTPUsername,
+			Password: cfg.SMTPPassword,
+			From:     cfg.From,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("email sender smtp: %w", err)
+		}
+		return s, nil
 	default:
-		return nil, fmt.Errorf("unknown email sender %q (want: stdout | noop)", cfg.Email.Sender)
+		return nil, fmt.Errorf("unknown email sender %q (want: stdout | noop | smtp)", cfg.Sender)
 	}
 }
 
