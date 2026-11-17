@@ -360,6 +360,65 @@ Authorization codes are persisted in Redis (atomic GET+DEL via Lua) when `AUTH_R
 |----------------------------|---------------|------------------|
 | `IDENTITY_SERVER_HOST`     | `0.0.0.0`    | Server bind host |
 | `IDENTITY_SERVER_PORT`     | `8081`        | Server port      |
+| `IDENTITY_EMAIL_SENDER`    | `stdout`      | `stdout` (logs the link), `noop`, or `smtp`. See [Configuring email](#configuring-email) |
+| `IDENTITY_EMAIL_FROM`      | _(empty)_     | Sender address, e.g. `Identity <noreply@example.com>`. Required for `smtp` |
+| `IDENTITY_EMAIL_SMTP_HOST` | _(empty)_     | SMTP relay host. Required for `smtp` |
+| `IDENTITY_EMAIL_SMTP_PORT` | `587`         | Relay submission port (STARTTLS). Port 465 is not supported |
+| `IDENTITY_EMAIL_SMTP_USERNAME` | _(empty)_ | Relay login; set together with the password |
+| `IDENTITY_EMAIL_SMTP_PASSWORD` | _(empty)_ | Relay password. A secret: never put it in `fly.*.toml` |
+| `IDENTITY_EMAIL_PASSWORD_RESET_URL_TEMPLATE` | _(empty)_ | Link emailed for password reset; `{{token}}` is replaced. Empty sends the bare token |
+| `IDENTITY_EMAIL_PASSWORD_RESET_TOKEN_TTL_SECS` | `3600` | How long a reset link works |
+| `IDENTITY_RATELIMIT_TRUSTED_PROXIES` | _(empty)_ | CIDRs whose `X-Forwarded-For` is trusted for per-user reset rate limiting |
+
+#### Configuring email
+
+Out of the box identity-service only **logs** password-reset links (`stdout`), so reset works
+for developers but real users never receive anything. To deliver mail you need an SMTP relay
+(SES, Postmark, Mailgun, your own) and a sending domain verified with it (SPF/DKIM), then:
+
+1. **Set the non-secret settings.** Locally, export them; on Fly, add them to `[env]` in
+   [`fly.identity-service.toml`](fly.identity-service.toml):
+
+   ```bash
+   IDENTITY_EMAIL_SENDER=smtp
+   IDENTITY_EMAIL_SMTP_HOST=smtp.example.com
+   IDENTITY_EMAIL_SMTP_PORT=587
+   IDENTITY_EMAIL_FROM="Identity <noreply@example.com>"
+   ```
+
+2. **Set the secrets.** On Fly, use secrets so they stay out of git:
+
+   ```bash
+   fly secrets set -a jk-identity-service \
+     IDENTITY_EMAIL_SMTP_USERNAME=... IDENTITY_EMAIL_SMTP_PASSWORD=...
+   ```
+
+3. **Point reset links at login-ui.** `IDENTITY_EMAIL_PASSWORD_RESET_URL_TEMPLATE` must be the
+   public URL of login-ui's `/reset-password` page with a `{{token}}` placeholder (already set
+   to `https://jk-login-ui.fly.dev/reset-password?token={{token}}` in `fly.identity-service.toml`).
+   login-ui also needs `LOGIN_UI_IDENTITY_SERVICE_URL` set, or `/forgot-password` and
+   `/reset-password` return 503.
+
+4. **Verify.** Redeploy, open `/forgot-password` on login-ui, and submit a registered address.
+   The email should arrive within a minute. The page shows the same confirmation whether or not
+   the send worked (that is deliberate, to avoid revealing which addresses have accounts), so if
+   nothing arrives, check identity-service's logs for `request password reset failed`: a failed send names the SMTP stage (`connecting`, `STARTTLS`, `authentication`,
+   `RCPT TO rejected`, ...) but never the password or the link.
+
+Things to know:
+
+- **Startup fails on incomplete settings.** `smtp` without a host or `IDENTITY_EMAIL_FROM`, or a
+  username without a password, stops the service rather than silently dropping mail. Set the
+  secrets *before* switching `IDENTITY_EMAIL_SENDER`, or the deploy will crash-loop.
+- **Credentials go over TLS only.** The relay must offer STARTTLS on the configured port;
+  otherwise login is refused (localhost relays are exempt, for development).
+- **The same sender serves email verification.** `IDENTITY_EMAIL_VERIFICATION_URL_TEMPLATE`
+  controls that link.
+- **Per-user reset rate limits behind login-ui.** To limit by end user instead of by login-ui's
+  address, set `IDENTITY_RATELIMIT_TRUSTED_PROXIES` on identity-service (Fly: `fdaa::/16`) and
+  `LOGIN_UI_SERVER_CLIENT_IP_HEADER` on login-ui (Fly: `Fly-Client-IP`). Both are set in the
+  checked-in Fly configs. Leave them empty where login-ui is not behind a proxy that overwrites
+  the header.
 
 ### client-registry-service
 
