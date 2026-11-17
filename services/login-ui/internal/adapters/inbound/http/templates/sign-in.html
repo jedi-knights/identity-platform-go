@@ -13,6 +13,7 @@
     <label>Password <input type="password" name="password" required autocomplete="current-password" data-testid="password"></label>
     <button type="submit" data-testid="submit">Sign in</button>
   </form>
+  {{if .ForgotPasswordEnabled}}<p><a href="/forgot-password{{if .LoginChallenge}}?login_challenge={{.LoginChallenge}}{{end}}" data-testid="link-forgot">Forgot your password?</a></p>{{end}}
   <p>No account yet? <a href="/sign-up{{if .LoginChallenge}}?login_challenge={{.LoginChallenge}}{{end}}" data-testid="link-signup">Create one</a>.</p>
 </body>
 </html>

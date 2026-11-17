@@ -51,6 +51,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, auditEmitterProvider)
 	platform.Register(c, userAuthenticatorProvider)
 	platform.Register(c, userRegistrarProvider)
+	platform.Register(c, passwordResetterProvider)
 	platform.Register(c, authCodeIssuerProvider)
 	platform.Register(c, deviceDeciderProvider)
 	platform.Register(c, billingClientProvider)
@@ -76,11 +77,13 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	seats, _ := platform.Resolve[ports.SeatLister](ctx, c)
 	activeAccount, _ := platform.Resolve[ports.ActiveAccountStore](ctx, c)
 	registrar, _ := platform.Resolve[ports.UserRegistrar](ctx, c)
+	passwordReset, _ := platform.Resolve[ports.PasswordResetter](ctx, c)
 	planActivator, _ := platform.Resolve[ports.AccountPlanActivator](ctx, c)
 	h := inboundhttp.NewHandler(userAuth, codeIssuer, logger).
 		WithAudit(emitter, "login-ui").
 		WithDeviceDecider(deviceDecider).
 		WithRegistrar(registrar).
+		WithPasswordReset(passwordReset).
 		WithAllowedReturnHosts(cfg.Billing.AllowedReturnHosts)
 	if billing != nil {
 		h = h.WithBilling(billing, cfg.Billing.SuccessURL, cfg.Billing.CancelURL)
@@ -236,6 +239,20 @@ func userRegistrarProvider(ctx context.Context, c *platform.Container) (ports.Us
 	}
 	httpClient := platform.MustResolve[*http.Client](ctx, c)
 	return identityservice.NewRegistrar(cfg.IdentityService.URL, httpClient), nil
+}
+
+// passwordResetterProvider wires the identity-service password-reset adapter
+// when LOGIN_UI_IDENTITY_SERVICE_URL is set — the same env var the
+// authenticator and registrar consume. Nil-resolves otherwise so
+// /forgot-password and /reset-password degrade to 503 and the sign-in page
+// hides its "Forgot your password?" link.
+func passwordResetterProvider(ctx context.Context, c *platform.Container) (ports.PasswordResetter, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	if cfg.IdentityService.URL == "" {
+		return nil, nil //nolint:nilnil // documented degradation path
+	}
+	httpClient := platform.MustResolve[*http.Client](ctx, c)
+	return identityservice.NewPasswordResetter(cfg.IdentityService.URL, httpClient), nil
 }
 
 // authCodeIssuerProvider wires the auth-server /internal/issue-code adapter
