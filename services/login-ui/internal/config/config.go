@@ -134,6 +134,11 @@ type AuditConfig struct {
 type ServerConfig struct {
 	Host string `mapstructure:"host"`
 	Port int    `mapstructure:"port"`
+	// ClientIPHeader names a header an edge proxy sets to the real client IP
+	// (Fly: "Fly-Client-IP"). It is forwarded to identity-service for per-user
+	// rate limiting. Leave empty unless that proxy overwrites the header, or
+	// callers could spoof it. LOGIN_UI_SERVER_CLIENT_IP_HEADER.
+	ClientIPHeader string `mapstructure:"client_ip_header"`
 }
 
 // LogConfig holds structured logging configuration.
@@ -176,6 +181,7 @@ func Load() (*Config, error) {
 
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", 8087)
+	v.SetDefault("server.client_ip_header", "")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "json")
 	v.SetDefault("log.environment", "development")

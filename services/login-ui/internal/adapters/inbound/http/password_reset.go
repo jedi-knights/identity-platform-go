@@ -2,7 +2,9 @@ package http
 
 import (
 	"html/template"
+	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/jedi-knights/go-platform/apperrors"
@@ -163,7 +165,7 @@ func (h *Handler) ResetPasswordPost(w http.ResponseWriter, r *http.Request) {
 		h.renderResetPassword(w, http.StatusOK, view)
 		return
 	}
-	if err := h.passwordReset.ResetPassword(r.Context(), token, password); err != nil {
+	if err := h.passwordReset.ResetPassword(r.Context(), token, password, h.clientIP(r)); err != nil {
 		view, status := h.resetPasswordFailure(token, err)
 		h.renderResetPassword(w, status, view)
 		return
@@ -234,4 +236,22 @@ func (h *Handler) renderResetPassword(w http.ResponseWriter, status int, view re
 	if err := resetPasswordTemplate.Execute(w, view); err != nil {
 		h.logger.Error("reset-password: template execution failed", "error", err)
 	}
+}
+
+// clientIP returns the end user's address for forwarding upstream: the
+// configured trusted header when it holds a valid IP, otherwise the TCP peer.
+// The header is honored only when the operator names it (WithClientIPHeader),
+// because anywhere that header is not overwritten by a trusted edge the
+// client controls it.
+func (h *Handler) clientIP(r *http.Request) string {
+	if h.clientIPHeader != "" {
+		if addr, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get(h.clientIPHeader))); err == nil {
+			return addr.String()
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

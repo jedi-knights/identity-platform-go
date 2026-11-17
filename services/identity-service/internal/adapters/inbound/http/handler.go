@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/netip"
 
 	"github.com/jedi-knights/go-platform/apperrors"
 
@@ -28,6 +29,7 @@ type Handler struct {
 	// Optional; nil means unlimited. See WithResetRateLimits.
 	requestResetLimiter *windowLimiter
 	redeemResetLimiter  *windowLimiter
+	trustedProxies      []netip.Prefix
 }
 
 func NewHandler(
@@ -282,7 +284,7 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ok, retryAfter := h.redeemResetLimiter.allow(clientIP(r)); !ok {
+	if ok, retryAfter := h.redeemResetLimiter.allow(h.clientIP(r)); !ok {
 		writeRateLimited(w, retryAfter)
 		return
 	}

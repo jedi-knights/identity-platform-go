@@ -84,6 +84,7 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 		WithDeviceDecider(deviceDecider).
 		WithRegistrar(registrar).
 		WithPasswordReset(passwordReset).
+		WithClientIPHeader(cfg.Server.ClientIPHeader).
 		WithAllowedReturnHosts(cfg.Billing.AllowedReturnHosts)
 	if billing != nil {
 		h = h.WithBilling(billing, cfg.Billing.SuccessURL, cfg.Billing.CancelURL)
