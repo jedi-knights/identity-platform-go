@@ -18,6 +18,8 @@ kill_timeout   = "30s"
   IDENTITY_LOG_FORMAT      = "json"
   IDENTITY_LOG_LEVEL       = "info"
   IDENTITY_LOG_ENVIRONMENT = "production"
+  # Link emailed for password reset; served by login-ui (/reset-password).
+  IDENTITY_EMAIL_PASSWORD_RESET_URL_TEMPLATE = "https://jk-login-ui.fly.dev/reset-password?token={{token}}"
 
 [checks]
   [checks.health]
