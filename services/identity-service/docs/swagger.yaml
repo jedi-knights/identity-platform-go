@@ -195,6 +195,10 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/httputil.ErrorResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
       summary: Request a password-reset email
       tags:
       - auth
@@ -245,6 +249,10 @@ paths:
             $ref: '#/definitions/httputil.ErrorResponse'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+        "429":
+          description: Too Many Requests
           schema:
             $ref: '#/definitions/httputil.ErrorResponse'
       summary: Reset password with a token

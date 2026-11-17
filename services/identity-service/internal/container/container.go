@@ -307,5 +307,13 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	prefsSvc := platform.MustResolve[*application.UserPreferencesService](ctx, c)
 	resetSvc := platform.MustResolve[*application.PasswordResetService](ctx, c)
 	log := platform.MustResolve[logging.Logger](ctx, c)
-	return inboundhttp.NewHandler(authSvc, authSvc, verifierSvc, authSvc, prefsSvc, resetSvc, log), nil
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	rl := cfg.RateLimit
+	return inboundhttp.NewHandler(authSvc, authSvc, verifierSvc, authSvc, prefsSvc, resetSvc, log).
+		WithResetRateLimits(inboundhttp.ResetRateLimits{
+			RequestMax:    rl.ResetRequestMax,
+			RequestWindow: time.Duration(rl.ResetRequestWindowSecs) * time.Second,
+			RedeemMax:     rl.ResetRedeemMax,
+			RedeemWindow:  time.Duration(rl.ResetRedeemWindowSecs) * time.Second,
+		}), nil
 }

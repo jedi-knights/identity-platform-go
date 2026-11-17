@@ -18,6 +18,21 @@ type Config struct {
 	Tracing      TracingConfig      `mapstructure:"tracing"`
 	Metrics      MetricsConfig      `mapstructure:"metrics"`
 	Entitlements EntitlementsConfig `mapstructure:"entitlements"`
+	RateLimit    RateLimitConfig    `mapstructure:"ratelimit"`
+}
+
+// RateLimitConfig tunes the password-reset endpoint limiters. A zero Max
+// disables that limiter. Limits are per replica, so the fleet-wide ceiling is
+// replicas x Max.
+type RateLimitConfig struct {
+	// ResetRequestMax is how many POST /auth/request-password-reset calls one
+	// email address may make per window. IDENTITY_RATELIMIT_RESET_REQUEST_MAX.
+	ResetRequestMax        int `mapstructure:"reset_request_max"`
+	ResetRequestWindowSecs int `mapstructure:"reset_request_window_secs"`
+	// ResetRedeemMax is how many POST /auth/reset-password calls one client IP
+	// may make per window. IDENTITY_RATELIMIT_RESET_REDEEM_MAX.
+	ResetRedeemMax        int `mapstructure:"reset_redeem_max"`
+	ResetRedeemWindowSecs int `mapstructure:"reset_redeem_window_secs"`
 }
 
 // EntitlementsConfig configures the outbound port to entitlements-service
@@ -129,6 +144,10 @@ func Load() (*Config, error) {
 	v.SetDefault("email.token_ttl_secs", 86400) // 24h
 	v.SetDefault("email.password_reset_url_template", "")
 	v.SetDefault("email.password_reset_token_ttl_secs", 3600) // 1h
+	v.SetDefault("ratelimit.reset_request_max", 5)
+	v.SetDefault("ratelimit.reset_request_window_secs", 3600) // 1h
+	v.SetDefault("ratelimit.reset_redeem_max", 10)
+	v.SetDefault("ratelimit.reset_redeem_window_secs", 900) // 15m
 	v.SetDefault("audit.durable_dsn", "")
 	v.SetDefault("audit.skip_migration", false)
 	v.SetDefault("tracing.enabled", false)
