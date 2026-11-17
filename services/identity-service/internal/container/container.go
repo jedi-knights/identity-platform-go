@@ -64,6 +64,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	platform.Register(c, entitlementsCreatorProvider)
 	platform.Register(c, authServiceProvider)
 	platform.Register(c, emailVerificationServiceProvider)
+	platform.Register(c, passwordResetServiceProvider)
 	platform.Register(c, userPreferencesServiceProvider)
 	platform.Register(c, handlerProvider)
 
@@ -73,12 +74,13 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 	return c, nil
 }
 
-// repositories bundles the user, verification-token, and user-preferences
-// repos into a single eager registration so they can share a connection
+// repositories bundles the user, verification-token, password-reset-token,
+// and user-preferences repos into a single eager registration so they can share a connection
 // pool when postgres is configured.
 type repositories struct {
 	user  domain.UserRepository
 	token domain.VerificationTokenRepository
+	reset domain.PasswordResetTokenRepository
 	prefs domain.UserPreferencesRepository
 }
 
@@ -89,6 +91,7 @@ func repositoriesProvider(ctx context.Context, c *platform.Container) (*reposito
 		return &repositories{
 			user:  memory.NewUserRepository(),
 			token: memory.NewVerificationTokenRepository(),
+			reset: memory.NewPasswordResetTokenRepository(),
 			prefs: memory.NewUserPreferencesRepository(),
 		}, nil
 	case isSQLiteDSN(cfg.Database.URL):
@@ -126,6 +129,7 @@ func postgresRepositoriesProvider(ctx context.Context, c *platform.Container, ds
 	return &repositories{
 		user:  postgres.NewUserRepository(pool),
 		token: postgres.NewVerificationTokenRepository(pool),
+		reset: postgres.NewPasswordResetTokenRepository(pool),
 		prefs: postgres.NewUserPreferencesRepository(pool),
 	}, nil
 }
@@ -156,6 +160,7 @@ func sqliteRepositoriesProvider(ctx context.Context, c *platform.Container, dsn 
 	return &repositories{
 		user:  sqliteadapter.NewUserRepository(db),
 		token: sqliteadapter.NewVerificationTokenRepository(db),
+		reset: sqliteadapter.NewPasswordResetTokenRepository(db),
 		prefs: sqliteadapter.NewUserPreferencesRepository(db),
 	}, nil
 }
@@ -258,6 +263,32 @@ func emailVerificationServiceProvider(ctx context.Context, c *platform.Container
 	), nil
 }
 
+func passwordResetServiceProvider(ctx context.Context, c *platform.Container) (*application.PasswordResetService, error) {
+	cfg := platform.MustResolve[*config.Config](ctx, c)
+	repos, err := platform.Resolve[*repositories](ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	sender, err := platform.Resolve[domain.EmailSender](ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	hasher, err := platform.Resolve[domain.PasswordHasher](ctx, c)
+	if err != nil {
+		return nil, err
+	}
+	return application.NewPasswordResetService(
+		repos.user,
+		repos.reset,
+		sender,
+		hasher,
+		application.PasswordResetConfig{
+			TokenTTL:         time.Duration(cfg.Email.PasswordResetTokenTTLSeconds) * time.Second,
+			ResetURLTemplate: cfg.Email.PasswordResetURLTemplate,
+		},
+	), nil
+}
+
 // userPreferencesServiceProvider constructs the E7-S3a per-user preferences
 // service, wiring the shared audit emitter so successful active-account
 // changes emit ADR-0018 user_active_account_changed events.
@@ -274,6 +305,7 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	authSvc := platform.MustResolve[*application.AuthService](ctx, c)
 	verifierSvc := platform.MustResolve[*application.EmailVerificationService](ctx, c)
 	prefsSvc := platform.MustResolve[*application.UserPreferencesService](ctx, c)
+	resetSvc := platform.MustResolve[*application.PasswordResetService](ctx, c)
 	log := platform.MustResolve[logging.Logger](ctx, c)
-	return inboundhttp.NewHandler(authSvc, authSvc, verifierSvc, authSvc, prefsSvc, log), nil
+	return inboundhttp.NewHandler(authSvc, authSvc, verifierSvc, authSvc, prefsSvc, resetSvc, log), nil
 }

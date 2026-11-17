@@ -46,9 +46,28 @@ definitions:
       user_id:
         type: string
     type: object
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.RequestPasswordResetRequest:
+    properties:
+      email:
+        type: string
+    type: object
   github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.RequestVerificationRequest:
     properties:
       email:
+        type: string
+    type: object
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.ResetPasswordRequest:
+    properties:
+      new_password:
+        type: string
+      token:
+        type: string
+    type: object
+  github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.ResetPasswordResponse:
+    properties:
+      email:
+        type: string
+      user_id:
         type: string
     type: object
   github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.UserClaims:
@@ -158,6 +177,27 @@ paths:
       summary: Register new user
       tags:
       - auth
+  /auth/request-password-reset:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Email
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.RequestPasswordResetRequest'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Request a password-reset email
+      tags:
+      - auth
   /auth/request-verification:
     post:
       consumes:
@@ -179,6 +219,35 @@ paths:
           schema:
             $ref: '#/definitions/httputil.ErrorResponse'
       summary: Request a verification email
+      tags:
+      - auth
+  /auth/reset-password:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Token + new password
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.ResetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_domain.ResetPasswordResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httputil.ErrorResponse'
+      summary: Reset password with a token
       tags:
       - auth
   /auth/verify-email:
@@ -247,7 +316,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_adapters_inbound_http.activeAccountResponse'
+            $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_adapters_inbound_http.activeAccountResponse'
         "400":
           description: Bad Request
           schema:
@@ -279,7 +348,7 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/internal_adapters_inbound_http.setActiveAccountRequest'
+          $ref: '#/definitions/github_com_ocrosby_identity-platform-go_services_identity-service_internal_adapters_inbound_http.setActiveAccountRequest'
       responses:
         "204":
           description: No Content

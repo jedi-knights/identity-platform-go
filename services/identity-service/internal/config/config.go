@@ -71,19 +71,26 @@ type AuditConfig struct {
 	SkipMigration bool `mapstructure:"skip_migration"` // IDENTITY_AUDIT_SKIP_MIGRATION
 }
 
-// EmailConfig holds the email-sender configuration. The flow is:
+// EmailConfig holds the email-sender configuration. The verification and
+// password-reset flows share the sender adapter but each has its own URL
+// template and TTL so the two emails can address different hosts and
+// expire on independent schedules.
 //
-//	sender:                  which adapter to use (stdout | noop)
-//	verification_url_template: how the verification URL is rendered before
-//	                           it is handed to the sender. Must contain
-//	                           "{{token}}" — the application substitutes the
-//	                           one-time token at send time.
-//	token_ttl_secs:           how long a fresh verification token remains
-//	                           redeemable. Defaults to 86400 (24 hours).
+//	sender:                        which adapter to use (stdout | noop)
+//	verification_url_template:     how the verification URL is rendered. Must
+//	                               contain "{{token}}" — substituted with the
+//	                               one-time token at send time.
+//	token_ttl_secs:                verification token lifetime. Default 86400 (24h).
+//	password_reset_url_template:   same, for password-reset emails. Empty sends
+//	                               the bare token (fine for the stdout sender
+//	                               in development; set it in production).
+//	password_reset_token_ttl_secs: reset token lifetime. Default 3600 (1h).
 type EmailConfig struct {
-	Sender                  string `mapstructure:"sender"`
-	VerificationURLTemplate string `mapstructure:"verification_url_template"`
-	TokenTTLSeconds         int    `mapstructure:"token_ttl_secs"`
+	Sender                       string `mapstructure:"sender"`
+	VerificationURLTemplate      string `mapstructure:"verification_url_template"`
+	TokenTTLSeconds              int    `mapstructure:"token_ttl_secs"`
+	PasswordResetURLTemplate     string `mapstructure:"password_reset_url_template"`
+	PasswordResetTokenTTLSeconds int    `mapstructure:"password_reset_token_ttl_secs"`
 }
 
 // DatabaseConfig holds PostgreSQL connection settings.
@@ -120,6 +127,8 @@ func Load() (*Config, error) {
 	v.SetDefault("email.sender", "stdout")
 	v.SetDefault("email.verification_url_template", "")
 	v.SetDefault("email.token_ttl_secs", 86400) // 24h
+	v.SetDefault("email.password_reset_url_template", "")
+	v.SetDefault("email.password_reset_token_ttl_secs", 3600) // 1h
 	v.SetDefault("audit.durable_dsn", "")
 	v.SetDefault("audit.skip_migration", false)
 	v.SetDefault("tracing.enabled", false)

@@ -44,12 +44,11 @@ type VerificationTokenRepository interface {
 // route the message to stdout, an in-process buffer, or an external provider
 // (SES, Resend, SendGrid, …).
 //
-// The verificationURL is a fully-formed URL the user clicks to verify their
-// email. The service composes this URL from a template (see
-// EmailConfig.VerificationURLTemplate) so the calling app's host stays out
-// of identity-service.
+// Both URLs are fully-formed by the service before being handed off — the
+// sender's job is transport, not composition.
 type EmailSender interface {
 	SendVerificationEmail(ctx context.Context, msg VerificationEmail) error
+	SendPasswordResetEmail(ctx context.Context, msg PasswordResetEmail) error
 }
 
 // VerificationEmail is the payload handed to an EmailSender. All fields are

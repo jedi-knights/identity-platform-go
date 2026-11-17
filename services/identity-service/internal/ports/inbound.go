@@ -55,3 +55,15 @@ type UserPreferences interface {
 type UserClaimsProvider interface {
 	GetUserClaims(ctx context.Context, userID string) (*domain.UserClaims, error)
 }
+
+// PasswordResetter is the inbound port for the password-reset flow.
+type PasswordResetter interface {
+	// RequestReset sends a password-reset email to the user matching the
+	// request. Always silent on user-existence — no enumeration.
+	RequestReset(ctx context.Context, req domain.RequestPasswordResetRequest) error
+
+	// ResetPassword redeems a token and replaces the user's password hash.
+	// Returns ErrCodeBadRequest for missing fields or a password that
+	// fails policy, ErrCodeUnauthorized for invalid tokens.
+	ResetPassword(ctx context.Context, req domain.ResetPasswordRequest) (*domain.ResetPasswordResponse, error)
+}

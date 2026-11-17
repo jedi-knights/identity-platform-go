@@ -23,6 +23,8 @@ func NewRouter(h *Handler, logger logging.Logger) http.Handler {
 	mux.HandleFunc("GET /users/{id}/claims", h.GetUserClaims)
 	mux.HandleFunc("GET /users/{id}/active-account", h.GetActiveAccount)
 	mux.HandleFunc("PUT /users/{id}/active-account", h.SetActiveAccount)
+	mux.HandleFunc("POST /auth/request-password-reset", h.RequestPasswordReset)
+	mux.HandleFunc("POST /auth/reset-password", h.ResetPassword)
 	mux.HandleFunc("GET /health", h.Health)
 	mux.Handle("GET /swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),
