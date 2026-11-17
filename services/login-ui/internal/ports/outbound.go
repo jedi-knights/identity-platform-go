@@ -256,3 +256,18 @@ type BillingClient interface {
 	// CreatePortalSession asks Lago for a Stripe Customer Portal URL.
 	CreatePortalSession(ctx context.Context, customerID string) (*PortalSession, error)
 }
+
+// PasswordResetter is the outbound port behind identity-service's
+// POST /auth/request-password-reset and POST /auth/reset-password.
+//
+// RequestReset never reveals whether the address has an account: a nil
+// error means "the request was accepted", nothing more. Implementations map
+// upstream failures onto apperrors categories — RateLimit for 429,
+// BadRequest for 400 — and anything else onto Internal.
+//
+// ResetPassword additionally maps an invalid, expired, or already-used
+// token to Unauthorized, and a password that fails policy to BadRequest.
+type PasswordResetter interface {
+	RequestReset(ctx context.Context, email string) error
+	ResetPassword(ctx context.Context, token, newPassword string) error
+}
