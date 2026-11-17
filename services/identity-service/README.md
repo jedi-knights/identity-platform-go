@@ -25,6 +25,11 @@ Environment variables (prefix: `IDENTITY`):
 | `IDENTITY_LOG_LEVEL`        | `info`        | Log level          |
 | `IDENTITY_LOG_FORMAT`       | `json`        | Log format         |
 | `IDENTITY_LOG_ENVIRONMENT`  | `development` | Environment name   |
+| `IDENTITY_EMAIL_SENDER`     | `stdout`      | `stdout`, `noop`, or `smtp` |
+
+Real email delivery (`smtp`) needs a relay, a From address and secrets; see
+[Configuring email](../../README.md#configuring-email) in the root README for the full variable
+list and setup steps.
 
 ## Running
 
