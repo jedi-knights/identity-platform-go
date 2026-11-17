@@ -23,6 +23,7 @@ type fakePasswordResetter struct {
 	requested   []string
 	resetTokens []string
 	resetPws    []string
+	resetIPs    []string
 	requestErr  error
 	resetErr    error
 }
@@ -34,11 +35,12 @@ func (f *fakePasswordResetter) RequestReset(_ context.Context, email string) err
 	return f.requestErr
 }
 
-func (f *fakePasswordResetter) ResetPassword(_ context.Context, token, newPassword string) error {
+func (f *fakePasswordResetter) ResetPassword(_ context.Context, token, newPassword, clientIP string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.resetTokens = append(f.resetTokens, token)
 	f.resetPws = append(f.resetPws, newPassword)
+	f.resetIPs = append(f.resetIPs, clientIP)
 	return f.resetErr
 }
 
@@ -326,5 +328,48 @@ func TestSignInGet_LinksToForgotPasswordOnlyWhenWired(t *testing.T) {
 	}
 	if strings.Contains(unwired, `data-testid="link-forgot"`) {
 		t.Error("unwired sign-in page must not advertise a 503 page")
+	}
+}
+
+// redeemFrom posts a valid reset form with an optional Fly-Client-IP header
+// through a router built with the given client-IP header setting, and returns
+// the client IP the upstream call was handed.
+func redeemFrom(t *testing.T, headerName, headerValue string) string {
+	t.Helper()
+	pr := &fakePasswordResetter{}
+	logger := logging.New(logging.Config{Output: io.Discard})
+	h := authhttp.NewHandler(nil, nil, logger).WithPasswordReset(pr)
+	if headerName != "" {
+		h = h.WithClientIPHeader(headerName)
+	}
+	form := url.Values{"token": {"t"}, "password": {"correct horse battery"}, "confirm_password": {"correct horse battery"}}
+	r := httptest.NewRequest(http.MethodPost, "/reset-password", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.RemoteAddr = "172.16.0.9:5555"
+	if headerValue != "" {
+		r.Header.Set("Fly-Client-IP", headerValue)
+	}
+	authhttp.NewRouter(h, logger).ServeHTTP(httptest.NewRecorder(), r)
+	if len(pr.resetIPs) != 1 {
+		t.Fatalf("upstream called %d times, want 1", len(pr.resetIPs))
+	}
+	return pr.resetIPs[0]
+}
+
+func TestResetPasswordPost_ForwardsClientIPFromConfiguredHeader(t *testing.T) {
+	if got := redeemFrom(t, "Fly-Client-IP", "203.0.113.7"); got != "203.0.113.7" {
+		t.Errorf("client IP = %q, want the header value", got)
+	}
+}
+
+func TestResetPasswordPost_IgnoresClientIPHeaderUnlessConfigured(t *testing.T) {
+	if got := redeemFrom(t, "", "203.0.113.7"); got != "172.16.0.9" {
+		t.Errorf("client IP = %q, want the TCP peer (header is client-controlled when not configured)", got)
+	}
+}
+
+func TestResetPasswordPost_BadClientIPHeaderFallsBackToPeer(t *testing.T) {
+	if got := redeemFrom(t, "Fly-Client-IP", "not-an-ip"); got != "172.16.0.9" {
+		t.Errorf("client IP = %q, want the TCP peer", got)
 	}
 }

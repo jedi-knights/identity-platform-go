@@ -18,6 +18,9 @@ kill_timeout   = "30s"
   IDENTITY_LOG_FORMAT      = "json"
   IDENTITY_LOG_LEVEL       = "info"
   IDENTITY_LOG_ENVIRONMENT = "production"
+  # Fly 6PN: login-ui reaches us from fdaa::/16 and forwards the end user's IP,
+  # so the reset-redeem limit is per user rather than one bucket for login-ui.
+  IDENTITY_RATELIMIT_TRUSTED_PROXIES = "fdaa::/16"
   # Link emailed for password reset; served by login-ui (/reset-password).
   IDENTITY_EMAIL_PASSWORD_RESET_URL_TEMPLATE = "https://jk-login-ui.fly.dev/reset-password?token={{token}}"
 
