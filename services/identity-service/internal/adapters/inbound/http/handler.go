@@ -24,6 +24,10 @@ type Handler struct {
 	preferences   ports.UserPreferences
 	resetter      ports.PasswordResetter
 	logger        logging.Logger
+
+	// Optional; nil means unlimited. See WithResetRateLimits.
+	requestResetLimiter *windowLimiter
+	redeemResetLimiter  *windowLimiter
 }
 
 func NewHandler(
@@ -215,7 +219,9 @@ func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 }
 
 // RequestPasswordReset handles POST /auth/request-password-reset.
-// Always returns 204 to prevent user enumeration.
+// Returns 204 whether or not the email is on file, to prevent user
+// enumeration. Rate-limited per submitted email: 429 with Retry-After once the
+// limit is hit, regardless of whether an account exists.
 //
 // @Summary      Request a password-reset email
 // @Tags         auth
@@ -223,6 +229,7 @@ func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 // @Param        request  body  domain.RequestPasswordResetRequest  true  "Email"
 // @Success      204
 // @Failure      400      {object}  httputil.ErrorResponse
+// @Failure      429      {object}  httputil.ErrorResponse
 // @Router       /auth/request-password-reset [post]
 func (h *Handler) RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
@@ -230,6 +237,17 @@ func (h *Handler) RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
 		return
+	}
+
+	// Keyed on the submitted address, not on account existence, so a 429 is
+	// indistinguishable for known and unknown emails (no enumeration oracle).
+	// An empty email is left to the service to reject with 400 instead of
+	// sharing one limiter bucket.
+	if key := emailLimitKey(req.Email); key != "" {
+		if ok, retryAfter := h.requestResetLimiter.allow(key); !ok {
+			writeRateLimited(w, retryAfter)
+			return
+		}
 	}
 
 	if err := h.resetter.RequestReset(r.Context(), req); err != nil {
@@ -254,12 +272,18 @@ func (h *Handler) RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
 // @Success      200      {object}  domain.ResetPasswordResponse
 // @Failure      400      {object}  httputil.ErrorResponse
 // @Failure      401      {object}  httputil.ErrorResponse
+// @Failure      429      {object}  httputil.ErrorResponse
 // @Router       /auth/reset-password [post]
 func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	var req domain.ResetPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httputil.WriteError(w, apperrors.New(apperrors.ErrCodeBadRequest, "invalid request body"))
+		return
+	}
+
+	if ok, retryAfter := h.redeemResetLimiter.allow(clientIP(r)); !ok {
+		writeRateLimited(w, retryAfter)
 		return
 	}
 
