@@ -74,6 +74,10 @@ type Handler struct {
 	// routes serve 503 (identity-service unwired).
 	registrar ports.UserRegistrar
 
+	// passwordReset backs /forgot-password and /reset-password. Nil = both
+	// serve 503 and the sign-in page hides its "Forgot password?" link.
+	passwordReset ports.PasswordResetter
+
 	// planActivator backs the E5-S2 plan-provisioning composite. Nil =
 	// CheckoutPost skips the entitlements write and only touches Lago —
 	// acceptable for local dev before entitlements-service is wired;
@@ -105,6 +109,14 @@ func (h *Handler) WithAllowedReturnHosts(csv string) *Handler {
 // (503). Chainable; returns the receiver.
 func (h *Handler) WithRegistrar(registrar ports.UserRegistrar) *Handler {
 	h.registrar = registrar
+	return h
+}
+
+// WithPasswordReset wires the outbound port behind /forgot-password and
+// /reset-password. Passing nil leaves both routes disabled (503). Chainable;
+// returns the receiver.
+func (h *Handler) WithPasswordReset(pr ports.PasswordResetter) *Handler {
+	h.passwordReset = pr
 	return h
 }
 
@@ -303,6 +315,10 @@ func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {
 type signInView struct {
 	LoginChallenge string
 	Error          string
+
+	// ForgotPasswordEnabled is set by renderSignIn from the handler's wiring,
+	// so the link only appears when /forgot-password can actually serve.
+	ForgotPasswordEnabled bool
 }
 
 // SignInGet renders the sign-in form. The login_challenge query parameter
@@ -389,6 +405,7 @@ func (h *Handler) signInWired(w http.ResponseWriter) bool {
 // logged but not returned to the user — there is nothing meaningful the
 // caller can do with a half-written response.
 func (h *Handler) renderSignIn(w http.ResponseWriter, view signInView) {
+	view.ForgotPasswordEnabled = h.passwordReset != nil
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	if err := signInTemplate.Execute(w, view); err != nil {
