@@ -115,7 +115,11 @@ func (s *RunningService) Stop() {
 	if s.cmd.Process != nil {
 		_ = s.cmd.Process.Kill()
 	}
-	<-s.exited
+	// The Wait error is expected here (Kill makes it "signal: killed"), so
+	// it is received and deliberately discarded. A bare `<-ch` trips errcheck
+	// and `_ = <-ch` trips staticcheck S1005, hence the named variable.
+	waitErr := <-s.exited
+	_ = waitErr
 }
 
 // Output returns everything the process wrote to stdout/stderr, for
