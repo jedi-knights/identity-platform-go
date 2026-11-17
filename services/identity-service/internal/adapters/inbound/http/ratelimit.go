@@ -4,6 +4,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,12 +41,18 @@ type ResetRateLimits struct {
 	RequestMax    int
 	RequestWindow time.Duration
 
-	// RedeemMax / RedeemWindow bound POST /auth/reset-password per client IP
-	// (the TCP peer; X-Forwarded-For is deliberately not trusted). Behind a
-	// proxy such as login-ui every caller shares the proxy's IP, so this acts
-	// as a service-wide ceiling on token guessing and password hashing cost.
+	// RedeemMax / RedeemWindow bound POST /auth/reset-password per client IP.
+	// The key is the TCP peer, except when the peer is in TrustedProxies, in
+	// which case it is the client IP that proxy forwarded. With no trusted
+	// proxies every caller behind a proxy such as login-ui shares the proxy's
+	// IP, so this acts as a service-wide ceiling.
 	RedeemMax    int
 	RedeemWindow time.Duration
+
+	// TrustedProxies are the peers whose X-Forwarded-For header is believed.
+	// The header is client-controlled for anyone else, so honoring it from an
+	// arbitrary peer would let an attacker rotate it to dodge the limit.
+	TrustedProxies []netip.Prefix
 
 	// MaxTrackedKeys bounds each limiter's memory. Zero selects
 	// defaultMaxTrackedKeys. When full of live keys, new keys are refused.
@@ -148,6 +155,7 @@ func (l *windowLimiter) sweepLocked(now time.Time) {
 func (h *Handler) WithResetRateLimits(limits ResetRateLimits) *Handler {
 	h.requestResetLimiter = newWindowLimiter(limits.RequestMax, limits.RequestWindow, limits.MaxTrackedKeys, limits.Now)
 	h.redeemResetLimiter = newWindowLimiter(limits.RedeemMax, limits.RedeemWindow, limits.MaxTrackedKeys, limits.Now)
+	h.trustedProxies = limits.TrustedProxies
 	return h
 }
 
@@ -167,10 +175,40 @@ func emailLimitKey(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-// clientIP returns the TCP peer address without its port. Forwarding
-// headers are not consulted: they are client-controlled unless a trusted
-// proxy overwrites them.
-func clientIP(r *http.Request) string {
+// clientIP returns the address to key the redeem limiter on: the TCP peer,
+// or — when that peer is a trusted proxy — the client IP it forwarded. The
+// last X-Forwarded-For entry is used because it is the one the trusted
+// proxy itself appended. An absent or unparseable header falls back to the
+// peer so a misbehaving proxy degrades to the shared-bucket behavior rather
+// than to no limiting.
+func (h *Handler) clientIP(r *http.Request) string {
+	peer := peerIP(r)
+	if !h.isTrustedProxy(peer) {
+		return peer
+	}
+	xff := r.Header.Get("X-Forwarded-For")
+	last := strings.TrimSpace(xff[strings.LastIndex(xff, ",")+1:])
+	if addr, err := netip.ParseAddr(last); err == nil {
+		return addr.String()
+	}
+	return peer
+}
+
+func (h *Handler) isTrustedProxy(peer string) bool {
+	addr, err := netip.ParseAddr(peer)
+	if err != nil {
+		return false
+	}
+	for _, p := range h.trustedProxies {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// peerIP returns the TCP peer address without its port.
+func peerIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

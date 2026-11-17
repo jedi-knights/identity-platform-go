@@ -24,6 +24,9 @@ kill_timeout   = "30s"
   LOGIN_UI_LOG_FORMAT      = "json"
   LOGIN_UI_LOG_LEVEL       = "info"
   LOGIN_UI_LOG_ENVIRONMENT = "production"
+  # Fly's edge overwrites this header with the real client IP; forwarded to
+  # identity-service for per-user password-reset rate limiting.
+  LOGIN_UI_SERVER_CLIENT_IP_HEADER = "Fly-Client-IP"
   # Inter-service URLs over the private network — these are server-to-server
   # calls (login-ui → auth-server /internal/issue-code; login-ui →
   # identity-service /auth/login), not browser redirects, so the .internal

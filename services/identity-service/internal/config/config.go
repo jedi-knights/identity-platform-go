@@ -33,6 +33,11 @@ type RateLimitConfig struct {
 	// may make per window. IDENTITY_RATELIMIT_RESET_REDEEM_MAX.
 	ResetRedeemMax        int `mapstructure:"reset_redeem_max"`
 	ResetRedeemWindowSecs int `mapstructure:"reset_redeem_window_secs"`
+	// TrustedProxies is a comma-separated list of CIDRs (e.g. "fdaa::/16")
+	// whose X-Forwarded-For header the redeem limiter believes, so callers
+	// behind login-ui are limited individually rather than as one bucket.
+	// Empty (the default) trusts no one. IDENTITY_RATELIMIT_TRUSTED_PROXIES.
+	TrustedProxies string `mapstructure:"trusted_proxies"`
 }
 
 // EntitlementsConfig configures the outbound port to entitlements-service
@@ -148,6 +153,7 @@ func Load() (*Config, error) {
 	v.SetDefault("ratelimit.reset_request_window_secs", 3600) // 1h
 	v.SetDefault("ratelimit.reset_redeem_max", 10)
 	v.SetDefault("ratelimit.reset_redeem_window_secs", 900) // 15m
+	v.SetDefault("ratelimit.trusted_proxies", "")
 	v.SetDefault("audit.durable_dsn", "")
 	v.SetDefault("audit.skip_migration", false)
 	v.SetDefault("tracing.enabled", false)

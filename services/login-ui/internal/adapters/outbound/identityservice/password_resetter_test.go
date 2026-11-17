@@ -81,7 +81,7 @@ func TestResetPassword_PostsTokenAndNewPasswordAndSucceedsOn200(t *testing.T) {
 	var body map[string]string
 	pr := respondWith(t, http.StatusOK, &path, &body)
 
-	err := pr.ResetPassword(context.Background(), "tok-123", "correct horse battery")
+	err := pr.ResetPassword(context.Background(), "tok-123", "correct horse battery", "")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -109,7 +109,7 @@ func TestResetPassword_MapsUpstreamStatuses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			pr := respondWith(t, tc.status, nil, nil)
 
-			err := pr.ResetPassword(context.Background(), "tok", "pw-long-enough")
+			err := pr.ResetPassword(context.Background(), "tok", "pw-long-enough", "")
 
 			if err == nil || !tc.check(err) {
 				t.Errorf("err = %v, want matching category for %d", err, tc.status)
@@ -124,9 +124,33 @@ func TestPasswordResetter_TransportFailureIsInternal(t *testing.T) {
 	pr := identityservice.NewPasswordResetter(srv.URL, srv.Client())
 
 	reqErr := pr.RequestReset(context.Background(), "u@example.com")
-	resetErr := pr.ResetPassword(context.Background(), "tok", "pw-long-enough")
+	resetErr := pr.ResetPassword(context.Background(), "tok", "pw-long-enough", "")
 
 	if !apperrors.IsInternal(reqErr) || !apperrors.IsInternal(resetErr) {
 		t.Errorf("errors = %v / %v, want internal for transport failure", reqErr, resetErr)
+	}
+}
+
+func TestResetPassword_ForwardsClientIPAsXForwardedFor(t *testing.T) {
+	tests := []struct{ name, ip, want string }{
+		{"forwarded when known", "203.0.113.7", "203.0.113.7"},
+		{"omitted when unknown", "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.Header.Get("X-Forwarded-For")
+			}))
+			defer srv.Close()
+			pr := identityservice.NewPasswordResetter(srv.URL, srv.Client())
+
+			if err := pr.ResetPassword(context.Background(), "tok", "pw-long-enough", tc.ip); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("X-Forwarded-For = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

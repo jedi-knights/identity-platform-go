@@ -267,7 +267,11 @@ type BillingClient interface {
 //
 // ResetPassword additionally maps an invalid, expired, or already-used
 // token to Unauthorized, and a password that fails policy to BadRequest.
+//
+// clientIP is the end user's address, forwarded so identity-service can rate
+// limit each user separately instead of treating login-ui as one caller.
+// Empty means unknown.
 type PasswordResetter interface {
 	RequestReset(ctx context.Context, email string) error
-	ResetPassword(ctx context.Context, token, newPassword string) error
+	ResetPassword(ctx context.Context, token, newPassword, clientIP string) error
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -238,5 +239,67 @@ func TestRequestPasswordReset_ConcurrentCallersNeverExceedLimit(t *testing.T) {
 
 	if got := accepted.Load(); got != 10 {
 		t.Errorf("accepted %d of 100 concurrent requests, want exactly 10", got)
+	}
+}
+
+func postResetFrom(router http.Handler, peer, xff string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/auth/reset-password", strings.NewReader(`{"token":"t","new_password":"correct horse battery"}`))
+	req.Header.Set("Content-Type", "application/json")
+	if xff != "" {
+		req.Header.Set("X-Forwarded-For", xff)
+	}
+	req.RemoteAddr = peer
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec
+}
+
+func trustedLimits() ResetRateLimits {
+	return ResetRateLimits{
+		RedeemMax:      1,
+		RedeemWindow:   15 * time.Minute,
+		TrustedProxies: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")},
+	}
+}
+
+func TestResetPassword_TrustedProxyForwardedIPIsTheLimitKey(t *testing.T) {
+	router := newLimitedRouter(&countingResetter{}, trustedLimits())
+
+	first := postResetFrom(router, "10.0.0.5:1000", "203.0.113.7")
+	sameClient := postResetFrom(router, "10.0.0.5:1001", "203.0.113.7")
+	otherClient := postResetFrom(router, "10.0.0.5:1002", "203.0.113.8")
+
+	if first.Code != http.StatusOK {
+		t.Fatalf("first: status = %d, want 200", first.Code)
+	}
+	if sameClient.Code != http.StatusTooManyRequests {
+		t.Errorf("same forwarded client: status = %d, want 429", sameClient.Code)
+	}
+	if otherClient.Code != http.StatusOK {
+		t.Errorf("different forwarded client behind same proxy: status = %d, want 200 (must not share one bucket)", otherClient.Code)
+	}
+}
+
+func TestResetPassword_UntrustedPeerCannotSpoofForwardedIP(t *testing.T) {
+	router := newLimitedRouter(&countingResetter{}, trustedLimits())
+
+	first := postResetFrom(router, "198.51.100.9:1000", "203.0.113.1")
+	spoofed := postResetFrom(router, "198.51.100.9:1001", "203.0.113.2")
+
+	if first.Code != http.StatusOK {
+		t.Fatalf("first: status = %d, want 200", first.Code)
+	}
+	if spoofed.Code != http.StatusTooManyRequests {
+		t.Errorf("rotating X-Forwarded-For from an untrusted peer: status = %d, want 429", spoofed.Code)
+	}
+}
+
+func TestResetPassword_TrustedProxyWithBadForwardedHeaderFallsBackToPeer(t *testing.T) {
+	for _, xff := range []string{"", "not-an-ip", "203.0.113.7, garbage"} {
+		router := newLimitedRouter(&countingResetter{}, trustedLimits())
+		postResetFrom(router, "10.0.0.5:1000", xff)
+		if rec := postResetFrom(router, "10.0.0.5:1001", xff); rec.Code != http.StatusTooManyRequests {
+			t.Errorf("X-Forwarded-For %q: status = %d, want 429 keyed on the proxy", xff, rec.Code)
+		}
 	}
 }

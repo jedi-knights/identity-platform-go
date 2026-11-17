@@ -78,6 +78,10 @@ type Handler struct {
 	// serve 503 and the sign-in page hides its "Forgot password?" link.
 	passwordReset ports.PasswordResetter
 
+	// clientIPHeader names the header a trusted edge sets to the real client
+	// address (e.g. Fly-Client-IP). Empty = use the TCP peer.
+	clientIPHeader string
+
 	// planActivator backs the E5-S2 plan-provisioning composite. Nil =
 	// CheckoutPost skips the entitlements write and only touches Lago —
 	// acceptable for local dev before entitlements-service is wired;
@@ -109,6 +113,14 @@ func (h *Handler) WithAllowedReturnHosts(csv string) *Handler {
 // (503). Chainable; returns the receiver.
 func (h *Handler) WithRegistrar(registrar ports.UserRegistrar) *Handler {
 	h.registrar = registrar
+	return h
+}
+
+// WithClientIPHeader names the request header carrying the real client IP, set
+// by an edge proxy the deployment trusts to overwrite it. Leave unset when
+// login-ui is reachable without such a proxy.
+func (h *Handler) WithClientIPHeader(name string) *Handler {
+	h.clientIPHeader = name
 	return h
 }
 
