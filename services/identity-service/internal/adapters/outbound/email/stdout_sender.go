@@ -1,7 +1,9 @@
 // Package email provides outbound email-sender adapters.
 //
-// Three implementations ship today:
+// Four implementations ship today:
 //
+//   - SMTPSender   — delivers through an SMTP relay (STARTTLS, optional AUTH
+//     PLAIN). The production sender.
 //   - StdoutSender — logs the message as a structured slog record. Suitable
 //     as the development default; the verification URL is printed to the
 //     service's stdout where operators can copy it during local testing.
@@ -9,7 +11,7 @@
 //     intentionally configured without email delivery.
 //   - BufferSender — keeps messages in memory for inspection in tests.
 //
-// External SMTP / SES / Resend / SendGrid adapters can implement
+// HTTP-API providers (SES, Resend, SendGrid) can implement
 // domain.EmailSender alongside these without touching the application layer.
 package email
 
