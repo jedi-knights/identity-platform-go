@@ -36,6 +36,12 @@ Two outbound adapters (same pattern as client-registry-service):
 
 ---
 
+## Rate Limiting (password reset)
+
+`POST /auth/request-password-reset` is limited **per submitted email** and `POST /auth/reset-password` **per client IP** (TCP peer; `X-Forwarded-For` is not trusted). Limits are in-memory and per replica, so the fleet ceiling is replicas × limit. The request limiter keys on the submitted address, never on account existence, so a 429 cannot be used to enumerate accounts. Tune with `IDENTITY_RATELIMIT_RESET_{REQUEST,REDEEM}_{MAX,WINDOW_SECS}`; a Max of `0` disables that limiter. Behind a proxy (login-ui) every caller shares the proxy's IP, so the redeem limit acts as a service-wide ceiling — raise it accordingly.
+
+---
+
 ## What This Service Does NOT Do
 
 - Does not issue JWTs or OAuth tokens — that is auth-server.
