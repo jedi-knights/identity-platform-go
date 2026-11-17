@@ -14,6 +14,10 @@ jobs:
   deploy:
     name: Deploy ${{ matrix.service }}
     runs-on: ubuntu-latest
+    # Last 30 successful deploys per service: median ~60s, slowest ~530s.
+    # Fly's Depot builder has stalled for 2.5-4.5h before failing, so cap
+    # well above the slowest success but far below the 6h GitHub default.
+    timeout-minutes: 15
     strategy:
       # Independent apps — keep deploying the rest if one fails.
       fail-fast: false
