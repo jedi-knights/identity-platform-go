@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+  # Manual redeploy (e.g. a failed run is too old for GitHub to re-run).
+  workflow_dispatch:
 
 # One deploy per ref at a time; let an in-flight deploy finish.
 concurrency:
@@ -13,6 +15,9 @@ concurrency:
 jobs:
   deploy:
     name: Deploy ${{ matrix.service }}
+    # workflow_dispatch can be started from any branch; only main may reach
+    # production.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Last 30 successful deploys per service: median ~60s, slowest ~530s.
     # Fly's Depot builder has stalled for 2.5-4.5h before failing, so cap
