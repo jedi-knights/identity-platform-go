@@ -177,15 +177,7 @@ func TestClientRepository_Update_ReplacesRelated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID after update: %v", err)
 	}
-	if len(got.Scopes) != 1 || got.Scopes[0] != "admin" {
-		t.Errorf("Scopes: want [admin], got %v", got.Scopes)
-	}
-	if len(got.GrantTypes) != 1 || got.GrantTypes[0] != "authorization_code" {
-		t.Errorf("GrantTypes: want [authorization_code], got %v", got.GrantTypes)
-	}
-	if len(got.RedirectURIs) != 1 || got.RedirectURIs[0] != "https://other.example.com/callback" {
-		t.Errorf("RedirectURIs: want [https://other.example.com/callback], got %v", got.RedirectURIs)
-	}
+	assertReplacedRelated(t, got)
 }
 
 func TestClientRepository_Update_NotFound(t *testing.T) {
@@ -259,17 +251,7 @@ func TestClientRepository_List(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 
-	found := 0
-	for _, c := range all {
-		for _, want := range clients {
-			if c.ID == want.ID {
-				found++
-			}
-		}
-	}
-	if found != len(clients) {
-		t.Errorf("List: wanted %d saved clients in result, found %d", len(clients), found)
-	}
+	assertListed(t, all, clients)
 }
 
 // TestClientRepository_SaveAndFindByID_PersistsJWKSURI covers the RFC 7591
@@ -319,5 +301,40 @@ func TestClientRepository_List_IncludesJWKSURI(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("client %q not found in List result", client.ID)
+	}
+}
+
+// assertReplacedRelated checks that an Update replaced the related slices with
+// exactly the single values the Update_ReplacesRelated tests wrote. Extracted so
+// those tests stay within the project's cyclomatic-complexity limit.
+func assertReplacedRelated(t *testing.T, got *domain.OAuthClient) {
+	t.Helper()
+	if len(got.Scopes) != 1 || got.Scopes[0] != "admin" {
+		t.Errorf("Scopes: want [admin], got %v", got.Scopes)
+	}
+	if len(got.GrantTypes) != 1 || got.GrantTypes[0] != "authorization_code" {
+		t.Errorf("GrantTypes: want [authorization_code], got %v", got.GrantTypes)
+	}
+	if len(got.RedirectURIs) != 1 || got.RedirectURIs[0] != "https://other.example.com/callback" {
+		t.Errorf("RedirectURIs: want [https://other.example.com/callback], got %v", got.RedirectURIs)
+	}
+}
+
+// assertListed checks that every wanted client appears in all. O(len(all)+len(want))
+// via an ID set rather than a nested scan.
+func assertListed(t *testing.T, all, want []*domain.OAuthClient) {
+	t.Helper()
+	wanted := make(map[string]struct{}, len(want))
+	for _, c := range want {
+		wanted[c.ID] = struct{}{}
+	}
+	found := 0
+	for _, c := range all {
+		if _, ok := wanted[c.ID]; ok {
+			found++
+		}
+	}
+	if found != len(want) {
+		t.Errorf("List: wanted %d saved clients in result, found %d", len(want), found)
 	}
 }

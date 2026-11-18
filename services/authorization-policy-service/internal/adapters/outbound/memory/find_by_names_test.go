@@ -61,3 +61,18 @@ func TestRoleRepository_FindByNames_EmptyInput(t *testing.T) {
 		t.Fatalf("want no roles and no error for no names, got %v, %v", got, err)
 	}
 }
+
+// assertPermissions fails unless got has exactly the wanted permissions in the
+// wanted order. Extracted so the repository tests stay within the project's
+// cyclomatic-complexity limit.
+func assertPermissions(t *testing.T, got, want []domain.Permission) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("Permissions length: got %d (%v), want %d (%v)", len(got), got, len(want), want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("Permissions[%d]: got %+v, want %+v", i, got[i], w)
+		}
+	}
+}

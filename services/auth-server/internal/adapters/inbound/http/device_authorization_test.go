@@ -117,15 +117,16 @@ func TestDeviceAuthorizationHandler_Success(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
 	}
-	var resp struct {
-		DeviceCode              string `json:"device_code"`
-		UserCode                string `json:"user_code"`
-		VerificationURI         string `json:"verification_uri"`
-		VerificationURIComplete string `json:"verification_uri_complete"`
-		ExpiresIn               int    `json:"expires_in"`
-		Interval                int    `json:"interval"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+	assertDeviceCodeResponse(t, w.Body)
+	assertSavedPendingDeviceAuthorization(t, repo)
+}
+
+// assertDeviceCodeResponse decodes a successful /device_authorization body and
+// checks every RFC 8628 §3.2 field. Extracted so the calling test stays within the project's cyclomatic-complexity limit.
+func assertDeviceCodeResponse(t *testing.T, body io.Reader) {
+	t.Helper()
+	var resp deviceCodeResponse
+	if err := json.NewDecoder(body).Decode(&resp); err != nil {
 		t.Fatalf("decoding response: %v", err)
 	}
 	if resp.DeviceCode == "" {
@@ -134,6 +135,29 @@ func TestDeviceAuthorizationHandler_Success(t *testing.T) {
 	if len(resp.UserCode) != 9 || resp.UserCode[4] != '-' {
 		t.Errorf("user_code = %q, want XXXX-XXXX shape", resp.UserCode)
 	}
+	assertDeviceVerificationURIs(t, resp)
+	if resp.ExpiresIn != 60 {
+		t.Errorf("expires_in = %d, want 60", resp.ExpiresIn)
+	}
+	if resp.Interval != 5 {
+		t.Errorf("interval = %d, want 5", resp.Interval)
+	}
+}
+
+// deviceCodeResponse is the RFC 8628 §3.2 response body.
+type deviceCodeResponse struct {
+	DeviceCode              string `json:"device_code"`
+	UserCode                string `json:"user_code"`
+	VerificationURI         string `json:"verification_uri"`
+	VerificationURIComplete string `json:"verification_uri_complete"`
+	ExpiresIn               int    `json:"expires_in"`
+	Interval                int    `json:"interval"`
+}
+
+// assertDeviceVerificationURIs checks the verification URI and that the
+// "complete" form carries the escaped user code.
+func assertDeviceVerificationURIs(t *testing.T, resp deviceCodeResponse) {
+	t.Helper()
 	if resp.VerificationURI != "https://login-ui.example.com/device" {
 		t.Errorf("verification_uri = %q", resp.VerificationURI)
 	}
@@ -141,12 +165,12 @@ func TestDeviceAuthorizationHandler_Success(t *testing.T) {
 	if resp.VerificationURIComplete != wantComplete {
 		t.Errorf("verification_uri_complete = %q, want %q", resp.VerificationURIComplete, wantComplete)
 	}
-	if resp.ExpiresIn != 60 {
-		t.Errorf("expires_in = %d, want 60", resp.ExpiresIn)
-	}
-	if resp.Interval != 5 {
-		t.Errorf("interval = %d, want 5", resp.Interval)
-	}
+}
+
+// assertSavedPendingDeviceAuthorization checks the record the handler persisted.
+// Extracted so the calling test stays within the project's cyclomatic-complexity limit.
+func assertSavedPendingDeviceAuthorization(t *testing.T, repo *fakeDeviceAuthRepo) {
+	t.Helper()
 	if repo.saved == nil {
 		t.Fatal("expected repo.Save to be called")
 	}

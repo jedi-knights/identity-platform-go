@@ -86,20 +86,27 @@ func TestSaveAndFindByID(t *testing.T) {
 		t.Fatalf("FindByID: %v", err)
 	}
 
-	if got.ID != user.ID {
-		t.Errorf("ID: got %q, want %q", got.ID, user.ID)
+	assertUserRoundTrip(t, got, user)
+}
+
+// assertUserRoundTrip checks every field a Save/FindByID round trip must
+// preserve. Extracted so the test stays within the cyclomatic-complexity limit.
+func assertUserRoundTrip(t *testing.T, got, want *domain.User) {
+	t.Helper()
+	if got.ID != want.ID {
+		t.Errorf("ID: got %q, want %q", got.ID, want.ID)
 	}
-	if got.Email != user.Email {
-		t.Errorf("Email: got %q, want %q", got.Email, user.Email)
+	if got.Email != want.Email {
+		t.Errorf("Email: got %q, want %q", got.Email, want.Email)
 	}
-	if got.Name != user.Name {
-		t.Errorf("Name: got %q, want %q", got.Name, user.Name)
+	if got.Name != want.Name {
+		t.Errorf("Name: got %q, want %q", got.Name, want.Name)
 	}
-	if got.PasswordHash != user.PasswordHash {
-		t.Errorf("PasswordHash: got %q, want %q", got.PasswordHash, user.PasswordHash)
+	if got.PasswordHash != want.PasswordHash {
+		t.Errorf("PasswordHash: got %q, want %q", got.PasswordHash, want.PasswordHash)
 	}
-	if got.Active != user.Active {
-		t.Errorf("Active: got %v, want %v", got.Active, user.Active)
+	if got.Active != want.Active {
+		t.Errorf("Active: got %v, want %v", got.Active, want.Active)
 	}
 }
 
