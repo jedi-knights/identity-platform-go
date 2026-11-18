@@ -53,5 +53,11 @@ type PolicyRepository interface {
 // RoleRepository stores role definitions.
 type RoleRepository interface {
 	FindByName(ctx context.Context, name string) (*Role, error)
+	// FindByNames returns the roles that exist among names, each with its
+	// permissions, in no guaranteed order. Names with no role are omitted
+	// without error; callers that care about order or absence match results
+	// back to names themselves. It exists so evaluating a subject with N roles
+	// costs one query instead of N.
+	FindByNames(ctx context.Context, names []string) ([]*Role, error)
 	Save(ctx context.Context, role *Role) error
 }

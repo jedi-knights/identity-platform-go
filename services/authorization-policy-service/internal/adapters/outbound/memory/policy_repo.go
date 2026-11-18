@@ -94,11 +94,28 @@ func (r *RoleRepository) FindByName(_ context.Context, name string) (*domain.Rol
 	if !ok {
 		return nil, apperrors.New(apperrors.ErrCodeNotFound, "role not found")
 	}
-	// Return a copy to prevent callers from mutating internal state.
+	return copyRole(role), nil
+}
+
+// FindByNames returns the roles that exist among names; unknown names are omitted.
+func (r *RoleRepository) FindByNames(_ context.Context, names []string) ([]*domain.Role, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*domain.Role, 0, len(names))
+	for _, name := range names {
+		if role, ok := r.roles[name]; ok {
+			out = append(out, copyRole(role))
+		}
+	}
+	return out, nil
+}
+
+// copyRole returns a deep copy so callers cannot mutate internal state.
+func copyRole(role *domain.Role) *domain.Role {
 	result := *role
 	result.Permissions = make([]domain.Permission, len(role.Permissions))
 	copy(result.Permissions, role.Permissions)
-	return &result, nil
+	return &result
 }
 
 // Save persists the role, overwriting any existing entry with the same name.
