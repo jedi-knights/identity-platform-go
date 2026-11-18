@@ -814,7 +814,13 @@ func TestIntrospect_EmitsTokenIntrospected_Active(t *testing.T) {
 	if len(sink.events) != 1 {
 		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
 	}
-	e := sink.events[0]
+	assertActiveIntrospectedEvent(t, sink.events[0])
+}
+
+// assertActiveIntrospectedEvent checks the audit event emitted for an active
+// token introspected by caller-c1. Extracted so the calling test stays within the project's cyclomatic-complexity limit.
+func assertActiveIntrospectedEvent(t *testing.T, e audit.Event) {
+	t.Helper()
 	if e.EventType != "token_introspected" {
 		t.Errorf("event_type = %q, want token_introspected", e.EventType)
 	}
@@ -1056,7 +1062,13 @@ func TestAuthorize_HappyPath_RedirectsToLoginUIWithChallenge(t *testing.T) {
 	if repo.lastSaved == nil {
 		t.Fatal("expected Save to be invoked")
 	}
-	saved := repo.lastSaved
+	assertSavedLoginChallenge(t, repo.lastSaved)
+}
+
+// assertSavedLoginChallenge checks the login challenge the authorize endpoint
+// persisted for validAuthorizeQuery. Extracted so the calling test stays within the project's cyclomatic-complexity limit.
+func assertSavedLoginChallenge(t *testing.T, saved *domain.LoginChallenge) {
+	t.Helper()
 	if saved.ClientID != "client-a" {
 		t.Errorf("saved.ClientID = %q, want client-a", saved.ClientID)
 	}
@@ -1072,17 +1084,22 @@ func TestAuthorize_HappyPath_RedirectsToLoginUIWithChallenge(t *testing.T) {
 	if saved.CodeChallengeMethod != "S256" {
 		t.Errorf("saved.CodeChallengeMethod = %q, want S256", saved.CodeChallengeMethod)
 	}
-	wantScopes := []string{"openid", "profile"}
-	if len(saved.Scopes) != len(wantScopes) {
-		t.Fatalf("saved.Scopes = %v, want %v", saved.Scopes, wantScopes)
-	}
-	for i, s := range wantScopes {
-		if saved.Scopes[i] != s {
-			t.Errorf("saved.Scopes[%d] = %q, want %q", i, saved.Scopes[i], s)
-		}
-	}
+	assertScopes(t, saved.Scopes, []string{"openid", "profile"})
 	if saved.ExpiresAt.Before(time.Now().Add(4 * time.Minute)) {
 		t.Errorf("ExpiresAt = %v, want >= now+4m (TTL 5m)", saved.ExpiresAt)
+	}
+}
+
+// assertScopes fails unless got equals want, element for element.
+func assertScopes(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("scopes = %v, want %v", got, want)
+	}
+	for i, s := range want {
+		if got[i] != s {
+			t.Errorf("scopes[%d] = %q, want %q", i, got[i], s)
+		}
 	}
 }
 
@@ -1473,6 +1490,17 @@ func TestIssueCode_HappyPath_Returns200WithCode(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
+	assertIssueCodeResponse(t, resp)
+	if repo.consumedKey != "ch-1" {
+		t.Errorf("Consume key = %q, want ch-1", repo.consumedKey)
+	}
+	assertIssueCodeRequest(t, issuer)
+}
+
+// assertIssueCodeResponse checks the body of a successful /internal/issue-code
+// response, including the RFC 9207 §2 issuer login-ui builds its redirect from.
+func assertIssueCodeResponse(t *testing.T, resp map[string]string) {
+	t.Helper()
 	if resp["code"] != "minted-code-abc" {
 		t.Errorf("code = %q, want minted-code-abc", resp["code"])
 	}
@@ -1482,9 +1510,17 @@ func TestIssueCode_HappyPath_Returns200WithCode(t *testing.T) {
 	if resp["state"] != "state-xyz" {
 		t.Errorf("state = %q, want state-xyz", resp["state"])
 	}
-	if repo.consumedKey != "ch-1" {
-		t.Errorf("Consume key = %q, want ch-1", repo.consumedKey)
+	if resp["iss"] != "https://auth.example.com" {
+		t.Errorf("iss = %q, want https://auth.example.com — RFC 9207 §2 requires it on every authorization response,"+
+			" and login-ui's success redirect is built from this field", resp["iss"])
 	}
+}
+
+// assertIssueCodeRequest checks the request the handler handed the code issuer,
+// including the fields that must propagate from the stored challenge.
+// Extracted so the calling test stays within the project's cyclomatic-complexity limit.
+func assertIssueCodeRequest(t *testing.T, issuer *fakeAuthCodeIssuer) {
+	t.Helper()
 	if issuer.lastReq.ClientID != "client-a" || issuer.lastReq.Subject != "user-42" {
 		t.Errorf("IssueCodeRequest = %+v", issuer.lastReq)
 	}
@@ -1493,10 +1529,6 @@ func TestIssueCode_HappyPath_Returns200WithCode(t *testing.T) {
 	}
 	if issuer.lastReq.CodeChallengeMethod != "S256" {
 		t.Errorf("CodeChallengeMethod = %q, want S256", issuer.lastReq.CodeChallengeMethod)
-	}
-	if resp["iss"] != "https://auth.example.com" {
-		t.Errorf("iss = %q, want https://auth.example.com — RFC 9207 §2 requires it on every authorization response,"+
-			" and login-ui's success redirect is built from this field", resp["iss"])
 	}
 }
 
@@ -1732,13 +1764,7 @@ func TestPushAuthorize_HappyPath_Returns201WithRequestURI(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	requestURI, _ := resp["request_uri"].(string)
-	if !strings.HasPrefix(requestURI, "urn:ietf:params:oauth:request_uri:") {
-		t.Errorf("request_uri = %q, want urn:ietf:params:oauth:request_uri: prefix", requestURI)
-	}
-	if resp["expires_in"] != float64(90) {
-		t.Errorf("expires_in = %v, want 90", resp["expires_in"])
-	}
+	assertPARResponse(t, resp)
 	if repo.lastSaved == nil {
 		t.Fatal("Save was not called")
 	}
@@ -2012,5 +2038,18 @@ func TestHealth_Returns200WithStatusOK(t *testing.T) {
 	}
 	if body["status"] != "ok" {
 		t.Errorf("status = %q, want %q", body["status"], "ok")
+	}
+}
+
+// assertPARResponse checks the RFC 9126 §2.2 fields of a successful pushed
+// authorization response. Extracted so the calling test stays within the project's cyclomatic-complexity limit.
+func assertPARResponse(t *testing.T, resp map[string]any) {
+	t.Helper()
+	requestURI, _ := resp["request_uri"].(string)
+	if !strings.HasPrefix(requestURI, "urn:ietf:params:oauth:request_uri:") {
+		t.Errorf("request_uri = %q, want urn:ietf:params:oauth:request_uri: prefix", requestURI)
+	}
+	if resp["expires_in"] != float64(90) {
+		t.Errorf("expires_in = %v, want 90", resp["expires_in"])
 	}
 }

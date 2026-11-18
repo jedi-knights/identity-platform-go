@@ -71,17 +71,8 @@ func TestRoleRepository_SaveAndFindByName(t *testing.T) {
 	if got.Name != role.Name {
 		t.Errorf("Name: got %q, want %q", got.Name, role.Name)
 	}
-	if len(got.Permissions) != len(role.Permissions) {
-		t.Fatalf("Permissions length: got %d, want %d", len(got.Permissions), len(role.Permissions))
-	}
 	// Results are ordered by (resource, action), same order as the fixture.
-	for i, perm := range role.Permissions {
-		if got.Permissions[i].Resource != perm.Resource || got.Permissions[i].Action != perm.Action {
-			t.Errorf("Permissions[%d]: got (%s, %s), want (%s, %s)",
-				i, got.Permissions[i].Resource, got.Permissions[i].Action,
-				perm.Resource, perm.Action)
-		}
-	}
+	assertPermissions(t, got.Permissions, role.Permissions)
 }
 
 func TestRoleRepository_Save_ReplacesPermissions(t *testing.T) {

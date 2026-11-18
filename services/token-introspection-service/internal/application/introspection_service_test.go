@@ -151,15 +151,21 @@ func TestIntrospect_EmitsForActiveToken(t *testing.T) {
 	if len(sink.events) != 1 {
 		t.Fatalf("expected 1 audit event, got %d", len(sink.events))
 	}
-	e := sink.events[0]
+	assertActiveIntrospectionEvent(t, sink.events[0], "u-1")
+}
+
+// assertActiveIntrospectionEvent checks the audit event emitted for an active
+// token. Extracted so the test stays within the cyclomatic-complexity limit.
+func assertActiveIntrospectionEvent(t *testing.T, e audit.Event, wantSubject string) {
+	t.Helper()
 	if e.EventType != "token_introspected" {
 		t.Errorf("event_type = %q, want token_introspected", e.EventType)
 	}
 	if e.ActorID != "bearer-introspection-caller" {
 		t.Errorf("actor_id = %q, want bearer-introspection-caller", e.ActorID)
 	}
-	if e.SubjectID != "u-1" {
-		t.Errorf("subject_id = %q, want u-1", e.SubjectID)
+	if e.SubjectID != wantSubject {
+		t.Errorf("subject_id = %q, want %q", e.SubjectID, wantSubject)
 	}
 	if e.ResourcePath != "token-introspection-service/token/access" {
 		t.Errorf("resource_path = %q, want token-introspection-service/token/access", e.ResourcePath)
