@@ -93,13 +93,14 @@ func (s *PolicyService) GetSubjectPermissions(ctx context.Context, subjectID str
 func (s *PolicyService) collectPermissions(ctx context.Context, roles []string) ([]string, error) {
 	seen := make(map[string]struct{})
 	var permissions []string
+	byName, err := rolesByName(ctx, s.roleRepo, roles)
+	if err != nil {
+		return nil, err
+	}
 	for _, roleName := range roles {
-		role, err := s.roleRepo.FindByName(ctx, roleName)
-		if err != nil {
-			if apperrors.IsNotFound(err) {
-				continue // role assigned but not defined — skip silently
-			}
-			return nil, fmt.Errorf("finding role %q: %w", roleName, err)
+		role, ok := byName[roleName]
+		if !ok {
+			continue // role assigned but not defined — skip silently
 		}
 		for _, perm := range role.Permissions {
 			key := perm.Resource + ":" + perm.Action
