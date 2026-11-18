@@ -53,13 +53,41 @@ func NewClientAuthenticator(baseURL string, httpClient *http.Client) *ClientAuth
 	return &ClientAuthenticator{baseURL: baseURL, httpClient: httpClient}
 }
 
-// Authenticate validates credentials via POST /clients/validate, then fetches metadata
-// via GET /clients/{id}. Returns apperrors.ErrCodeUnauthorized if credentials are invalid.
+// lookupResult carries the outcome of the metadata lookup run alongside
+// credential validation.
+type lookupResult struct {
+	client *domain.Client
+	err    error
+}
+
+// Authenticate validates credentials via POST /clients/validate and fetches
+// metadata via GET /clients/{id} concurrently, saving one registry round trip
+// per token request. The client secret is never part of the metadata call, so
+// running it early leaks nothing; the metadata is discarded unless validation
+// succeeds.
+//
+// Precedence matches the former sequential flow: a credential rejection (or
+// registry failure during validation) is always returned in preference to any
+// metadata outcome, so an unauthenticated caller cannot learn whether a client
+// id exists. A rejection cancels the in-flight lookup.
+// Returns apperrors.ErrCodeUnauthorized if credentials are invalid.
 func (a *ClientAuthenticator) Authenticate(ctx context.Context, clientID, clientSecret string) (*domain.Client, error) {
+	lookupCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Buffered so the goroutine can always deliver and exit, even when
+	// Authenticate returns early on a validation failure.
+	lookup := make(chan lookupResult, 1)
+	go func() {
+		c, err := a.getClient(lookupCtx, clientID)
+		lookup <- lookupResult{client: c, err: err}
+	}()
+
 	if err := a.validate(ctx, clientID, clientSecret); err != nil {
 		return nil, err
 	}
-	return a.getClient(ctx, clientID)
+	res := <-lookup
+	return res.client, res.err
 }
 
 // Lookup returns client metadata via GET /clients/{id} without presenting any
