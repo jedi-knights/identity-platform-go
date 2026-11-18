@@ -210,7 +210,7 @@ func auditEmitterProvider(ctx context.Context, c *platform.Container) (audit.Emi
 func httpClientProvider(context.Context, *platform.Container) (*http.Client, error) {
 	return &http.Client{
 		Timeout:   10 * time.Second,
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Transport: otelhttp.NewTransport(outboundTransport()),
 	}, nil
 }
 
