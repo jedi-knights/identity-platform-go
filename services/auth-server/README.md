@@ -50,16 +50,18 @@ Configuration is loaded via [Viper](https://github.com/spf13/viper) from a `conf
 
 ```bash
 cd services/auth-server
-go run ./cmd/...
+AUTH_DEV_SEED_CLIENTS=true AUTH_DEV_CLIENT_SECRET=dev-secret go run ./cmd/...
 ```
+
+`AUTH_DEV_SEED_CLIENTS` seeds one in-memory client, `dev-client`. It only applies when `AUTH_CLIENT_REGISTRY_URL` is unset; otherwise clients come from client-registry-service.
 
 ### Request a token (client_credentials)
 
 ```bash
 curl -s -X POST http://localhost:8080/oauth/token \
   -d "grant_type=client_credentials" \
-  -d "client_id=test-client" \
-  -d "client_secret=test-secret" \
+  -d "client_id=dev-client" \
+  -d "client_secret=dev-secret" \
   -d "scope=read"
 ```
 
@@ -67,14 +69,14 @@ curl -s -X POST http://localhost:8080/oauth/token \
 
 ```bash
 curl -s -X POST http://localhost:8080/oauth/introspect \
-  -d "token=<access_token>"
+  -u dev-client:dev-secret -d "token=<access_token>"
 ```
 
 ### Revoke a token
 
 ```bash
 curl -s -X POST http://localhost:8080/oauth/revoke \
-  -d "token=<access_token>"
+  -u dev-client:dev-secret -d "token=<access_token>"
 ```
 
 ## Build
