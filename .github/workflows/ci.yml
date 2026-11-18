@@ -80,6 +80,21 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # Postgres adapter tests skip themselves unless TEST_DATABASE_URL (or
+    # ENTITLEMENTS_POSTGRES_TEST_URL) is set, so without this service they never
+    # ran in CI. The job is ephemeral, so the throwaway credentials are fine.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -101,11 +116,21 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Run integration tests
+        env:
+          PG_URL_BASE: postgres://postgres:postgres@localhost:5432
+          PG_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres
         run: |
-          find . -name "go.mod" -not -path "*/vendor/*" | while read modfile; do
+          find . -name "go.mod" -not -path "*/vendor/*" | sort | while read modfile; do
             dir=$(dirname "$modfile")
+            # One database per module: each service owns its own migration
+            # history (schema_migrations), so sharing a database would collide.
+            db=$(basename "$dir" | tr '-' '_')_test
+            psql "$PG_ADMIN_URL" -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE \"$db\"" || exit 1
             echo "=== Testing $dir ==="
-            (cd "$dir" && go test -tags integration ./... -race -count=1) || exit 1
+            (cd "$dir" && \
+              TEST_DATABASE_URL="$PG_URL_BASE/$db?sslmode=disable" \
+              ENTITLEMENTS_POSTGRES_TEST_URL="$PG_URL_BASE/$db?sslmode=disable" \
+              go test -tags integration ./... -race -count=1) || exit 1
           done
 
   test-acceptance:
