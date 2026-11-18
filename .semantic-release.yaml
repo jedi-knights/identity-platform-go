@@ -52,5 +52,5 @@ git_author:
 
 github:
   create_release: true
-  owner: ocrosby
+  owner: jedi-knights
   repo: identity-platform-go
