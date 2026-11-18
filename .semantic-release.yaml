@@ -6,77 +6,38 @@ projects:
     path: services/auth-server
     tag_prefix: "auth-server/"
     changelog_file: CHANGELOG.md
-    dependencies:
-      - errors
-      - httputil
-      - logging
   - name: authorization-policy-service
     path: services/authorization-policy-service
     tag_prefix: "authorization-policy-service/"
     changelog_file: CHANGELOG.md
-    dependencies:
-      - errors
-      - httputil
-      - logging
   - name: client-registry-service
     path: services/client-registry-service
     tag_prefix: "client-registry-service/"
     changelog_file: CHANGELOG.md
-    dependencies:
-      - errors
-      - httputil
-      - logging
+  - name: entitlements-service
+    path: services/entitlements-service
+    tag_prefix: "entitlements-service/"
+    changelog_file: CHANGELOG.md
   - name: example-resource-service
     path: services/example-resource-service
     tag_prefix: "example-resource-service/"
     changelog_file: CHANGELOG.md
-    dependencies:
-      - errors
-      - httputil
-      - logging
   - name: identity-service
     path: services/identity-service
     tag_prefix: "identity-service/"
     changelog_file: CHANGELOG.md
-    dependencies:
-      - errors
-      - httputil
-      - logging
+  - name: login-ui
+    path: services/login-ui
+    tag_prefix: "login-ui/"
+    changelog_file: CHANGELOG.md
   - name: token-introspection-service
     path: services/token-introspection-service
     tag_prefix: "token-introspection-service/"
     changelog_file: CHANGELOG.md
-    dependencies:
-      - errors
-      - httputil
-      - logging
 
-  # Shared libraries
-  - name: errors
-    path: libs/errors
-    tag_prefix: "errors/"
-    changelog_file: CHANGELOG.md
-  - name: httputil
-    path: libs/httputil
-    tag_prefix: "httputil/"
-    changelog_file: CHANGELOG.md
-    dependencies:
-      - errors
-  - name: logging
-    path: libs/logging
-    tag_prefix: "logging/"
-    changelog_file: CHANGELOG.md
-    dependencies:
-      - errors
-  - name: testutil
-    path: libs/testutil
-    tag_prefix: "testutil/"
-    changelog_file: CHANGELOG.md
-    dependencies:
-      - errors
-
-# When a lib changes, services that depend on it are also released
-dependency_propagation: true
+# Shared code lives in external modules (go-platform, go-logging), so no module
+# here depends on another and there is nothing to propagate.
+dependency_propagation: false
 
 branches:
   - name: main
