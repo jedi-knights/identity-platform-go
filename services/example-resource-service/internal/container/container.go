@@ -85,7 +85,7 @@ func New(ctx context.Context, cfg *config.Config, logger logging.Logger) (*platf
 func httpClientProvider(context.Context, *platform.Container) (*http.Client, error) {
 	return &http.Client{
 		Timeout:   5 * time.Second,
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Transport: otelhttp.NewTransport(outboundTransport()),
 	}, nil
 }
 
