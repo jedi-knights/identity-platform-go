@@ -59,8 +59,10 @@ docker compose ps   # all services healthy?
 Then drive a flow (PKCE values are sample; generate fresh ones from `code_verifier` for any real check):
 
 ```bash
+# 0. Register an authorization_code client with redirect URI http://localhost:8080/cb via
+#    POST http://localhost:9082/clients (the stack has no seeded client) and use its client_id below.
 # 1. Hit /oauth/authorize — expect 302 to http://localhost:9087/sign-in?login_challenge=…
-curl -i "http://localhost:9080/oauth/authorize?response_type=code&client_id=test-client&redirect_uri=http://localhost:8080/cb&scope=openid&state=xyz&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&nonce=n-0S6_WzA2Mj"
+curl -i "http://localhost:9080/oauth/authorize?response_type=code&client_id=<client_id>&redirect_uri=http://localhost:8080/cb&scope=openid&state=xyz&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&nonce=n-0S6_WzA2Mj"
 
 # 2. Open the redirect Location in a browser, submit a test user from identity-service.
 # 3. The browser should land at http://localhost:8080/cb?code=…&state=xyz.
