@@ -4,6 +4,7 @@ package postgres_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -88,6 +89,48 @@ func assertOwnerRow(t *testing.T, rows []domain.UserSeatSummary, wantAccountID, 
 	}
 }
 
+// seedPlan inserts a plan whose code is the given prefix plus a unique suffix
+// and removes it when the test ends. plans.code is unique and setup only
+// truncates accounts (which cascades to account_plans, not plans), so a fixed
+// code would collide with the row left by the previous run. It returns the
+// generated code and the plan's id.
+func seedPlan(t *testing.T, pool *pgxpool.Pool, codePrefix, name, tier string, allowance int) (code, id string) {
+	t.Helper()
+	ctx := context.Background()
+	code = fmt.Sprintf("%s-%d", codePrefix, time.Now().UnixNano())
+	err := pool.QueryRow(ctx,
+		`INSERT INTO plans (code, display_name, tier, seat_allowance)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id`,
+		code, name, tier, allowance,
+	).Scan(&id)
+	if err != nil {
+		t.Fatalf("seed plan %q: %v", code, err)
+	}
+	t.Cleanup(func() { deletePlan(t, code, id) })
+	return code, id
+}
+
+// deletePlan removes a seeded plan and the account_plans rows that reference it
+// (account_plans.plan_id is ON DELETE RESTRICT). It uses its own connection: the
+// test's pool is closed by the deferred cleanup before t.Cleanup callbacks run.
+func deletePlan(t *testing.T, code, id string) {
+	t.Helper()
+	ctx := context.Background()
+	pool, err := postgres.Connect(ctx, os.Getenv("ENTITLEMENTS_POSTGRES_TEST_URL"))
+	if err != nil {
+		t.Errorf("cleanup connect for plan %q: %v", code, err)
+		return
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(ctx, `DELETE FROM account_plans WHERE plan_id = $1`, id); err != nil {
+		t.Errorf("cleanup account_plans for %q: %v", code, err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM plans WHERE id = $1`, id); err != nil {
+		t.Errorf("cleanup plan %q: %v", code, err)
+	}
+}
+
 // TestListByUserID_PopulatesPlanFromActiveAccountPlan seeds a plan and
 // an active account_plans row, then confirms the LEFT JOIN materialises
 // the plan summary onto the row.
@@ -101,15 +144,7 @@ func TestListByUserID_PopulatesPlanFromActiveAccountPlan(t *testing.T) {
 		t.Fatalf("upsert: %v", err)
 	}
 
-	var planID string
-	err = pool.QueryRow(ctx,
-		`INSERT INTO plans (code, display_name, tier, seat_allowance)
-		 VALUES ('touchline-club', 'Touchline Club', 'club', 10)
-		 RETURNING id`,
-	).Scan(&planID)
-	if err != nil {
-		t.Fatalf("seed plan: %v", err)
-	}
+	planCode, planID := seedPlan(t, pool, "touchline-club", "Touchline Club", "club", 10)
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO account_plans (account_id, plan_id, valid_from) VALUES ($1, $2, $3)`,
 		acc.ID, planID, time.Now().UTC(),
@@ -124,8 +159,8 @@ func TestListByUserID_PopulatesPlanFromActiveAccountPlan(t *testing.T) {
 	if len(rows) != 1 || rows[0].Plan == nil {
 		t.Fatalf("want 1 row with plan, got %+v", rows)
 	}
-	if rows[0].Plan.Code != "touchline-club" {
-		t.Errorf("Plan.Code = %q, want touchline-club", rows[0].Plan.Code)
+	if rows[0].Plan.Code != planCode {
+		t.Errorf("Plan.Code = %q, want %q", rows[0].Plan.Code, planCode)
 	}
 }
 
@@ -142,14 +177,7 @@ func TestListByUserID_ExpiredPlanIsExcluded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	var planID string
-	if err := pool.QueryRow(ctx,
-		`INSERT INTO plans (code, display_name, tier, seat_allowance)
-		 VALUES ('touchline-free-expired', 'Free (Expired)', 'free', 1)
-		 RETURNING id`,
-	).Scan(&planID); err != nil {
-		t.Fatalf("seed plan: %v", err)
-	}
+	_, planID := seedPlan(t, pool, "touchline-free-expired", "Free (Expired)", "free", 1)
 	past := time.Now().UTC().Add(-24 * time.Hour)
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO account_plans (account_id, plan_id, valid_from, valid_until)
