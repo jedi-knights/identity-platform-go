@@ -21,6 +21,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // ErrUnknownKID is returned by KeyByID when the requested kid is not present
@@ -36,10 +38,16 @@ type Fetcher struct {
 	cacheTTL  time.Duration
 	rateLimit time.Duration
 
-	mu             sync.Mutex
+	// mu guards the cache fields below. It is never held across the upstream
+	// HTTP call: lookups of cached keys must not wait behind a refresh.
+	mu             sync.RWMutex
 	keys           map[string]*rsa.PublicKey
 	lastFetch      time.Time
 	lastForcedRefr time.Time
+
+	// flight collapses concurrent refreshes into one upstream call whose
+	// result (success or failure) every waiting caller shares.
+	flight singleflight.Group
 }
 
 // Option mutates a Fetcher at construction time.
@@ -100,8 +108,8 @@ func (f *Fetcher) KeyByID(ctx context.Context, kid string) (*rsa.PublicKey, erro
 		return nil, err
 	}
 
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	if pub, ok := f.keys[kid]; ok {
 		return pub, nil
 	}
@@ -112,8 +120,8 @@ func (f *Fetcher) KeyByID(ctx context.Context, kid string) (*rsa.PublicKey, erro
 // requires the key to be present AND the cache to be fresh; otherwise the
 // caller falls through to refresh.
 func (f *Fetcher) cachedKey(kid string) (*rsa.PublicKey, bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	cached, ok := f.keys[kid]
 	stale := time.Since(f.lastFetch) > f.cacheTTL
 	if ok && !stale {
@@ -127,10 +135,10 @@ func (f *Fetcher) cachedKey(kid string) (*rsa.PublicKey, bool) {
 // out-of-cycle refresh, rate-limited per WithRefreshRateLimit. A stale
 // cache (any kid present, TTL exceeded) refreshes on schedule.
 func (f *Fetcher) refreshForLookup(ctx context.Context, kid string) error {
-	f.mu.Lock()
+	f.mu.RLock()
 	_, present := f.keys[kid]
 	canForceRefresh := f.rateLimit == 0 || time.Since(f.lastForcedRefr) >= f.rateLimit
-	f.mu.Unlock()
+	f.mu.RUnlock()
 
 	if !present && !canForceRefresh {
 		// Cache miss but rate-limited. Surface as unknown kid; the validator
@@ -141,23 +149,44 @@ func (f *Fetcher) refreshForLookup(ctx context.Context, kid string) error {
 	return f.refresh(ctx, !present)
 }
 
-// refresh fetches the JWKS document and replaces the in-memory cache.
-// Holds the mutex during the upstream call to serialise concurrent
-// refreshers — a small cost vs the alternative complexity of an in-flight
-// promise.
-func (f *Fetcher) refresh(ctx context.Context, forced bool) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+// refreshKey is the singleflight key: there is one JWKS document per Fetcher.
+const refreshKey = "jwks"
 
+// refresh fetches the JWKS document and replaces the in-memory cache.
+// Concurrent callers share one upstream call and its outcome, so a burst of
+// lookups during an outage costs one failed fetch rather than one per caller.
+// The shared fetch runs detached from any single caller's cancellation (the
+// HTTP client's timeout bounds it); each caller still returns as soon as its
+// own ctx is done.
+func (f *Fetcher) refresh(ctx context.Context, forced bool) error {
+	ch := f.flight.DoChan(refreshKey, func() (any, error) {
+		return nil, f.fetchAndStore(context.WithoutCancel(ctx), forced)
+	})
+	select {
+	case res := <-ch:
+		return res.Err
+	case <-ctx.Done():
+		return fmt.Errorf("jwks: context: %w", ctx.Err())
+	}
+}
+
+// fetchAndStore performs the upstream call without holding mu, then swaps the
+// cache in under the write lock.
+func (f *Fetcher) fetchAndStore(ctx context.Context, forced bool) error {
 	if forced {
+		f.mu.Lock()
 		f.lastForcedRefr = time.Now()
+		f.mu.Unlock()
 	}
 	doc, err := f.fetchJWKS(ctx)
 	if err != nil {
 		return err
 	}
-	f.keys = decodeKeySet(doc.Keys)
+	keys := decodeKeySet(doc.Keys)
+	f.mu.Lock()
+	f.keys = keys
 	f.lastFetch = time.Now()
+	f.mu.Unlock()
 	return nil
 }
 
