@@ -373,3 +373,105 @@ func TestResetPasswordPost_BadClientIPHeaderFallsBackToPeer(t *testing.T) {
 		t.Errorf("client IP = %q, want the TCP peer", got)
 	}
 }
+
+const resetChallengeCookie = "reset_login_challenge"
+
+// serveWithCookie is serve plus one request cookie.
+func serveWithCookie(router http.Handler, target string, form url.Values, c *http.Cookie) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodPost, target, strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if c != nil {
+		r.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+	return rec
+}
+
+func findCookie(rec *httptest.ResponseRecorder, name string) *http.Cookie {
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+func validResetForm() url.Values {
+	return url.Values{"token": {"tok-1"}, "password": {"correct horse battery"}, "confirm_password": {"correct horse battery"}}
+}
+
+func TestForgotPasswordPost_RemembersLoginChallengeInAScopedCookie(t *testing.T) {
+	rec := serve(newResetRouter(&fakePasswordResetter{}), http.MethodPost, "/forgot-password",
+		url.Values{"email": {"u@example.com"}, "login_challenge": {"chal-1"}})
+
+	c := findCookie(rec, resetChallengeCookie)
+	if c == nil {
+		t.Fatal("no challenge cookie set after a successful request")
+	}
+	assertChallengeCookieAttrs(t, c)
+}
+
+func assertChallengeCookieAttrs(t *testing.T, c *http.Cookie) {
+	t.Helper()
+	if c.Value != "chal-1" || !c.HttpOnly || c.SameSite != http.SameSiteLaxMode || c.Path != "/reset-password" {
+		t.Errorf("cookie = %+v, want value chal-1, HttpOnly, SameSite=Lax, Path=/reset-password", c)
+	}
+	if c.MaxAge <= 0 || c.MaxAge > 600 {
+		t.Errorf("MaxAge = %d, want a short positive lifetime (<= 600s; challenges live 5 min)", c.MaxAge)
+	}
+}
+
+func TestForgotPasswordPost_NoCookieWithoutAChallengeOrOnFailure(t *testing.T) {
+	tests := []struct {
+		name string
+		pr   *fakePasswordResetter
+		form url.Values
+	}{
+		{"no challenge", &fakePasswordResetter{}, url.Values{"email": {"u@example.com"}}},
+		{"oversized challenge", &fakePasswordResetter{}, url.Values{"email": {"u@example.com"}, "login_challenge": {strings.Repeat("a", 300)}}},
+		{"upstream failure", &fakePasswordResetter{requestErr: apperrors.New(apperrors.ErrCodeInternal, "boom")}, url.Values{"email": {"u@example.com"}, "login_challenge": {"chal-1"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := serve(newResetRouter(tt.pr), http.MethodPost, "/forgot-password", tt.form)
+			if c := findCookie(rec, resetChallengeCookie); c != nil {
+				t.Errorf("unexpected cookie %+v", c)
+			}
+		})
+	}
+}
+
+func TestResetPasswordPost_SuccessOffersContinueToSignInAndClearsCookie(t *testing.T) {
+	rec := serveWithCookie(newResetRouter(&fakePasswordResetter{}), "/reset-password", validResetForm(),
+		&http.Cookie{Name: resetChallengeCookie, Value: "chal-1"})
+
+	mustContain(t, rec.Body.String(), `href="/sign-in?login_challenge=chal-1"`, `data-testid="continue"`)
+	if c := findCookie(rec, resetChallengeCookie); c == nil || c.MaxAge >= 0 {
+		t.Errorf("cookie after success = %+v, want it cleared (MaxAge < 0)", c)
+	}
+}
+
+func TestResetPasswordPost_ChallengeInLinkIsEscaped(t *testing.T) {
+	rec := serveWithCookie(newResetRouter(&fakePasswordResetter{}), "/reset-password", validResetForm(),
+		&http.Cookie{Name: resetChallengeCookie, Value: "a&b=c"})
+
+	mustContain(t, rec.Body.String(), `login_challenge=a%26b%3dc`)
+}
+
+func TestResetPasswordPost_WithoutCookieKeepsReturnToAppMessage(t *testing.T) {
+	rec := serveWithCookie(newResetRouter(&fakePasswordResetter{}), "/reset-password", validResetForm(), nil)
+
+	mustContain(t, rec.Body.String(), `data-testid="done"`)
+	mustNotContain(t, rec.Body.String(), "no OAuth flow is known to this browser", `data-testid="continue"`, "/sign-in")
+}
+
+func TestResetPasswordPost_FailureKeepsCookieForTheRetry(t *testing.T) {
+	pr := &fakePasswordResetter{resetErr: apperrors.New(apperrors.ErrCodeUnauthorized, "bad")}
+	rec := serveWithCookie(newResetRouter(pr), "/reset-password", validResetForm(), &http.Cookie{Name: resetChallengeCookie, Value: "chal-1"})
+
+	if c := findCookie(rec, resetChallengeCookie); c != nil {
+		t.Errorf("cookie touched on failure: %+v", c)
+	}
+	mustNotContain(t, rec.Body.String(), "no sign-in link before the password actually changed", `data-testid="continue"`)
+}

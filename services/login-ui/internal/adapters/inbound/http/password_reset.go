@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/jedi-knights/go-platform/apperrors"
 )
@@ -36,6 +37,10 @@ type resetPasswordView struct {
 	Error        string
 	OfferNewLink bool
 	Done         bool
+	// ContinueChallenge, on the success page, is the OAuth login challenge
+	// this browser was in the middle of when it asked for the reset. When set
+	// the page links back into that sign-in.
+	ContinueChallenge string
 }
 
 // ForgotPasswordGet renders the "email me a reset link" form.
@@ -91,6 +96,7 @@ func (h *Handler) ForgotPasswordPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view.Sent = true
+	rememberLoginChallenge(w, r, view.LoginChallenge)
 	h.renderForgotPassword(w, http.StatusOK, view)
 }
 
@@ -170,7 +176,7 @@ func (h *Handler) ResetPasswordPost(w http.ResponseWriter, r *http.Request) {
 		h.renderResetPassword(w, status, view)
 		return
 	}
-	h.renderResetPassword(w, http.StatusOK, resetPasswordView{Done: true})
+	h.renderResetPassword(w, http.StatusOK, resetPasswordView{Done: true, ContinueChallenge: takeLoginChallenge(w, r)})
 }
 
 // validateResetForm checks the form before any upstream call. When ok is
@@ -254,4 +260,56 @@ func (h *Handler) clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+const (
+	// resetChallengeCookie remembers, in the browser that asked for the reset,
+	// which OAuth login challenge it was signing in to. It is a cookie rather
+	// than a field in the emailed link on purpose: the OAuth flow (PKCE
+	// verifier, state) lives in this browser, so continuing it from another
+	// device would be wrong, and a value placed in an email could be chosen by
+	// whoever requested the reset for someone else's address.
+	resetChallengeCookie = "reset_login_challenge"
+
+	// resetChallengeTTL matches the 5-minute login-challenge lifetime plus
+	// slack for email delivery; a longer cookie could only outlive its challenge.
+	resetChallengeTTL = 10 * time.Minute
+
+	// maxChallengeLen bounds what is stored; real challenge IDs are far shorter.
+	maxChallengeLen = 256
+)
+
+// rememberLoginChallenge stores challenge for the reset page. Empty or
+// oversized values are ignored.
+func rememberLoginChallenge(w http.ResponseWriter, r *http.Request, challenge string) {
+	if challenge == "" || len(challenge) > maxChallengeLen {
+		return
+	}
+	http.SetCookie(w, challengeCookie(r, challenge, int(resetChallengeTTL.Seconds())))
+}
+
+// takeLoginChallenge returns the remembered challenge, if any, and clears the
+// cookie: it is single-use, and a stale one must not resurface on a later
+// reset.
+func takeLoginChallenge(w http.ResponseWriter, r *http.Request) string {
+	c, err := r.Cookie(resetChallengeCookie)
+	if err != nil || c.Value == "" || len(c.Value) > maxChallengeLen {
+		return ""
+	}
+	http.SetCookie(w, challengeCookie(r, "", -1))
+	return c.Value
+}
+
+func challengeCookie(r *http.Request, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     resetChallengeCookie,
+		Value:    value,
+		Path:     "/reset-password",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, // Lax: the emailed link is a top-level GET navigation
+		// Behind Fly's proxy TLS terminates upstream; the header only decides
+		// this attribute, so a spoofed value affects nobody but the sender.
+		Secure: r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+	}
 }
