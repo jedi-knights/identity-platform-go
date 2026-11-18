@@ -7,18 +7,20 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/cucumber/godog"
 )
 
-// InitializeTestSuite is a no-op — unlike the main acceptance suite, the
-// smoke suite starts nothing itself (no testcontainers, no subprocess
-// binaries). `task test:smoke` brings the real docker-compose stack up
-// before running this binary and tears it down after, so there is no
-// suite-level setup/teardown to hook here.
-func InitializeTestSuite(_ *godog.TestSuiteContext) {}
+// InitializeTestSuite registers the OAuth client the scenarios authenticate
+// as. Unlike the main acceptance suite, the smoke suite starts nothing itself
+// (no testcontainers, no subprocess binaries): `task test:smoke` brings the
+// real docker-compose stack up before running this binary and tears it down
+// after. The only suite-level setup is this one call to the running
+// client-registry-service.
+func InitializeTestSuite(tsc *godog.TestSuiteContext) {
+	tsc.BeforeSuite(func() { registerSmokeClient(newSmokeWorld()) })
+}
 
 // InitializeScenario registers every step against one smokeWorld shared
 // across the whole suite run — see smokeWorld's doc comment for why a
@@ -31,7 +33,7 @@ func InitializeScenario(sctx *godog.ScenarioContext) {
 		return stepHealthCheck(ctx, world, service)
 	})
 
-	sctx.Step(`^the seeded test-client requests a token using the client_credentials grant with scope "([^"]*)"$`,
+	sctx.Step(`^the registered smoke client requests a token using the client_credentials grant with scope "([^"]*)"$`,
 		func(ctx context.Context, scope string) error {
 			return stepRequestToken(ctx, world, scope)
 		})
@@ -115,43 +117,44 @@ func stepHealthCheck(ctx context.Context, world *smokeWorld, service string) err
 	return nil
 }
 
-// devClientSecret returns the dev-seed client's secret — generated fresh
-// per `task test:smoke` run and passed through via SMOKE_DEV_CLIENT_SECRET,
-// never a hardcoded value, since it's a real credential the real
-// auth-server image is configured with.
-func devClientSecret() string {
-	return os.Getenv("SMOKE_DEV_CLIENT_SECRET")
-}
-
 // stepRequestToken exercises the plan's "one representative scenario":
-// the seeded test-client obtains a client_credentials token from the
+// the registered smoke client obtains a client_credentials token from the
 // real auth-server image, which itself calls the real
 // client-registry-service image to validate the client — over the
 // actual compose network, not a subprocess or httptest.Server.
 func stepRequestToken(ctx context.Context, world *smokeWorld, scope string) error {
+	if err := requireSmokeClient(); err != nil {
+		return err
+	}
 	form := url.Values{
 		"grant_type":    {"client_credentials"},
-		"client_id":     {"test-client"},
-		"client_secret": {devClientSecret()},
+		"client_id":     {smokeClient.ID},
+		"client_secret": {smokeClient.Secret},
 		"scope":         {scope},
 	}
 	return postForm(ctx, world, world.AuthServerURL+"/oauth/token", form)
 }
 
 func stepIntrospect(ctx context.Context, world *smokeWorld, token string) error {
+	if err := requireSmokeClient(); err != nil {
+		return err
+	}
 	form := url.Values{
 		"token":         {token},
-		"client_id":     {"test-client"},
-		"client_secret": {devClientSecret()},
+		"client_id":     {smokeClient.ID},
+		"client_secret": {smokeClient.Secret},
 	}
 	return postForm(ctx, world, world.AuthServerURL+"/oauth/introspect", form)
 }
 
 func stepRevoke(ctx context.Context, world *smokeWorld, token string) error {
+	if err := requireSmokeClient(); err != nil {
+		return err
+	}
 	form := url.Values{
 		"token":         {token},
-		"client_id":     {"test-client"},
-		"client_secret": {devClientSecret()},
+		"client_id":     {smokeClient.ID},
+		"client_secret": {smokeClient.Secret},
 	}
 	return postForm(ctx, world, world.AuthServerURL+"/oauth/revoke", form)
 }

@@ -96,8 +96,10 @@ services:
       AUTH_LOG_LEVEL: "info"
       AUTH_LOG_FORMAT: "json"
       AUTH_LOG_ENVIRONMENT: "development"
-      # Seed a test client on startup so you can request tokens immediately.
-      # Test client id is "test-client"; secret is DEV_CLIENT_SECRET.
+      # NOTE: with AUTH_CLIENT_REGISTRY_URL set (below), client authentication is
+      # delegated to client-registry-service and these two dev-seed settings have
+      # no effect: the stack starts with no OAuth clients. Register one with
+      # POST http://localhost:9082/clients before requesting a token.
       AUTH_DEV_SEED_CLIENTS: "true"
       AUTH_DEV_CLIENT_SECRET: ${DEV_CLIENT_SECRET}
       # Wire to external services for proper bounded context separation.
