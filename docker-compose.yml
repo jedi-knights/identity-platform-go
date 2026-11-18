@@ -254,6 +254,9 @@ services:
       INTROSPECT_LOG_FORMAT: "json"
       INTROSPECT_LOG_ENVIRONMENT: "development"
       INTROSPECT_REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
+      # RFC 7662 §2.1: callers must authenticate. The service refuses to start
+      # without a secret; example-resource-service presents the same value.
+      INTROSPECT_INTROSPECTION_SECRET: ${INTROSPECTION_SECRET}
     depends_on:
       redis:
         condition: service_healthy
@@ -338,6 +341,7 @@ services:
       RESOURCE_LOG_ENVIRONMENT: "development"
       # Delegate token validation to token-introspection-service for revocation support.
       RESOURCE_INTROSPECTION_URL: "http://token-introspection-service:8083"
+      RESOURCE_INTROSPECTION_SECRET: ${INTROSPECTION_SECRET}
       # Delegate authorization to authorization-policy-service for RBAC enforcement.
       RESOURCE_POLICY_URL: "http://authorization-policy-service:8084"
       RESOURCE_DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/example_resource?sslmode=disable"
