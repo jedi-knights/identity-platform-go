@@ -1,42 +1,290 @@
 # Identity Platform Go
 
-A production-style **OAuth 2.0 / OIDC** reference platform built in Go, demonstrating a pure microservices architecture with clean design principles. Each service is independently deployable with its own module, configuration, and in-memory data store.
+A reference OAuth 2.0 / OpenID Connect platform in Go: eight small services you can run on a laptop and read in an afternoon each.
 
----
+![CI](https://github.com/jedi-knights/identity-platform-go/actions/workflows/ci.yml/badge.svg)
+![Deploy](https://github.com/jedi-knights/identity-platform-go/actions/workflows/deploy.yml/badge.svg)
+![Release](https://github.com/jedi-knights/identity-platform-go/actions/workflows/release.yml/badge.svg)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Service Map](#service-map)
-- [Services](#services)
-- [Shared Libraries](#shared-libraries)
-- [Design Patterns](#design-patterns)
-- [Getting Started](#getting-started)
-- [Configuration](#configuration)
-- [API Reference](#api-reference)
-- [Testing](#testing)
-- [Swagger / API Documentation](#swagger--api-documentation)
-- [Project Structure](#project-structure)
-- [Architecture Decision Records](#architecture-decision-records)
-- [Deployment (Fly.io)](#deployment-flyio)
-- [Horizontal Scalability](#horizontal-scalability)
-- [Release Process](#release-process)
-- [License](#license)
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#requirements">Requirements</a> ·
+  <a href="#installation">Installation</a> ·
+  <a href="#usage">Usage</a> ·
+  <a href="#examples">Examples</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#api-reference">API Reference</a> ·
+  <a href="#configuration">Configuration</a> ·
+  <a href="#deployment-flyio">Deployment</a> ·
+  <a href="#horizontal-scalability">Scalability</a> ·
+  <a href="#development">Development</a> ·
+  <a href="#release-process">Releases</a> ·
+  <a href="#contributing">Contributing</a>
+</p>
 
 ---
 
 ## Overview
 
-This repository is a **reference implementation** that showcases how to build a scalable identity and access management platform using:
+If you have integrated an app with Auth0, Keycloak or Okta, you have used a token endpoint, a JWKS URL and an introspection endpoint, but they were black boxes. This repository is those parts, split into services you can start locally: an authorization server (`auth-server`), a user store (`identity-service`), a client registry, a token introspector, a policy engine, a sign-in UI (`login-ui`), an entitlements service and a protected example API.
 
-- **Hexagonal Architecture** (Ports & Adapters) with strict dependency direction
-- **Go Workspaces** for monorepo management across independent modules
-- **Strategy Pattern** for extensible OAuth 2.0 grant type handling
-- **Specification Pattern** for fine-grained authorization policy evaluation
-- **Zero external dependencies** for local development (all persistence is in-memory)
+Most tutorial servers issue one kind of token and stop: no revocation, no PKCE, no key rotation, secrets compared with `==`. Full products are too large to learn from. This platform sits between: small enough to read, complete enough that the hard parts are present and explained in [Architecture Decision Records](docs/adr/).
 
-The platform implements core OAuth 2.0 flows including token issuance, introspection, and revocation, along with user identity management, client registration, and resource protection via JWT-based authentication.
+Doing OAuth properly by hand means getting a lot of fiddly things right at once:
+
+- PKCE with `S256` mandatory, and `plain` rejected, so public clients are safe.
+- RS256 signing with a published JWKS and a key-rotation window (`previous`, `current`, `next`), not a shared secret.
+- Introspection that answers `200 {"active": false}` for bad tokens, and revocation that is idempotent.
+- `Cache-Control: no-store` on every token response, and constant-time secret comparison.
+- Scopes limited to what the client is registered for.
+- Refresh-token rotation with replay detection.
+- A login hand-off between the authorization server and the UI that shares no session state.
+- Stateless services that run as two or more replicas with no single point of failure.
+
+Here is the smallest complete example: start the authorization server with a development client, then ask for a token.
+
+```bash
+AUTH_DEV_SEED_CLIENTS=true AUTH_DEV_CLIENT_SECRET=dev-secret task run:auth-server &
+
+curl -s -X POST http://localhost:8080/oauth/token \
+  -d grant_type=client_credentials -d client_id=dev-client \
+  -d client_secret=dev-secret -d scope=read
+```
+
+```json
+{"access_token":"eyJhbGciOiJSUzI1NiIs...","token_type":"Bearer","expires_in":300,"scope":"read","refresh_token":"11972ee0ed48548809d0214fc858ca17"}
+```
+
+That one request bought you:
+
+| You get | Where to see it |
+|---------|-----------------|
+| An RS256 JWT whose header carries a `kid` (`"typ":"at+jwt"`, per RFC 9068) | Decode the first segment of `access_token` |
+| The matching public key | `GET /.well-known/jwks.json` lists the same `kid` |
+| A token you can introspect and revoke | [Examples](#examples) |
+| A scope limited to what `dev-client` may have | Ask for `admin` and get `invalid_scope` |
+| `Cache-Control: no-store` and `Pragma: no-cache` | `curl -i` the same request |
+
+---
+
+## Features
+
+- OAuth 2.0 grants: `client_credentials`, `refresh_token`, `authorization_code` with mandatory PKCE, device authorization, token exchange, JWT-bearer and SAML-bearer assertions.
+- OpenID Connect Core: ID tokens, `/userinfo`, discovery metadata, and JWKS.
+- Token introspection, revocation, DPoP proof of possession, pushed authorization requests and rich authorization requests.
+- A sign-in UI with sign-up, email verification, password reset (delivered by SMTP), device approval and billing screens.
+- Dynamic client registration and RBAC policy evaluation.
+- Hexagonal architecture in every service, with the dependency direction enforced by convention and documented in ADRs.
+- In-memory storage for zero-dependency local runs; Redis and PostgreSQL adapters for production.
+- Deployed to Fly.io as private apps, with a Docker Compose stack for local use.
+
+The full RFC coverage table lives in [`CLAUDE.md`](CLAUDE.md).
+
+---
+
+## Requirements
+
+- **Go 1.26+** (see `go.work`)
+- **[Task](https://taskfile.dev/)** to run the build, test and lint commands
+- **[jq](https://jqlang.github.io/jq/)** for the `curl` examples that parse JSON
+- **[Docker](https://docs.docker.com/get-docker/)** with the Compose plugin, only for the full stack, the acceptance suite and the smoke tests
+- **[golangci-lint](https://golangci-lint.run/) v2.15.0** for `task lint` (the version CI pins)
+- **[swag](https://github.com/swaggo/swag)**, only for `task swagger`
+- The [Allure](https://allurereport.org/) command line, only to view acceptance results as an HTML report
+
+---
+
+## Installation
+
+```bash
+git clone https://github.com/jedi-knights/identity-platform-go.git
+cd identity-platform-go
+task build        # builds the six core services into bin/
+```
+
+`task build` covers `auth-server`, `identity-service`, `client-registry-service`, `token-introspection-service`, `authorization-policy-service` and `example-resource-service`. `login-ui` and `entitlements-service` are built with `go build ./cmd` from their own directories.
+
+### Run one service
+
+```bash
+task run:auth-server
+task run:identity-service
+task run:client-registry-service
+task run:token-introspection-service
+task run:authorization-policy-service
+task run:example-resource-service
+
+# login-ui and entitlements-service have no task; run them from their module:
+cd services/login-ui && go run ./cmd
+```
+
+Every service falls back to in-memory storage and local behavior when its upstream URLs are unset, so each one starts alone. See [Configuration](#configuration).
+
+### Run the whole stack with Docker Compose
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set the values below (`openssl rand -hex 32` generates a good random value).
+
+| Variable | Requirement |
+|----------|-------------|
+| `JWT_SIGNING_KEY` | Random string of at least 32 characters, shared by the services that validate tokens |
+| `DEV_CLIENT_SECRET` | Secret for the seeded `dev-client` (any non-empty string works locally) |
+| `POSTGRES_PASSWORD` | Password for the Postgres container |
+| `REDIS_PASSWORD` | Password for the Redis container |
+| `LOGIN_UI_SERVICE_TOKEN` | At least 32 characters; shared between `login-ui` and `auth-server`'s `POST /internal/issue-code` (ADR-0011) |
+
+```bash
+docker compose up --build
+```
+
+All seven services start in parallel, with Postgres and Redis behind them. Each exposes `/health`.
+
+| Service | Host URL |
+|---------|----------|
+| auth-server | http://localhost:9080 |
+| identity-service | http://localhost:9081 |
+| client-registry-service | http://localhost:9082 |
+| token-introspection-service | http://localhost:9083 |
+| authorization-policy-service | http://localhost:9084 |
+| example-resource-service | http://localhost:9085 |
+| login-ui | http://localhost:9087 |
+
+Useful Compose commands:
+
+```bash
+docker compose up --build -d       # detached
+docker compose logs -f auth-server # follow one service
+docker compose ps                  # status and health
+docker compose down                # stop and remove containers
+```
+
+---
+
+## Usage
+
+Issue a token, inspect it, revoke it. This runs against a single service and needs no Docker.
+
+```bash
+# 1. Start auth-server with a seeded development client (client id "dev-client").
+AUTH_DEV_SEED_CLIENTS=true AUTH_DEV_CLIENT_SECRET=dev-secret task run:auth-server &
+
+# 2. Request a token (client_credentials grant).
+TOKEN=$(curl -s -X POST http://localhost:8080/oauth/token \
+  -d grant_type=client_credentials -d client_id=dev-client \
+  -d client_secret=dev-secret -d scope=read | jq -r .access_token)
+
+# 3. Introspect it. Introspection and revocation require client authentication.
+curl -s -X POST http://localhost:8080/oauth/introspect \
+  -u dev-client:dev-secret -d token=$TOKEN
+```
+
+```json
+{"active":true,"client_id":"dev-client","sub":"dev-client","iss":"identity-platform","scope":"read","exp":1794962924,"iat":1794962624,"token_type":"Bearer","jti":"28a6f44896a3f62d8d37c1d64c6bac07"}
+```
+
+```bash
+# 4. Revoke it, then introspect again.
+curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8080/oauth/revoke \
+  -u dev-client:dev-secret -d token=$TOKEN        # 200
+curl -s -X POST http://localhost:8080/oauth/introspect \
+  -u dev-client:dev-secret -d token=$TOKEN         # {"active":false}
+```
+
+Against the Compose stack, use the host ports from the table above (`9080` instead of `8080`) and your `DEV_CLIENT_SECRET` as the secret.
+
+> The Compose-specific steps were not executed when this README was last revised, because the Docker host was out of disk space. The single-service steps above were executed.
+
+---
+
+## Examples
+
+Each example builds on the `dev-client` setup from [Usage](#usage). Outputs are from real runs.
+
+### 1. A token is verifiable without calling the server
+
+Why: resource servers should validate tokens locally, not on every request.
+
+```bash
+curl -s http://localhost:8080/.well-known/jwks.json | jq -r '.keys[].kid'
+# dev-edde52bbeb2e0525
+
+echo $TOKEN | jq -R 'split(".")[0] | @base64d | fromjson' -c
+# {"alg":"RS256","kid":"dev-edde52bbeb2e0525","typ":"at+jwt"}
+```
+
+The `kid` in the token header names the key in the JWKS. Without `AUTH_JWT_RSA_PRIVATE_KEY_PEM`, auth-server generates a new key at every start, so the `kid` changes on restart; set the PEM to keep it stable.
+
+### 2. Introspection never returns an error for a bad token
+
+Why: RFC 7662 says an unknown or expired token is a normal answer, not a failure. Callers must not have to tell "bad token" from "bad request".
+
+```bash
+curl -s -w " %{http_code}\n" -X POST http://localhost:8080/oauth/introspect \
+  -u dev-client:dev-secret -d token=garbage
+# {"active":false} 200
+```
+
+Gotcha: this is `200`, not `401`. A `401` here means your *client* credentials were wrong. Revocation is idempotent in the same way: revoking an already revoked token also returns `200`.
+
+### 3. Scopes are capped by registration
+
+Why: a client must never receive more than it registered for.
+
+```bash
+curl -s -X POST http://localhost:8080/oauth/token -d grant_type=client_credentials \
+  -d client_id=dev-client -d client_secret=dev-secret -d scope="read write" | jq -r .scope
+# read write
+
+curl -s -X POST http://localhost:8080/oauth/token -d grant_type=client_credentials \
+  -d client_id=dev-client -d client_secret=dev-secret -d scope=admin
+# {"error":"invalid_scope","error_description":"requested scope not permitted"}
+```
+
+| Request `scope` | Result |
+|-----------------|--------|
+| `read` | granted |
+| `read write` | granted (both registered for `dev-client`) |
+| `admin` | `invalid_scope`, no token |
+
+### 4. A password reset that never reveals who has an account
+
+Why: a reset form that answers differently for known and unknown addresses lets anyone enumerate your users. The default `stdout` email sender prints the link to the service log, so no mail server is needed here.
+
+```bash
+IDENTITY_SERVER_PORT=8081 IDENTITY_LOG_FORMAT=json task run:identity-service &
+
+curl -s -X POST http://localhost:8081/auth/register -H 'Content-Type: application/json' \
+  -d '{"email":"ada@example.com","name":"Ada","password":"old password 123"}' > /dev/null
+
+# Known and unknown addresses get the same answer: 204.
+curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8081/auth/request-password-reset \
+  -H 'Content-Type: application/json' -d '{"email":"ada@example.com"}'    # 204
+curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8081/auth/request-password-reset \
+  -H 'Content-Type: application/json' -d '{"email":"nobody@example.com"}' # 204
+```
+
+The service log for the known address contains a `reset_url` field (with no `IDENTITY_EMAIL_PASSWORD_RESET_URL_TEMPLATE` set, it is the bare token). Redeem it, then sign in:
+
+```bash
+curl -s -X POST http://localhost:8081/auth/reset-password -H 'Content-Type: application/json' \
+  -d '{"token":"<token from the log>","new_password":"new password 456"}'
+# {"user_id":"...","email":"ada@example.com"}
+
+for pw in "old password 123" "new password 456"; do
+  curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8081/auth/login \
+    -H 'Content-Type: application/json' -d "{\"email\":\"ada@example.com\",\"password\":\"$pw\"}"
+done
+# 401   (old password rejected)
+# 200   (new password accepted)
+```
+
+Gotcha: a reset token works once. Running the redeem command a second time fails with `401`, and a password shorter than 8 characters is rejected with `400` without using up the token.
+
+To send real email, see [Configuring email](#configuring-email).
 
 ---
 
@@ -44,7 +292,7 @@ The platform implements core OAuth 2.0 flows including token issuance, introspec
 
 All services follow the **Ports and Adapters** (Hexagonal) architecture with a strict dependency direction:
 
-```
+```text
 domain  -->  application  -->  ports  -->  adapters
 ```
 
@@ -57,94 +305,77 @@ domain  -->  application  -->  ports  -->  adapters
 
 This design ensures that business logic is framework-agnostic, independently testable, and that infrastructure can be swapped without modifying core logic.
 
----
+### Service Map
 
-## Service Map
+```text
+Relying party ──> auth-server (:8080) ──302 /sign-in?login_challenge=<id>──> login-ui (:8087)
+                       ^                                                         │
+                       │  POST /internal/issue-code (bearer token)               │ verify credentials
+                       └─────────────────────────────────────────────────────────┤
+                                                                                 v
+                                                                        identity-service (:8081)
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                          Identity Platform                               │
-│                                                                          │
-│   Client App ──> api-gateway (:8086)                                     │
-│                       │                                                  │
-│              (path-prefix routing)                                       │
-│                       │                                                  │
-│         ┌─────────────┼──────────────────────┐                          │
-│         │             │                      │                          │
-│         v             v                      v                          │
-│   auth-server    identity-service    client-registry-service             │
-│    (:8080)          (:8081)                (:8082)                       │
-│   /oauth →       /auth →              /clients →                        │
-│                                                                          │
-│   token-introspection-service (:8083)  /introspect →                    │
-│   authorization-policy-service (:8084) /evaluate →                      │
-│   example-resource-service (:8085)     /resources → (protected API)     │
-└──────────────────────────────────────────────────────────────────────────┘
+auth-server ──> client-registry-service (:8082)   client authentication
+auth-server ──> authorization-policy-service (:8084)   roles and permissions for token claims
+example-resource-service (:8085) ──> token-introspection-service (:8083)
+                                 ──> authorization-policy-service (:8084)
+login-ui, auth-server, identity-service ──> entitlements-service (:8086)   accounts and plans
 ```
 
-All inter-service communication is over **HTTP**. There is no shared database between services.
+All inter-service communication is over **HTTP**. There is no shared database between services. Ports are the defaults for a directly run service; Docker Compose maps `8080`–`8087` to host ports `9080`–`9087`.
 
----
+### Services
 
-## Services
+#### [auth-server](services/auth-server/README.md) (`:8080`)
 
-### [api-gateway](services/api-gateway/README.md) (`:8086`)
+The OAuth 2.0 / OIDC authorization server. Issues, introspects and revokes tokens; publishes JWKS and discovery metadata.
 
-The single ingress point for all client traffic. Routes inbound requests to upstream services using longest-prefix path matching. Cross-cutting concerns (auth, rate limiting, circuit breaking, caching, retries, IP filtering) are opt-in middleware — disabled features cost nothing on the request path.
+- Grants: `client_credentials`, `refresh_token`, `authorization_code` (mandatory PKCE-S256), device authorization, token exchange, JWT-bearer and SAML-bearer.
+- Uses the **Strategy pattern** through a `GrantStrategyRegistry`; adding a grant does not touch the dispatcher.
+- RS256 signing with a `previous`/`current`/`next` key window.
 
-- Path-prefix routing: `/oauth` → auth-server, `/auth` → identity-service, `/clients` → client-registry-service, `/introspect` → token-introspection-service, `/evaluate` → authorization-policy-service, `/resources` → example-resource-service
-- Configurable JWT auth, token-bucket rate limiting, circuit breaker (per route), retry with backoff, and in-memory response cache
-- Routes declared in `gateway.yaml` (or `/etc/gateway/gateway.yaml`) — restart required to pick up route changes
+#### [identity-service](services/identity-service/README.md) (`:8081`)
 
-### [auth-server](services/auth-server/README.md) (`:8080`)
+User records and credentials: registration, login, email verification and password reset, with bcrypt hashing. It does not issue tokens. Stores users in memory, SQLite or PostgreSQL depending on configuration, sends mail through a pluggable sender (`stdout`, `noop`, `smtp`), and rate limits the password-reset endpoints.
 
-The core OAuth 2.0 authorization server. Issues access tokens, performs token introspection, and handles token revocation.
+#### [client-registry-service](services/client-registry-service/README.md) (`:8082`)
 
-- Implements `client_credentials`, `refresh_token`, and `authorization_code` (with mandatory PKCE-S256 per OAuth 2.1 §4.1.2.1) grant types
-- Uses the **Strategy Pattern** via a `GrantStrategyRegistry` to route grant requests
-- JWT token generation with configurable signing key, issuer, and TTL
+OAuth client registrations: CRUD, credential validation, and dynamic client registration (RFC 7591/7592).
 
-### [identity-service](services/identity-service/README.md) (`:8081`)
+#### [token-introspection-service](services/token-introspection-service/README.md) (`:8083`)
 
-Handles user registration and authentication. Provides bcrypt-based password hashing with an in-memory user store.
+Standalone token validation and metadata extraction per [RFC 7662](https://datatracker.ietf.org/doc/html/rfc7662).
 
-### [client-registry-service](services/client-registry-service/README.md) (`:8082`)
+#### [authorization-policy-service](services/authorization-policy-service/README.md) (`:8084`)
 
-Manages OAuth 2.0 client registrations. Provides full CRUD operations and client credential validation.
+Fine-grained authorization using the **Strategy** and **Specification** patterns: evaluates RBAC policies for a subject and resource.
 
-### [token-introspection-service](services/token-introspection-service/README.md) (`:8083`)
+#### [example-resource-service](services/example-resource-service/README.md) (`:8085`)
 
-Standalone JWT token validation and metadata extraction per [RFC 7662](https://datatracker.ietf.org/doc/html/rfc7662).
+A protected API that shows bearer-token validation and scope enforcement (`read`, `write`), with two layers: scope (local) and policy (an outbound call).
 
-### [authorization-policy-service](services/authorization-policy-service/README.md) (`:8084`)
+#### [entitlements-service](services/entitlements-service/README.md) (`:8086`)
 
-Fine-grained authorization using the **Strategy** and **Specification** patterns. Evaluates RBAC policies against subjects and resources.
+Account, seat and plan state: "does this actor have this entitlement, now?" (ADR-0027, ADR-0028). Not part of the Docker Compose stack.
 
-### [example-resource-service](services/example-resource-service/README.md) (`:8085`)
+#### [login-ui](services/login-ui/) (`:8087`)
 
-A protected API that demonstrates JWT-based authentication and scope enforcement. Requires valid tokens with appropriate scopes (`read`, `write`) to access resources.
+The user-facing screens (ADR-0011): sign-in, sign-up, password reset, device approval, billing and account switching. `auth-server`'s `/oauth/authorize` redirects the browser to `login-ui /sign-in?login_challenge=<id>`; login-ui verifies credentials with `identity-service`, redeems the challenge at `auth-server`, and sends the browser back to the relying party.
 
-### [login-ui](services/login-ui/) (`:8087`)
+### Shared Libraries
 
-The platform's unified, multi-tenant user-facing sign-in surface (ADR-0011). Every relying party's OAuth flow lands here: `auth-server`'s `/oauth/authorize` 302-redirects the user-agent to `login-ui /sign-in?login_challenge=<id>`, `login-ui` verifies credentials against `identity-service`, calls `auth-server`'s `POST /internal/issue-code` to redeem the challenge into an authorization code, and 302s back to the relying party.
+Shared code lives in external modules, required directly by each service's `go.mod`:
 
----
+| Package | Module | Purpose |
+|---------|--------|---------|
+| `apperrors` | `github.com/jedi-knights/go-platform/apperrors` | Typed errors with HTTP status mapping |
+| `httputil`, `httpmw`, `httpserver` | `github.com/jedi-knights/go-platform/...` | Response helpers, the shared middleware stack, server lifecycle and health handlers |
+| `jwtutil` | `github.com/jedi-knights/go-platform/jwtutil` | The `Claims` type, `Sign`, `Parse*`, shared by `auth-server` and `token-introspection-service` |
+| `container` | `github.com/jedi-knights/go-platform/container` | Dependency-injection container used by every service's composition root |
+| `testutil` | `github.com/jedi-knights/go-platform/testutil` | Test helpers |
+| `logging` | `github.com/jedi-knights/go-logging/pkg/logging` | `slog`-based structured logging |
 
-## Shared Libraries
-
-Located in `libs/`, these are independent Go modules shared across services:
-
-| Library          | Purpose                                            |
-|------------------|----------------------------------------------------|
-| `libs/errors`    | Typed application errors with HTTP status mapping  |
-| `libs/httputil`  | HTTP response helpers and middleware               |
-| `libs/jwtutil`   | Canonical `Claims` type, `Sign`, `Parse`, `NewClaims` — shared JWT structure across services |
-| `libs/logging`   | Structured `slog`-based logging with trace ID support |
-| `libs/testutil`  | Testing utilities                                  |
-
----
-
-## Design Patterns
+### Design Patterns
 
 | Pattern                    | Where Used                                          |
 |----------------------------|-----------------------------------------------------|
@@ -157,177 +388,91 @@ Located in `libs/`, these are independent Go modules shared across services:
 
 ---
 
-## Getting Started
+## API Reference
 
-### Prerequisites
+Every service also exposes `GET /health`. Interactive docs for the services that generate them are at `/swagger/index.html` (see [Swagger](#swagger--api-documentation)).
 
-- **Go 1.24+**
-- **[Task](https://taskfile.dev/)** (task runner) - optional but recommended
-- **[swag](https://github.com/swaggo/swag)** (Swagger doc generation) - optional, needed only for `task swagger`
+### auth-server
 
----
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/oauth/token` | Issue a token (RFC 6749) |
+| GET | `/oauth/authorize` | Authorization endpoint; redirects to login-ui |
+| POST | `/oauth/par` | Pushed authorization requests (RFC 9126) |
+| POST | `/oauth/introspect` | Token introspection (RFC 7662); requires client authentication |
+| POST | `/oauth/revoke` | Token revocation (RFC 7009); requires client authentication |
+| POST | `/device_authorization` | Device authorization (RFC 8628) |
+| GET, POST | `/userinfo` | OIDC UserInfo |
+| GET | `/.well-known/jwks.json` | Public RSA keys (RS256 mode only) |
+| GET | `/.well-known/oauth-authorization-server` | Authorization server metadata (RFC 8414) |
+| GET | `/.well-known/openid-configuration` | OIDC discovery |
+| POST | `/internal/issue-code` | login-ui redeems a login challenge (bearer token) |
+| POST | `/internal/device/decision` | login-ui approves or denies a device code (bearer token) |
 
-### Running the Full Stack with Docker Compose
+### identity-service
 
-The easiest way to run all seven services together for local testing.
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/auth/register` | Register a user |
+| POST | `/auth/login` | Verify credentials |
+| POST | `/auth/request-verification` | Send an email-verification link |
+| POST | `/auth/verify-email` | Redeem a verification token |
+| POST | `/auth/request-password-reset` | Send a reset link (always `204`) |
+| POST | `/auth/reset-password` | Redeem a reset token and set a password |
+| GET | `/users/{id}/claims` | User claims for token issuance |
+| GET, PUT | `/users/{id}/active-account` | Read or set the user's active account |
 
-**Requirements:** [Docker](https://docs.docker.com/get-docker/) with the Compose plugin (`docker compose version` to verify).
+### client-registry-service
 
-#### 1. Configure environment variables
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/clients` | Register a client |
+| GET | `/clients` | List clients |
+| GET | `/clients/{id}` | Get a client |
+| DELETE | `/clients/{id}` | Delete a client |
+| POST | `/clients/validate` | Validate client credentials |
+| POST, GET, PUT, DELETE | `/register`, `/register/{client_id}` | Dynamic client registration (RFC 7591/7592) |
 
-```bash
-cp .env.example .env
-```
+### token-introspection-service
 
-Open `.env` and set the two required values:
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/introspect` | Introspect a token |
 
-| Variable | Requirement |
-|----------|-------------|
-| `JWT_SIGNING_KEY` | Random string, minimum 32 characters. Used by `auth-server`, `token-introspection-service`, and `example-resource-service` — all three must share the same value for token validation to work across services. Generate one with: `openssl rand -hex 32` |
-| `DEV_CLIENT_SECRET` | Secret for the test OAuth client seeded into `auth-server` on startup (`client_id=test-client`). Any non-empty string works locally. |
-| `LOGIN_UI_SERVICE_TOKEN` | Bearer token shared between `login-ui` and `auth-server`'s `POST /internal/issue-code` endpoint (ADR-0011). Must be at least 32 characters of high-entropy random data. Generate with: `openssl rand -hex 32` |
+### authorization-policy-service
 
-#### 2. Build and start all services
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/evaluate` | Evaluate an authorization request |
+| GET | `/subjects/{subjectID}/permissions` | Roles and permissions for a subject |
 
-```bash
-docker compose up --build
-```
+### example-resource-service
 
-All seven services start in parallel. Health checks on each `/health` endpoint confirm readiness.
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/resources` | List resources (requires `read`) |
+| GET | `/resources/{id}` | Get a resource (requires `read`) |
+| POST | `/resources` | Create a resource (requires `write`) |
+| GET | `/resources/sensitive`, `/resources/dpop-protected` | Step-up and DPoP demonstrations |
 
-| Service | Host URL (docker-compose) |
-|---------|--------------------------|
-| api-gateway | http://localhost:9086 |
-| auth-server | http://localhost:9080 |
-| identity-service | http://localhost:9081 |
-| client-registry-service | http://localhost:9082 |
-| token-introspection-service | http://localhost:9083 |
-| authorization-policy-service | http://localhost:9084 |
-| example-resource-service | http://localhost:9085 |
-| login-ui | http://localhost:9087 |
+### entitlements-service
 
-#### 3. Request a token
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/accounts/personal` | Create a personal account (idempotent) |
+| POST | `/accounts/{account_id}/invites` | Invite a user |
+| POST | `/accounts/{account_id}/plans` | Activate a plan |
+| POST | `/accounts/{account_id}/transfer-ownership` | Transfer ownership |
+| DELETE | `/accounts/{account_id}/seats/{user_id}` | Remove a seat |
+| GET | `/users/{user_id}/seats` | List a user's seats |
 
-Route through the api-gateway (port 9086) or directly to auth-server (port 9080):
+### login-ui
 
-```bash
-# Via api-gateway (recommended)
-TOKEN=$(curl -s -X POST http://localhost:9086/oauth/token \
-  -d "grant_type=client_credentials" \
-  -d "client_id=test-client" \
-  -d "client_secret=<your DEV_CLIENT_SECRET>" \
-  -d "scope=read" | jq -r .access_token)
-
-# Or directly to auth-server
-TOKEN=$(curl -s -X POST http://localhost:9080/oauth/token \
-  -d "grant_type=client_credentials" \
-  -d "client_id=test-client" \
-  -d "client_secret=<your DEV_CLIENT_SECRET>" \
-  -d "scope=read" | jq -r .access_token)
-```
-
-#### 4. Call the protected resource
-
-```bash
-# Via api-gateway
-curl -s -H "Authorization: Bearer $TOKEN" http://localhost:9086/resources
-
-# Or directly to example-resource-service
-curl -s -H "Authorization: Bearer $TOKEN" http://localhost:9085/resources
-```
-
-#### 5. Introspect the token
-
-```bash
-# Via api-gateway
-curl -s -X POST http://localhost:9086/introspect \
-  -d "token=$TOKEN"
-
-# Or directly to token-introspection-service
-curl -s -X POST http://localhost:9083/introspect \
-  -d "token=$TOKEN"
-```
-
-#### 6. Revoke the token
-
-```bash
-# Via api-gateway
-curl -s -X POST http://localhost:9086/oauth/revoke \
-  -d "token=$TOKEN"
-
-# Or directly to auth-server
-curl -s -X POST http://localhost:9080/oauth/revoke \
-  -d "token=$TOKEN"
-```
-
-#### Useful Compose commands
-
-```bash
-docker compose up --build        # build images and start all services
-docker compose up --build -d     # same, detached (background)
-docker compose logs -f           # stream logs from all services
-docker compose logs -f auth-server  # stream logs from one service
-docker compose ps                # show status and health of all services
-docker compose down              # stop and remove containers
-docker compose down --rmi local  # also remove the locally built images
-```
-
----
-
-### Run a Single Service (without Docker)
-
-Each service can be run independently:
-
-```bash
-# Using Task
-task run:auth-server
-task run:identity-service
-task run:client-registry-service
-
-# Or directly with Go
-cd services/auth-server && go run ./cmd/...
-```
-
-### Quick Test: Issue a Token (without Docker)
-
-```bash
-# Start the auth server (listens on :8080 when run directly)
-task run:auth-server
-
-# Request a token using client_credentials grant
-curl -s -X POST http://localhost:8080/oauth/token \
-  -d "grant_type=client_credentials" \
-  -d "client_id=test-client" \
-  -d "client_secret=test-secret" \
-  -d "scope=read"
-```
-
-### Build All Services
-
-```bash
-task build
-# Binaries are output to bin/
-```
+Browser pages, not a JSON API: `/sign-in`, `/sign-up`, `/forgot-password`, `/reset-password`, `/device`, `/accounts`, and `/billing/{plans,checkout,portal,return}`.
 
 ---
 
 ## Configuration
-
-Each service is configured via environment variables with a service-specific prefix, or through a `config.yaml` / `gateway.yaml` file loaded at startup.
-
-### api-gateway
-
-Routes are declared in `gateway.yaml` (or `/etc/gateway/gateway.yaml`). See [api-gateway README](services/api-gateway/README.md) for the full configuration reference.
-
-| Variable | Default | Description |
-|---|---|---|
-| `GATEWAY_SERVER_HOST` | `0.0.0.0` | Server bind host |
-| `GATEWAY_SERVER_PORT` | `8086` | Server port |
-| `GATEWAY_LOG_LEVEL` | `info` | Log level |
-| `GATEWAY_AUTH_TYPE` | `""` | Auth type (`hs256`, `jwks`, or empty to disable) |
-| `GATEWAY_JWT_SIGNING_KEY` | `""` | HMAC signing key (when `auth_type: hs256`) |
-| `GATEWAY_RATE_LIMIT_REQUESTS_PER_SECOND` | `10` | Token-bucket fill rate |
-| `GATEWAY_RATE_LIMIT_BURST_SIZE` | `20` | Token-bucket burst capacity |
 
 ### auth-server
 
@@ -343,6 +488,8 @@ Routes are declared in `gateway.yaml` (or `/etc/gateway/gateway.yaml`). See [api
 | `AUTH_JWT_ISSUER`                         | `identity-platform`  | JWT issuer claim                                                                                             |
 | `AUTH_TOKEN_TTL_SECONDS`                  | `3600`               | Token time-to-live                                                                                           |
 | `AUTH_LOG_LEVEL`                          | `info`               | Log level                                                                                                    |
+| `AUTH_DEV_SEED_CLIENTS`                   | `false`              | Seed a development client with id `dev-client`. Local development only                                       |
+| `AUTH_DEV_CLIENT_SECRET`                  | _unset_              | Secret for `dev-client` when seeding is on                                                                    |
 
 The JWKS document is available at `GET /.well-known/jwks.json` whenever `AUTH_JWT_SIGNING_ALG=RS256`. Under HS256 the route is not registered.
 
@@ -452,278 +599,24 @@ Things to know:
 | `RESOURCE_JWT_JWKS_CACHE_TTL`   | `1h`    | How long a successful JWKS fetch is cached                                                                                   |
 | `RESOURCE_JWT_SIGNING_KEY`      | _unset_ | HS256 HMAC signing key. Required only when both `RESOURCE_INTROSPECTION_URL` and `RESOURCE_JWT_JWKS_URL` are unset            |
 
----
+### login-ui
 
-## API Reference
-
-### api-gateway
-
-The gateway proxies all service endpoints — any path listed below can be called at `http://localhost:9086/<path>` in docker-compose (host port 9086). In addition, the gateway exposes its own operational endpoints:
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Gateway health check |
-| GET | `/ready` | Readiness probe (returns 503 during drain) |
-
-All other paths are routed to upstream services by longest-prefix match (see [gateway.yaml](services/api-gateway/gateway.yaml)).
-
-### auth-server
-
-| Method | Path                          | Description                                                 |
-|--------|-------------------------------|-------------------------------------------------------------|
-| POST   | `/oauth/token`                | Issue access token (RFC 6749)                               |
-| GET    | `/oauth/authorize`            | Authorization endpoint (stub)                               |
-| POST   | `/oauth/introspect`           | Token introspection (RFC 7662)                              |
-| POST   | `/oauth/revoke`               | Token revocation (RFC 7009)                                 |
-| GET    | `/.well-known/jwks.json`      | Public RSA keys for RS256 verification (RFC 7517 — RS256 mode only) |
-| GET    | `/health`                     | Health check                                                |
-
-### identity-service
-
-| Method | Path              | Description         |
-|--------|-------------------|---------------------|
-| POST   | `/auth/register`  | Register a new user |
-| POST   | `/auth/login`     | Authenticate a user |
-| GET    | `/health`         | Health check        |
-
-### client-registry-service
-
-| Method | Path                  | Description                 |
-|--------|-----------------------|-----------------------------|
-| POST   | `/clients`            | Register a new OAuth client |
-| GET    | `/clients`            | List all registered clients |
-| GET    | `/clients/{id}`       | Get a specific client       |
-| DELETE | `/clients/{id}`       | Delete a client             |
-| POST   | `/clients/validate`   | Validate client credentials |
-| GET    | `/health`             | Health check                |
-
-### token-introspection-service
-
-| Method | Path          | Description      |
-|--------|---------------|------------------|
-| POST   | `/introspect` | Introspect token |
-| GET    | `/health`     | Health check     |
-
-### authorization-policy-service
-
-| Method | Path        | Description              |
-|--------|-------------|--------------------------|
-| POST   | `/evaluate` | Evaluate authorization   |
-| GET    | `/health`   | Health check             |
-
-### example-resource-service
-
-| Method | Path              | Description                          |
-|--------|-------------------|--------------------------------------|
-| GET    | `/resources`      | List resources (requires `read`)     |
-| GET    | `/resources/{id}` | Get resource by ID (requires `read`) |
-| POST   | `/resources`      | Create resource (requires `write`)   |
-| GET    | `/health`         | Health check (no auth)               |
-
----
-
-## Testing
-
-```bash
-# Run all tests (unit + integration)
-task test
-
-# Unit tests only (with race detection and coverage)
-task test:unit
-
-# Integration tests only
-task test:integration
-```
-
-### Local Acceptance Testing
-
-`test/acceptance` is a separate Go module containing a full [godog](https://github.com/cucumber/godog)/Gherkin BDD suite that exercises the platform's entire *implemented* OAuth 2.0/OIDC surface end-to-end, plus a smaller `@smoke` suite that exercises the real `docker-compose.yml` stack. Both build real service binaries and start containers, so they're excluded from `task test`/`task test:unit`/`task test:integration` by design.
-
-#### Prerequisites
-
-- Docker running — the acceptance suite starts one shared Redis container per run; the smoke suite brings up the full `docker-compose.yml` stack.
-- The Allure command line tool, only if you want to view results as an HTML report instead of plain console pass/fail — consult Allure's own documentation for the install steps on your platform (e.g. Homebrew on macOS).
-
-#### Running the acceptance suite
-
-```bash
-# Single command: run the suite, generate the Allure report, open it in your browser
-task test:acceptance:all
-```
-
-Or run the pieces individually:
-
-```bash
-task test:acceptance          # pretty console output only (default)
-task test:acceptance:allure   # same suite, additionally writes Allure JSON results
-task test:acceptance:report   # runs test:acceptance:allure, then generates + opens the HTML report
-```
-
-Run a single feature file during development. The suite has no domain tags to filter by — each scenario tags its own `@topology:*` internally rather than sharing one feature-level tag — so filter by path instead:
-
-```bash
-ACCEPTANCE_PATHS=features/token_revocation.feature task test:acceptance
-```
-
-Other environment variables the suite reads (all optional):
-
-| Variable | Default | Purpose |
+| Variable | Default | Description |
 |---|---|---|
-| `ACCEPTANCE_FORMAT` | `pretty` | godog output format — set to `allure` to produce Allure JSON results (`test:acceptance:allure` sets this for you) |
-| `ACCEPTANCE_CONCURRENCY` | `1` | Number of scenarios to run in parallel — every scenario builds a fully isolated `World`, so this is safe at any value |
-| `ACCEPTANCE_PATHS` | `features` (the whole directory) | Comma-separated feature file(s) or directory to run |
+| `LOGIN_UI_SERVER_HOST` / `LOGIN_UI_SERVER_PORT` | `0.0.0.0` / `8087` | Bind address |
+| `LOGIN_UI_AUTH_SERVER_URL` | _unset_ | auth-server base URL (needed to complete sign-in) |
+| `LOGIN_UI_AUTH_SERVER_SERVICE_TOKEN` | _unset_ | Bearer token for `POST /internal/issue-code`; must match `AUTH_LOGIN_UI_SERVICE_TOKEN`. A secret |
+| `LOGIN_UI_IDENTITY_SERVICE_URL` | _unset_ | identity-service base URL. Without it, sign-up and password reset return `503` |
+| `LOGIN_UI_ENTITLEMENTS_SERVICE_URL` | _unset_ | entitlements-service base URL |
+| `LOGIN_UI_SERVER_CLIENT_IP_HEADER` | _unset_ | Header an edge proxy sets to the real client IP (Fly: `Fly-Client-IP`); forwarded for per-user rate limiting |
 
-#### What's covered
+### entitlements-service
 
-Each feature file's header comment names the RFC(s) and ADR(s) it exercises — the same comment becomes every scenario's description in the Allure report, so the report doubles as a compliance matrix.
-
-| Feature file | RFC / ADR |
-|---|---|
-| `client_credentials.feature` | RFC 6749 §4.4 |
-| `authorization_code_pkce.feature` | RFC 6749 §4.1, RFC 7636, [ADR-0009](docs/adr/0009-authorization-code-pkce.md) |
-| `refresh_token_rotation.feature` | RFC 6749 §6, [ADR-0014](docs/adr/0014-refresh-token-rotation-replay.md) |
-| `token_revocation.feature` | RFC 7009 |
-| `token_introspection.feature` | RFC 7662 |
-| `bearer_token_usage.feature` | RFC 6750 |
-| `jwks_key_rotation.feature` | RFC 7517, RFC 7518, [ADR-0008](docs/adr/0008-rs256-jwks-token-signing.md) |
-| `oidc_core.feature` | OpenID Connect Core 1.0, [ADR-0010](docs/adr/0010-oidc-core.md) |
-| `as_metadata.feature` | RFC 8414, OpenID Connect Discovery 1.0, [ADR-0012](docs/adr/0012-authorization-server-metadata.md) |
-| `dynamic_client_registration.feature` | RFC 7591, RFC 7592, [ADR-0013](docs/adr/0013-dynamic-client-registration.md) |
-| `token_exchange.feature` | RFC 8693, [ADR-0016](docs/adr/0016-token-exchange-rfc-8693.md) |
-| `rich_authorization_requests.feature` | RFC 9396, [ADR-0017](docs/adr/0017-rich-authorization-requests-rfc-9396.md) |
-| `login_challenge_handoff.feature` | [ADR-0011](docs/adr/0011-login-ui-service.md) |
-
-See [Architecture Decision Records](#architecture-decision-records) for the full ADR index.
-
-#### Smoke tests against the real Docker images
-
-The acceptance suite above builds each service as an in-process/subprocess binary — it never touches the actual `Dockerfile` or `docker-compose.yml` wiring. The `@smoke` suite in `test/acceptance/smoke/` covers exactly that gap by driving the real `docker-compose.yml` stack over its real container network.
-
-```bash
-task test:smoke
-```
-
-This generates fresh secrets, brings the full stack up (building images), runs the smoke scenarios, and tears the stack down afterward regardless of pass or fail. It needs Docker running and no other setup.
-
-#### Adding new scenarios
-
-Every scenario must be fully independent — safe to run in any order, at any concurrency, forever. The rule that makes this possible: **never hardcode a fixture ID** (a client, user, or resource name). Always mint a fresh one per scenario — see `support/fixtures.go`. This is what makes the shared Redis container safe under `ACCEPTANCE_CONCURRENCY` > 1.
-
-### Other Task Commands
-
-```bash
-task lint        # Run golangci-lint
-task format      # Format code with gofmt and goimports
-task mocks       # Generate mocks (go generate)
-task tidy        # Sync go.work and tidy all modules
-task clean       # Remove build artifacts
-```
-
----
-
-## Swagger / API Documentation
-
-Every service ships with interactive [Swagger UI](https://swagger.io/tools/swagger-ui/) documentation, powered by [swaggo/swag](https://github.com/swaggo/swag). Start a service and open its Swagger UI in your browser:
-
-| Service                      | Swagger UI URL                                        |
-|------------------------------|-------------------------------------------------------|
-| auth-server                  | [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html) |
-| identity-service             | [http://localhost:8081/swagger/index.html](http://localhost:8081/swagger/index.html) |
-| client-registry-service      | [http://localhost:8082/swagger/index.html](http://localhost:8082/swagger/index.html) |
-| token-introspection-service  | [http://localhost:8083/swagger/index.html](http://localhost:8083/swagger/index.html) |
-| authorization-policy-service | [http://localhost:8084/swagger/index.html](http://localhost:8084/swagger/index.html) |
-| example-resource-service     | [http://localhost:8085/swagger/index.html](http://localhost:8085/swagger/index.html) |
-
-### Regenerating Swagger Docs
-
-If you modify handler annotations or request/response types, regenerate the docs:
-
-```bash
-# All services at once
-task swagger
-
-# Or a single service
-task swagger:auth-server
-task swagger:identity-service
-task swagger:client-registry-service
-task swagger:token-introspection-service
-task swagger:authorization-policy-service
-task swagger:example-resource-service
-```
-
-This requires the `swag` CLI tool:
-
-```bash
-go install github.com/swaggo/swag/cmd/swag@latest
-```
-
----
-
-## Project Structure
-
-```
-identity-platform-go/
-├── go.work                          # Go workspace definition
-├── Taskfile.yml                     # Task runner configuration
-├── docs/
-│   ├── README.md                    # Architecture documentation
-│   └── adr/                         # Architecture Decision Records
-│       ├── 0001-use-ports-and-adapters.md
-│       ├── 0002-use-go-workspaces.md
-│       ├── 0003-use-strategy-pattern-for-grants.md
-│       └── 0004-in-memory-persistence-for-reference.md
-├── libs/
-│   ├── errors/                      # Typed application errors
-│   ├── httputil/                    # HTTP helpers and middleware
-│   ├── logging/                     # Structured slog-based logging
-│   └── testutil/                    # Test utilities
-└── services/
-    ├── api-gateway/                 # Reverse proxy / ingress (entry point)
-    │   ├── cmd/                     # CLI (serve, version)
-    │   ├── gateway.yaml             # Route declarations
-    │   └── internal/
-    │       ├── adapters/inbound/    # HTTP handler, middleware
-    │       ├── adapters/outbound/   # Proxy, circuit breaker, retry, cache
-    │       ├── application/         # Route resolver
-    │       ├── config/              # Viper-based configuration
-    │       ├── container/           # Dependency injection
-    │       ├── domain/              # Route, rate-limit models
-    │       └── ports/               # Transport interfaces
-    ├── auth-server/                 # OAuth2 authorization server
-    │   ├── cmd/main.go
-    │   ├── docs/                    # Generated Swagger specs
-    │   └── internal/
-    │       ├── adapters/            # HTTP handlers, in-memory repos
-    │       ├── application/         # Grant strategies, token service
-    │       ├── config/              # Viper-based configuration
-    │       ├── container/           # Dependency injection
-    │       ├── domain/              # Token, client, grant models
-    │       ├── observability/       # Logging setup
-    │       └── ports/               # Inbound & outbound interfaces
-    ├── identity-service/            # User registration & auth
-    ├── client-registry-service/     # OAuth client management
-    ├── token-introspection-service/ # JWT validation (RFC 7662)
-    ├── authorization-policy-service/# RBAC policy evaluation
-    └── example-resource-service/    # Protected resource API
-```
-
----
-
-## Architecture Decision Records
-
-Key design decisions are documented in `docs/adr/`:
-
-| ADR | Decision |
-|-----|----------|
-| [ADR-0001](docs/adr/0001-use-ports-and-adapters.md) | Use Ports and Adapters (Hexagonal) architecture for all services |
-| [ADR-0002](docs/adr/0002-use-go-workspaces.md) | Use Go Workspaces for monorepo management |
-| [ADR-0003](docs/adr/0003-use-strategy-pattern-for-grants.md) | Use Strategy Pattern for OAuth2 grant type handling |
-| [ADR-0004](docs/adr/0004-in-memory-persistence-for-reference.md) | Use in-memory persistence for the reference implementation |
+Variables use the `ENTITLEMENTS_` prefix; see the [service README](services/entitlements-service/README.md).
 
 ---
 
 ## Deployment (Fly.io)
-
 All six services deploy to [Fly.io](https://fly.io) as **private** apps in region `iad`
 (no public IPs) behind the public [`jk-api-gateway`](https://github.com/jedi-knights/api-gateway),
 which is the only ingress. They reach each other and the gateway reaches them over Fly's
@@ -807,13 +700,12 @@ fly proxy 8081 -a jk-identity-service &
 curl -fsS localhost:8081/health               # expect 200
 ```
 
-End-to-end, request a token from the seeded `test-client` through the gateway at
+End-to-end, request a token for a client registered with the registry, through the gateway at
 `https://jk-api-gateway.fly.dev/oauth/token` and call `/resources` with it.
 
 ---
 
 ## Horizontal Scalability
-
 **Production deployment of this platform has no application-controllable single points of failure.** Every service runs at N ≥ 2 machines per region behind Fly's proxy, every stateful backing service is deployed in HA mode with automatic failover, and every service refuses to start in production without its durable state URL set. This is the reference implementation's teaching claim: *how* to build a horizontally scalable identity platform, not just what one looks like at N=1.
 
 The full contract lives in [ADR-0029](docs/adr/0029-reliable-horizontal-scalability-no-spofs.md). This section is the operational summary.
@@ -888,192 +780,280 @@ The fatal-in-production guard is the design commitment from ADR-0029 §3. It is 
 
 ---
 
+## Development
+
+```bash
+task build       # build the six core services into bin/
+task lint        # golangci-lint across all modules
+task test        # unit + integration tests
+```
+
+### Testing
+
+# Run all tests (unit + integration)
+task test
+
+# Unit tests only (with race detection and coverage)
+task test:unit
+
+# Integration tests only
+task test:integration
+```text
+
+#### Local Acceptance Testing
+
+`test/acceptance` is a separate Go module containing a full [godog](https://github.com/cucumber/godog)/Gherkin BDD suite that exercises the platform's entire *implemented* OAuth 2.0/OIDC surface end-to-end, plus a smaller `@smoke` suite that exercises the real `docker-compose.yml` stack. Both build real service binaries and start containers, so they're excluded from `task test`/`task test:unit`/`task test:integration` by design.
+
+##### Prerequisites
+
+- Docker running — the acceptance suite starts one shared Redis container per run; the smoke suite brings up the full `docker-compose.yml` stack.
+- The Allure command line tool, only if you want to view results as an HTML report instead of plain console pass/fail — consult Allure's own documentation for the install steps on your platform (e.g. Homebrew on macOS).
+
+##### Running the acceptance suite
+
+```bash
+# Single command: run the suite, generate the Allure report, open it in your browser
+task test:acceptance:all
+```text
+
+Or run the pieces individually:
+
+```bash
+task test:acceptance          # pretty console output only (default)
+task test:acceptance:allure   # same suite, additionally writes Allure JSON results
+task test:acceptance:report   # runs test:acceptance:allure, then generates + opens the HTML report
+```text
+
+Run a single feature file during development. The suite has no domain tags to filter by — each scenario tags its own `@topology:*` internally rather than sharing one feature-level tag — so filter by path instead:
+
+```bash
+ACCEPTANCE_PATHS=features/token_revocation.feature task test:acceptance
+```text
+
+Other environment variables the suite reads (all optional):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ACCEPTANCE_FORMAT` | `pretty` | godog output format — set to `allure` to produce Allure JSON results (`test:acceptance:allure` sets this for you) |
+| `ACCEPTANCE_CONCURRENCY` | `1` | Number of scenarios to run in parallel — every scenario builds a fully isolated `World`, so this is safe at any value |
+| `ACCEPTANCE_PATHS` | `features` (the whole directory) | Comma-separated feature file(s) or directory to run |
+
+##### What's covered
+
+Each feature file's header comment names the RFC(s) and ADR(s) it exercises — the same comment becomes every scenario's description in the Allure report, so the report doubles as a compliance matrix.
+
+| Feature file | RFC / ADR |
+|---|---|
+| `client_credentials.feature` | RFC 6749 §4.4 |
+| `authorization_code_pkce.feature` | RFC 6749 §4.1, RFC 7636, [ADR-0009](docs/adr/0009-authorization-code-pkce.md) |
+| `refresh_token_rotation.feature` | RFC 6749 §6, [ADR-0014](docs/adr/0014-refresh-token-rotation-replay.md) |
+| `token_revocation.feature` | RFC 7009 |
+| `token_introspection.feature` | RFC 7662 |
+| `bearer_token_usage.feature` | RFC 6750 |
+| `jwks_key_rotation.feature` | RFC 7517, RFC 7518, [ADR-0008](docs/adr/0008-rs256-jwks-token-signing.md) |
+| `oidc_core.feature` | OpenID Connect Core 1.0, [ADR-0010](docs/adr/0010-oidc-core.md) |
+| `as_metadata.feature` | RFC 8414, OpenID Connect Discovery 1.0, [ADR-0012](docs/adr/0012-authorization-server-metadata.md) |
+| `dynamic_client_registration.feature` | RFC 7591, RFC 7592, [ADR-0013](docs/adr/0013-dynamic-client-registration.md) |
+| `token_exchange.feature` | RFC 8693, [ADR-0016](docs/adr/0016-token-exchange-rfc-8693.md) |
+| `rich_authorization_requests.feature` | RFC 9396, [ADR-0017](docs/adr/0017-rich-authorization-requests-rfc-9396.md) |
+| `login_challenge_handoff.feature` | [ADR-0011](docs/adr/0011-login-ui-service.md) |
+
+See [Architecture Decision Records](#architecture-decision-records) for the full ADR index.
+
+##### Smoke tests against the real Docker images
+
+The acceptance suite above builds each service as an in-process/subprocess binary — it never touches the actual `Dockerfile` or `docker-compose.yml` wiring. The `@smoke` suite in `test/acceptance/smoke/` covers exactly that gap by driving the real `docker-compose.yml` stack over its real container network.
+
+```bash
+task test:smoke
+```text
+
+This generates fresh secrets, brings the full stack up (building images), runs the smoke scenarios, and tears the stack down afterward regardless of pass or fail. It needs Docker running and no other setup.
+
+##### Adding new scenarios
+
+Every scenario must be fully independent — safe to run in any order, at any concurrency, forever. The rule that makes this possible: **never hardcode a fixture ID** (a client, user, or resource name). Always mint a fresh one per scenario — see `support/fixtures.go`. This is what makes the shared Redis container safe under `ACCEPTANCE_CONCURRENCY` > 1.
+
+#### Other Task Commands
+
+```bash
+task lint        # Run golangci-lint
+task format      # Format code with gofmt and goimports
+task mocks       # Generate mocks (go generate)
+task tidy        # Sync go.work and tidy all modules
+task clean       # Remove build artifacts
+```text
+
+### Swagger / API Documentation
+
+The six core services ship with interactive [Swagger UI](https://swagger.io/tools/swagger-ui/) documentation, powered by [swaggo/swag](https://github.com/swaggo/swag). Start a service and open its Swagger UI in your browser:
+
+| Service                      | Swagger UI URL                                        |
+|------------------------------|-------------------------------------------------------|
+| auth-server                  | [http://localhost:8080/swagger/index.html](http://localhost:8080/swagger/index.html) |
+| identity-service             | [http://localhost:8081/swagger/index.html](http://localhost:8081/swagger/index.html) |
+| client-registry-service      | [http://localhost:8082/swagger/index.html](http://localhost:8082/swagger/index.html) |
+| token-introspection-service  | [http://localhost:8083/swagger/index.html](http://localhost:8083/swagger/index.html) |
+| authorization-policy-service | [http://localhost:8084/swagger/index.html](http://localhost:8084/swagger/index.html) |
+| example-resource-service     | [http://localhost:8085/swagger/index.html](http://localhost:8085/swagger/index.html) |
+
+`login-ui` and `entitlements-service` do not serve Swagger UI.
+
+#### Regenerating Swagger Docs
+
+If you modify handler annotations or request/response types, regenerate the docs:
+
+```bash
+# All services at once
+task swagger
+
+# Or a single service
+task swagger:auth-server
+task swagger:identity-service
+task swagger:client-registry-service
+task swagger:token-introspection-service
+task swagger:authorization-policy-service
+task swagger:example-resource-service
+```text
+
+This requires the `swag` CLI tool:
+
+```bash
+go install github.com/swaggo/swag/cmd/swag@latest
+```text
+
+### Project Structure
+
+```
+identity-platform-go/
+├── go.work                    # Go workspace: every module below
+├── Taskfile.yml               # build, test, lint, swagger tasks
+├── Dockerfile                 # one image, built per service with SERVICE_NAME
+├── docker-compose.yml         # local stack (seven services, Postgres, Redis)
+├── fly.<service>.toml         # Fly.io config per deployed service
+├── docs/
+│   ├── adr/                   # Architecture Decision Records
+│   └── README.md              # architecture notes
+├── test/acceptance/           # godog/Gherkin suite and docker-compose smoke tests
+├── init/postgres/             # database bootstrap for Compose
+├── infra/                     # Lago and Stripe configuration
+└── services/
+    ├── auth-server/
+    ├── identity-service/
+    ├── client-registry-service/
+    ├── token-introspection-service/
+    ├── authorization-policy-service/
+    ├── example-resource-service/
+    ├── entitlements-service/
+    └── login-ui/
+```text
+
+Each service follows the same layout:
+
+```
+services/<name>/
+├── cmd/main.go              # entry point
+└── internal/
+    ├── domain/              # models and repository interfaces; no framework imports
+    ├── application/         # business logic
+    ├── ports/               # inbound and outbound interfaces
+    ├── adapters/            # inbound/http, outbound/<store or service>
+    ├── config/              # viper-based configuration
+    └── container/           # dependency wiring
+```text
+
+### Architecture Decision Records
+
+Key design decisions are documented in [`docs/adr/`](docs/adr/):
+
+| ADR | Decision |
+|-----|----------|
+| [ADR-0001](docs/adr/0001-use-ports-and-adapters.md) | Use Ports and Adapters Architecture |
+| [ADR-0002](docs/adr/0002-use-go-workspaces.md) | Use Go Workspaces for Monorepo |
+| [ADR-0003](docs/adr/0003-use-strategy-pattern-for-grants.md) | Use Strategy Pattern for OAuth2 Grant Type Handling |
+| [ADR-0004](docs/adr/0004-in-memory-persistence-for-reference.md) | Use In-Memory Persistence for Reference Implementation |
+| [ADR-0005](docs/adr/0005-adapter-scalability-contract.md) | Adapter Scalability Contract via Compile-Time Interface Checks |
+| [ADR-0006](docs/adr/0006-redis-token-storage.md) | Use Redis for Token Storage and Revocation |
+| [ADR-0007](docs/adr/0007-postgresql-relational-data.md) | Use PostgreSQL for Relational Service Data |
+| [ADR-0008](docs/adr/0008-rs256-jwks-token-signing.md) | Use RS256 + JWKS for Access Token Signing |
+| [ADR-0009](docs/adr/0009-authorization-code-pkce.md) | Authorization Code Grant with Mandatory PKCE |
+| [ADR-0010](docs/adr/0010-oidc-core.md) | OpenID Connect Core 1.0 |
+| [ADR-0011](docs/adr/0011-login-ui-service.md) | Unified Login & Registration Service (`login-ui`) |
+| [ADR-0012](docs/adr/0012-authorization-server-metadata.md) | Authorization Server Metadata (RFC 8414 + OIDC Discovery) |
+| [ADR-0013](docs/adr/0013-dynamic-client-registration.md) | Dynamic Client Registration (RFC 7591 + RFC 7592) |
+| [ADR-0014](docs/adr/0014-refresh-token-rotation-replay.md) | Refresh Token Rotation, Family Tracking, and Replay Detection |
+| [ADR-0015](docs/adr/0015-agent-principal-type.md) | Agent Principal Type — `actor_type` and `agent_id` Claims |
+| [ADR-0016](docs/adr/0016-token-exchange-rfc-8693.md) | Token Exchange (RFC 8693) for Agent-to-Agent Delegation |
+| [ADR-0017](docs/adr/0017-rich-authorization-requests-rfc-9396.md) | Rich Authorization Requests (RFC 9396) |
+| [ADR-0018](docs/adr/0018-agent-audit-event-schema.md) | Agent Audit Event Schema |
+| [ADR-0019](docs/adr/0019-usage-accounting-and-billing.md) | Usage Accounting via the Audit Pipeline (Lago + Stripe) |
+| [ADR-0020](docs/adr/0020-authorization-server-issuer-identification.md) | Authorization Server Issuer Identification (RFC 9207) |
+| [ADR-0021](docs/adr/0021-pushed-authorization-requests.md) | Pushed Authorization Requests (RFC 9126) |
+| [ADR-0022](docs/adr/0022-device-authorization-flow.md) | Device Authorization Flow (RFC 8628) |
+| [ADR-0023](docs/adr/0023-jwt-bearer-client-authentication.md) | JWT-Bearer Client Authentication (RFC 7521 / RFC 7523) |
+| [ADR-0024](docs/adr/0024-step-up-authentication-challenge.md) | Step-Up Authentication Challenge (RFC 9470) |
+| [ADR-0025](docs/adr/0025-dpop-proof-of-possession.md) | DPoP — Demonstrating Proof of Possession (RFC 9449) |
+| [ADR-0026](docs/adr/0026-saml2-bearer-assertion-grant.md) | SAML 2.0 Bearer Assertion Grant (RFC 7522) |
+| [ADR-0027](docs/adr/0027-entitlements-enforces-quota-lago-prices.md) | Entitlements-service enforces quotas; Lago only prices |
+| [ADR-0028](docs/adr/0028-entitlements-model.md) | Entitlements model — account, check location, bundles, catalog, meter |
+| [ADR-0029](docs/adr/0029-reliable-horizontal-scalability-no-spofs.md) | Reliable Horizontal Scalability without Single Points of Failure |
+
+---
+
 ## Release Process
 
-This repository uses **independent versioning** — each service and shared library has its own version number and is released separately. Releases are automated via [go-semantic-release](https://github.com/jedi-knights/go-semantic-release), a native Go implementation of the [semantic-release](https://github.com/semantic-release/semantic-release) specification.
+Each service is versioned and released independently by [go-semantic-release](https://github.com/jedi-knights/go-semantic-release), driven by [Conventional Commits](https://www.conventionalcommits.org/). The release tool only versions the modules declared in [`.semantic-release.yaml`](.semantic-release.yaml); a service not listed there is not tagged.
 
-### Key Concepts
-
-#### Independent versioning — each module releases on its own schedule
-
-Each service and library maintains its own semantic version tracked via its own tag prefix (e.g., `auth-server/v1.3.0`, `errors/v0.3.1`). A release only occurs for a module if there are **releasable commits that touch its path** since its last tag.
-
-- A commit to `services/auth-server/` bumps `auth-server` only.
-- A commit to `services/identity-service/` bumps `identity-service` only.
-- A commit to `docs/` or `Taskfile.yml` bumps nothing — those paths belong to no module.
-
-**In practice:** you can merge ten PRs in a row and each service will only receive a version bump when its own code changes. Services with no new commits since their last release are skipped entirely.
-
-#### Dependency propagation — library changes cascade to dependent services
-
-When a shared library is released, every service that declares it as a dependency is **also released in the same run** — even if that service has no new commits of its own. This is controlled by `dependency_propagation: true` in `.semantic-release.yaml`.
-
-**Why this matters:** if `libs/errors` ships a new minor version, all seven services that depend on it (through `libs/httputil` and `libs/logging`) receive a patch-level version bump. This ensures every service tag always reflects the version of its dependencies at release time — there is never a published tag that silently points at a newer library than intended.
-
-**Cascade example:** a `feat:` commit to `libs/errors` triggers:
-1. `errors` → minor bump (e.g., `errors/v0.2.0` → `errors/v0.3.0`)
-2. `httputil`, `logging`, `testutil` → patch bump (they depend on `errors`)
-3. All seven services → patch bump (they depend on `httputil` and `logging`)
-
-No service code needs to change for steps 2 and 3 to happen.
-
-### How Releases Are Triggered
-
-A release is triggered automatically when a commit is pushed to `main`. The release tool analyzes the commit history since the last tag for each module and determines whether a release is needed based on [Conventional Commits](https://www.conventionalcommits.org/).
+A release runs when a commit lands on `main` and touches `services/` or the config. For each module, the tool reads the commits since that module's last tag:
 
 | Commit type | Effect |
 |---|---|
-| `feat:` | Minor version bump (`v1.2.0` → `v1.3.0`) |
-| `fix:`, `perf:`, `refactor:` | Patch version bump (`v1.2.0` → `v1.2.1`) |
-| `feat!:` or `BREAKING CHANGE:` footer | Major version bump (`v1.2.0` → `v2.0.0`) |
+| `feat:` | Minor bump (`v1.2.0` to `v1.3.0`) |
+| `fix:`, `perf:`, `refactor:` | Patch bump (`v1.2.0` to `v1.2.1`) |
+| `feat!:` or a `BREAKING CHANGE:` footer | Major bump (`v1.2.0` to `v2.0.0`) |
 | `chore:`, `docs:`, `style:`, `ci:`, `test:` | No release |
 
-```mermaid
-flowchart TD
-    A[Push to main] --> B[Release workflow starts]
-    B --> C[go-semantic-release runs]
-    C --> D{For each module...}
-    D --> E[Scan commits touching module path]
-    E --> F{Any releasable commits?}
-    F -- No --> G[Skip — no release]
-    F -- Yes --> H[Calculate next version]
-    H --> I[Generate changelog entry]
-    I --> J[Create git tag]
-    J --> K[Create GitHub Release]
-    K --> L{Dependency propagation}
-    L -- Downstream modules exist --> M[Trigger release for dependents]
-    L -- No dependents --> N[Done]
-    M --> H
-```
+Tags are `<service>/v<version>`, for example `auth-server/v0.9.0`. **Never merge to `main` with a failing check**: the merge can publish a broken release.
 
-### Module Dependency Graph
-
-When a library is released, every module that depends on it is also released in the same run — even if it has no new commits of its own.
-
-**Library dependency chain**
-
-`errors` and `logging` are standalone foundations. `httputil` sits above both; `testutil` sits above `logging`. `jwtutil` is fully standalone — it wraps `github.com/golang-jwt/jwt/v5` and uses only the stdlib `errors` package.
-
-```mermaid
-graph LR
-    httputil["libs/httputil"] --> errors["libs/errors"]
-    httputil               --> logging["libs/logging"]
-    testutil["libs/testutil"] --> logging
-    jwtutil["libs/jwtutil"]
-```
-
-**Service → library dependencies**
-
-Every service depends on `errors`, `httputil`, and `logging` as a baseline. Additional dependencies are listed below:
-
-| Service | Additional libraries |
-|---|---|
-| api-gateway | `jwtutil` |
-| auth-server | `jwtutil` |
-| authorization-policy-service | — |
-| client-registry-service | — |
-| example-resource-service | — |
-| identity-service | — |
-| token-introspection-service | `jwtutil` |
-
-A change to `logging` cascades through `httputil`, `testutil`, and then every service. A change to `errors` cascades through `httputil` and then every service. A change to `jwtutil` affects only `api-gateway`, `auth-server`, and `token-introspection-service`.
-
-### Tag Format
-
-Each module uses a short, flat tag prefix defined in `.semantic-release.yaml`. Tags follow the pattern `<prefix>v<version>`.
-
-| Module | Tag prefix | Example tag |
-|---|---|---|
-| `services/api-gateway` | `api-gateway/` | `api-gateway/v1.0.0` |
-| `services/auth-server` | `auth-server/` | `auth-server/v1.3.0` |
-| `services/authorization-policy-service` | `authorization-policy-service/` | `authorization-policy-service/v1.0.2` |
-| `services/client-registry-service` | `client-registry-service/` | `client-registry-service/v0.4.1` |
-| `services/example-resource-service` | `example-resource-service/` | `example-resource-service/v1.1.0` |
-| `services/identity-service` | `identity-service/` | `identity-service/v2.0.0` |
-| `services/token-introspection-service` | `token-introspection-service/` | `token-introspection-service/v1.0.0` |
-| `libs/errors` | `errors/` | `errors/v0.3.1` |
-| `libs/httputil` | `httputil/` | `httputil/v0.2.0` |
-| `libs/jwtutil` | `jwtutil/` | `jwtutil/v0.1.0` |
-| `libs/logging` | `logging/` | `logging/v0.2.0` |
-| `libs/testutil` | `testutil/` | `testutil/v0.1.0` |
-
-The prefix is intentionally short (the service name only, not the full path) so tags are readable in the GitHub Releases list and in `git tag -l`. Using the full path (`services/auth-server/v1.3.0`) would make tags unnecessarily verbose and harder to filter.
-
-### Release Configuration
-
-The release configuration lives in `.semantic-release.yaml` at the repository root. The key sections are:
+### Configuration
 
 ```yaml
-release_mode: independent          # each module is versioned independently
-dependency_propagation: true       # a lib release cascades to dependent services
-
+release_mode: independent        # each module is versioned on its own
 projects:
-  - name: auth-server              # human-readable name, used in logs and releases
-    path: services/auth-server     # path used for commit impact analysis
-    tag_prefix: "auth-server/"     # prefix applied to all tags for this module
-    dependencies:                  # modules that trigger a re-release of this one
-      - errors
-      - httputil
-      - logging
-```
+  - name: auth-server
+    path: services/auth-server   # commits touching this path count toward auth-server
+    tag_prefix: "auth-server/"   # must end with "/"
+```text
 
-Each project entry defines three things:
+### Repository settings
 
-- **`path`** — the directory prefix used to determine whether a commit touches this module. Any file changed under `services/auth-server/` counts as a change to `auth-server`.
-- **`tag_prefix`** — the string prepended to the version number when creating a git tag or GitHub Release. Must end with `/`.
-- **`dependencies`** — names of other modules in this config. When a dependency is released, this module is also released (even with no new commits) to ensure its tag always reflects the latest upstream version.
+The workflow uses the automatic `GITHUB_TOKEN`. Under **Settings, Actions, General**, set **Workflow permissions** to *Read and write permissions* and enable *Allow GitHub Actions to create and approve pull requests*; without write permission the tagging step fails.
 
-### Branch Policy
-
-| Branch | Release type | Version format |
-|---|---|---|
-| `main` | Stable | `v1.2.3` |
-| `beta` | Prerelease | `v1.2.3-beta.1` |
-
-Only commits merged to `main` produce stable releases. The `beta` branch can be used to ship prerelease versions for testing before merging.
-
-### GitHub Repository Setup
-
-The release workflow requires the following configuration in your GitHub repository.
-
-#### Required Secret
-
-| Secret | Where to get it | Purpose |
-|---|---|---|
-| `GITHUB_TOKEN` | Provided automatically by GitHub Actions | Create tags and GitHub Releases |
-
-`GITHUB_TOKEN` is provisioned automatically in every Actions run — no manual setup is required. The workflow already requests `contents: write` and `pull-requests: write` permissions, which are the only permissions needed.
-
-> If you ever replace `GITHUB_TOKEN` with a fine-grained PAT (for example, to allow cross-repository operations), the PAT needs **Contents: Read and write** and **Metadata: Read** scopes on this repository.
-
-#### Repository Settings
-
-Navigate to **Settings → Actions → General** and confirm:
-
-- **Workflow permissions** is set to `Read and write permissions`
-- **Allow GitHub Actions to create and approve pull requests** is checked
-
-Without write permissions, the workflow will fail at the tagging step.
-
-### Running Releases Locally
-
-You can run the release tool locally without publishing anything using dry-run mode. This is useful to preview what would be released before merging to main.
+### Running releases locally
 
 ```bash
-# Install the release tool
-task deps
-
-# Preview all releases (no mutations)
-semantic-release --dry-run --no-ci
-
-# Confirm which modules are discovered
-semantic-release detect-projects --no-ci
-
-# Target a single module
+task deps                                              # installs the release tool
+semantic-release --dry-run --no-ci                     # preview, no mutations
+semantic-release detect-projects --no-ci               # which modules are discovered
 semantic-release --project auth-server --dry-run --no-ci
-```
+```text
 
-`--no-ci` is required outside of CI because the tool defaults to dry-run when it cannot detect a CI environment. Without it, you must also set `GH_TOKEN`.
+`--no-ci` is required outside CI; otherwise the tool refuses to run unless `GH_TOKEN` is set.
+
+---
+
+## Contributing
+
+There is no `CONTRIBUTING.md`; this is the process.
+
+1. Open an issue describing the change, or pick an existing one.
+2. Branch from `main`. Name the branch after the commit it will produce, for example `fix/reset-redeem-limit-client-ip`.
+3. Write the failing test first, then the code. Services are tested through their public surface with hand-written fakes (no mock generator).
+4. Run `task lint` and `task test` before pushing. CI runs lint per module, unit, integration and acceptance tests.
+5. Commit with [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope>): <description>`, lowercase, imperative, no trailing period. One pull request carries one `type(scope)`.
+6. Open a pull request against `main`. **Do not merge until every check is green**: merging to `main` triggers a release and a production deploy of all services.
+
+Architecture rules that review will enforce: `domain` imports nothing outside the standard library; `application` depends only on domain interfaces; HTTP handlers depend on ports, not on application types; wiring happens only in `internal/container`. Read [`CLAUDE.md`](CLAUDE.md) and the relevant ADR before changing token, client or grant behavior.
 
 ---
 
