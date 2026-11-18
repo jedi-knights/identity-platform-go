@@ -22,7 +22,12 @@ func testDatabaseURL(t *testing.T) string {
 	return url
 }
 
-func setupPolicyRepo(t *testing.T) *postgres.PolicyRepository {
+// setupPolicyRepo returns a PolicyRepository and a seedRoles func. A subject's
+// roles are rows in subject_roles with a foreign key to roles(name), so a policy
+// can only reference roles that exist; seedRoles creates them. Tests pass
+// test-scoped role names so they neither depend on, nor collide with, roles left
+// in the shared database by other tests or earlier runs.
+func setupPolicyRepo(t *testing.T) (*postgres.PolicyRepository, func(names ...string)) {
 	t.Helper()
 	url := testDatabaseURL(t)
 	if err := postgres.RunMigrations(url); err != nil {
@@ -33,18 +38,29 @@ func setupPolicyRepo(t *testing.T) *postgres.PolicyRepository {
 		t.Fatalf("connecting to database: %v", err)
 	}
 	t.Cleanup(func() { pool.Close() })
-	return postgres.NewPolicyRepository(pool)
+	roles := postgres.NewRoleRepository(pool)
+	seed := func(names ...string) {
+		t.Helper()
+		for _, n := range names {
+			if err := roles.Save(context.Background(), &domain.Role{Name: n, Permissions: []domain.Permission{}}); err != nil {
+				t.Fatalf("seeding role %q: %v", n, err)
+			}
+		}
+	}
+	return postgres.NewPolicyRepository(pool), seed
 }
 
 func TestPolicyRepository_SaveAndFindBySubject(t *testing.T) {
-	repo := setupPolicyRepo(t)
+	repo, seedRoles := setupPolicyRepo(t)
 	ctx := context.Background()
 
 	// Roles are stored alphabetically by role_name in subject_roles;
 	// FindBySubject returns them in alphabetical order (ORDER BY role_name).
+	admin, viewer := t.Name()+"-admin", t.Name()+"-viewer"
+	seedRoles(admin, viewer)
 	policy := &domain.Policy{
 		SubjectID: "test-subject-save",
-		Roles:     []string{"admin", "viewer"},
+		Roles:     []string{admin, viewer},
 	}
 
 	if err := repo.Save(ctx, policy); err != nil {
@@ -71,16 +87,18 @@ func TestPolicyRepository_SaveAndFindBySubject(t *testing.T) {
 }
 
 func TestPolicyRepository_Save_Upsert(t *testing.T) {
-	repo := setupPolicyRepo(t)
+	repo, seedRoles := setupPolicyRepo(t)
 	ctx := context.Background()
 
 	subjectID := "test-subject-upsert"
+	admin, viewer := t.Name()+"-admin", t.Name()+"-viewer"
+	seedRoles(admin, viewer)
 
-	if err := repo.Save(ctx, &domain.Policy{SubjectID: subjectID, Roles: []string{"admin"}}); err != nil {
+	if err := repo.Save(ctx, &domain.Policy{SubjectID: subjectID, Roles: []string{admin}}); err != nil {
 		t.Fatalf("first Save: unexpected error: %v", err)
 	}
 
-	updated := &domain.Policy{SubjectID: subjectID, Roles: []string{"viewer"}}
+	updated := &domain.Policy{SubjectID: subjectID, Roles: []string{viewer}}
 	if err := repo.Save(ctx, updated); err != nil {
 		t.Fatalf("second Save (upsert): unexpected error: %v", err)
 	}
@@ -89,13 +107,13 @@ func TestPolicyRepository_Save_Upsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindBySubject after upsert: unexpected error: %v", err)
 	}
-	if len(got.Roles) != 1 || got.Roles[0] != "viewer" {
-		t.Errorf("after upsert, expected roles=[viewer], got %v", got.Roles)
+	if len(got.Roles) != 1 || got.Roles[0] != viewer {
+		t.Errorf("after upsert, expected roles=[%s], got %v", viewer, got.Roles)
 	}
 }
 
 func TestPolicyRepository_FindBySubject_NotFound(t *testing.T) {
-	repo := setupPolicyRepo(t)
+	repo, _ := setupPolicyRepo(t)
 	ctx := context.Background()
 
 	_, err := repo.FindBySubject(ctx, "does-not-exist")
