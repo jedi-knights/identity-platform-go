@@ -188,15 +188,7 @@ func TestRoleRepository_Save_OverwritesExisting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByName after Save: %v", err)
 	}
-	if len(got.Permissions) != 2 {
-		t.Errorf("Permissions len = %d, want 2", len(got.Permissions))
-	}
-	if got.Permissions[0].Resource != "document" || got.Permissions[0].Action != "read" {
-		t.Errorf("Permissions[0] = %+v, want {document read}", got.Permissions[0])
-	}
-	if got.Permissions[1].Resource != "document" || got.Permissions[1].Action != "list" {
-		t.Errorf("Permissions[1] = %+v, want {document list}", got.Permissions[1])
-	}
+	assertPermissions(t, got.Permissions, updated.Permissions)
 }
 
 func TestRoleRepository_FindByName_ReturnsCopy(t *testing.T) {
