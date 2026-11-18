@@ -136,6 +136,7 @@ Edit `.env` and set the values below (`openssl rand -hex 32` generates a good ra
 | `POSTGRES_PASSWORD` | Password for the Postgres container |
 | `REDIS_PASSWORD` | Password for the Redis container |
 | `LOGIN_UI_SERVICE_TOKEN` | At least 32 characters; shared between `login-ui` and `auth-server`'s `POST /internal/issue-code` (ADR-0011) |
+| `INTROSPECTION_SECRET` | Pre-shared bearer secret for `token-introspection-service` (RFC 7662 §2.1); it will not start without one |
 
 ```bash
 docker compose up --build
