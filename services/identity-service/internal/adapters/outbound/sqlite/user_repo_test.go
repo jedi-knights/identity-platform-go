@@ -343,10 +343,23 @@ func TestVerificationTokenRepository_DeleteExpired(t *testing.T) {
 	if deleted != 1 {
 		t.Errorf("deleted: want 1, got %d", deleted)
 	}
-	if _, err := tokenRepo.FindByHash(ctx, expired.TokenHash); !apperrors.IsNotFound(err) {
+	assertGoneAndKept(ctx, t, tokenRepo, expired.TokenHash, notExpired.TokenHash)
+}
+
+// tokenFinder is the lookup assertGoneAndKept needs from a token repository.
+type tokenFinder interface {
+	FindByHash(ctx context.Context, hash string) (*domain.VerificationToken, error)
+}
+
+// assertGoneAndKept checks that the goneHash token no longer exists and the
+// keptHash token still does. Extracted so the test stays within the
+// cyclomatic-complexity limit.
+func assertGoneAndKept(ctx context.Context, t *testing.T, repo tokenFinder, goneHash, keptHash string) {
+	t.Helper()
+	if _, err := repo.FindByHash(ctx, goneHash); !apperrors.IsNotFound(err) {
 		t.Errorf("expired token should be gone, got err=%v", err)
 	}
-	if _, err := tokenRepo.FindByHash(ctx, notExpired.TokenHash); err != nil {
+	if _, err := repo.FindByHash(ctx, keptHash); err != nil {
 		t.Errorf("notExpired token should remain, got err=%v", err)
 	}
 }

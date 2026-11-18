@@ -4,6 +4,7 @@ package postgres_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -35,17 +36,27 @@ func setupInvites(t *testing.T) (*postgres.AccountRepository, *postgres.InviteRe
 		t.Fatalf("truncate: %v", err)
 	}
 	accts := postgres.NewAccountRepository(pool)
-	acc, err := accts.UpsertPersonalAccount(context.Background(), "owner-user", "o@example.com")
+	accountID, ownerSeatID, err := seedOwnerAccount(context.Background(), accts)
 	if err != nil {
 		pool.Close()
-		t.Fatalf("seed account: %v", err)
+		t.Fatalf("%v", err)
 	}
-	seats, err := accts.ListByAccount(context.Background(), acc.ID)
+	return accts, postgres.NewInviteRepository(pool), accountID, ownerSeatID, func() { pool.Close() }
+}
+
+// seedOwnerAccount creates the personal account the invite tests build on and
+// returns its id and its owner seat's id. Extracted so setupInvites stays within
+// the cyclomatic-complexity limit.
+func seedOwnerAccount(ctx context.Context, accts *postgres.AccountRepository) (accountID, ownerSeatID string, err error) {
+	acc, err := accts.UpsertPersonalAccount(ctx, "owner-user", "o@example.com")
+	if err != nil {
+		return "", "", fmt.Errorf("seed account: %w", err)
+	}
+	seats, err := accts.ListByAccount(ctx, acc.ID)
 	if err != nil || len(seats) == 0 {
-		pool.Close()
-		t.Fatalf("seed seats: %v %d", err, len(seats))
+		return "", "", fmt.Errorf("seed seats: %v (%d seats)", err, len(seats))
 	}
-	return accts, postgres.NewInviteRepository(pool), acc.ID, seats[0].ID, func() { pool.Close() }
+	return acc.ID, seats[0].ID, nil
 }
 
 func TestInviteInsert_PersistsAndReturnsRow(t *testing.T) {

@@ -54,17 +54,6 @@ func newTestResource(suffix string) *domain.Resource {
 	}
 }
 
-func cleanupResource(t *testing.T, repo *postgres.ResourceRepository, id string) {
-	t.Helper()
-	// Best-effort cleanup via a fresh context so it runs even if the test failed.
-	ctx := context.Background()
-	_ = repo.Save(ctx, &domain.Resource{ID: id}) // ensure row exists before deleting via upsert is not a delete
-	// Direct delete is not in the interface; rely on test isolation via unique IDs.
-	// The table is truncated only in CI; for local runs, rows accumulate harmlessly
-	// because IDs are unique per test run (via suffix).
-	_ = id
-}
-
 // TestSaveAndFindByID verifies the basic round-trip: Save a resource, then retrieve
 // it by ID and confirm every field round-trips correctly.
 func TestSaveAndFindByID(t *testing.T) {

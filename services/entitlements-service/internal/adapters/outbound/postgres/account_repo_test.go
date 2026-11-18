@@ -55,14 +55,21 @@ func TestUpsertPersonalAccount_CreatesAndSeatsOwner(t *testing.T) {
 	if acc.ID == "" || acc.UserID != "user-1" || acc.BillingEmail != "u1@example.com" {
 		t.Errorf("bad account shape: %+v", acc)
 	}
-	seats, err := repo.ListByAccount(context.Background(), acc.ID)
+	assertOwnerSeated(t, repo, acc.ID, "user-1")
+}
+
+// assertOwnerSeated checks the account has exactly one seat and that it is the
+// owner's. Extracted so the test stays within the cyclomatic-complexity limit.
+func assertOwnerSeated(t *testing.T, repo *postgres.AccountRepository, accountID, ownerUserID string) {
+	t.Helper()
+	seats, err := repo.ListByAccount(context.Background(), accountID)
 	if err != nil {
 		t.Fatalf("list seats: %v", err)
 	}
 	if len(seats) != 1 {
 		t.Fatalf("expected 1 seat, got %d", len(seats))
 	}
-	if seats[0].UserID != "user-1" || string(seats[0].Role) != "owner" {
+	if seats[0].UserID != ownerUserID || string(seats[0].Role) != "owner" {
 		t.Errorf("bad seat shape: %+v", seats[0])
 	}
 }
