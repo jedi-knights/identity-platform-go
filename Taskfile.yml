@@ -82,8 +82,7 @@ tasks:
           echo "LOGIN_UI_SERVICE_TOKEN=$(openssl rand -hex 32)"
         } > "$envfile"
         docker compose --env-file "$envfile" up -d --build --wait
-        dev_client_secret=$(grep '^DEV_CLIENT_SECRET=' "$envfile" | cut -d= -f2)
-        (cd test/acceptance && SMOKE_DEV_CLIENT_SECRET="$dev_client_secret" go test -tags smoke ./smoke/... -count=1)
+        (cd test/acceptance && go test -tags smoke ./smoke/... -count=1)
 
   build:
     desc: Build all services
