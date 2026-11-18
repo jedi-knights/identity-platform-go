@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/jedi-knights/go-platform/apperrors"
@@ -63,6 +64,51 @@ func (r *RoleRepository) FindByName(ctx context.Context, name string) (*domain.R
 		return nil, apperrors.New(apperrors.ErrCodeNotFound, "role not found")
 	}
 	return role, nil
+}
+
+// FindByNames returns the roles that exist among names, each with its
+// permissions, in a single query. Unknown names are omitted without error.
+// Results are ordered by role name so the output is deterministic.
+func (r *RoleRepository) FindByNames(ctx context.Context, names []string) ([]*domain.Role, error) {
+	if len(names) == 0 {
+		return []*domain.Role{}, nil
+	}
+	const query = `
+		SELECT r.name, rp.resource, rp.action
+		FROM   roles r
+		LEFT JOIN role_permissions rp ON rp.role_name = r.name
+		WHERE  r.name = ANY($1)
+		ORDER  BY r.name, rp.resource, rp.action`
+
+	rows, err := r.pool.Query(ctx, query, names)
+	if err != nil {
+		return nil, fmt.Errorf("querying %d roles: %w", len(names), err)
+	}
+	defer rows.Close()
+
+	return groupRoleRows(rows)
+}
+
+// groupRoleRows folds the (name, resource, action) rows of a name-ordered
+// LEFT JOIN into roles. Extracted from FindByNames to keep its cyclomatic
+// complexity within bounds.
+func groupRoleRows(rows pgx.Rows) ([]*domain.Role, error) {
+	var out []*domain.Role
+	for rows.Next() {
+		var roleName string
+		var resource, action *string // nullable due to LEFT JOIN
+		if err := rows.Scan(&roleName, &resource, &action); err != nil {
+			return nil, fmt.Errorf("scanning role row: %w", err)
+		}
+		if len(out) == 0 || out[len(out)-1].Name != roleName {
+			out = append(out, &domain.Role{Name: roleName, Permissions: []domain.Permission{}})
+		}
+		appendNullablePermission(out[len(out)-1], resource, action)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating role rows: %w", err)
+	}
+	return out, nil
 }
 
 // appendNullablePermission appends a domain.Permission to role only when both

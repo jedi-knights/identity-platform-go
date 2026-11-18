@@ -49,6 +49,16 @@ func (f *fakeRoleRepo) FindByName(_ context.Context, name string) (*domain.Role,
 	return r, nil
 }
 
+func (f *fakeRoleRepo) FindByNames(_ context.Context, names []string) ([]*domain.Role, error) {
+	var out []*domain.Role
+	for _, n := range names {
+		if r, ok := f.roles[n]; ok {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeRoleRepo) Save(_ context.Context, r *domain.Role) error {
 	f.roles[r.Name] = r
 	return nil
