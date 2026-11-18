@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/jedi-knights/go-platform/apperrors"
 
@@ -63,6 +64,73 @@ func (r *RoleRepository) FindByName(ctx context.Context, name string) (*domain.R
 		return nil, apperrors.New(apperrors.ErrCodeNotFound, "role not found")
 	}
 	return role, nil
+}
+
+// maxNamesPerQuery caps the bound parameters in one IN (...) query, well under
+// SQLite's variable limit. Longer name lists are fetched in chunks.
+const maxNamesPerQuery = 500
+
+// FindByNames returns the roles that exist among names, each with its
+// permissions. Unknown names are omitted without error. Results are ordered by
+// role name within each chunk of at most maxNamesPerQuery names.
+func (r *RoleRepository) FindByNames(ctx context.Context, names []string) ([]*domain.Role, error) {
+	out := []*domain.Role{}
+	for start := 0; start < len(names); start += maxNamesPerQuery {
+		end := min(start+maxNamesPerQuery, len(names))
+		roles, err := r.findChunk(ctx, names[start:end])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, roles...)
+	}
+	return out, nil
+}
+
+// findChunk runs one IN (...) query for at most maxNamesPerQuery names.
+func (r *RoleRepository) findChunk(ctx context.Context, names []string) ([]*domain.Role, error) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(names)), ",")
+	// Placeholders are generated from the name count only; names themselves are
+	// bound as arguments, never interpolated.
+	query := `
+		SELECT r.name, rp.resource, rp.action
+		FROM   roles r
+		LEFT JOIN role_permissions rp ON rp.role_name = r.name
+		WHERE  r.name IN (` + placeholders + `)
+		ORDER  BY r.name, rp.resource, rp.action`
+	args := make([]any, len(names))
+	for i, n := range names {
+		args[i] = n
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying %d roles: %w", len(names), err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	return groupRoleRows(rows)
+}
+
+// groupRoleRows folds the (name, resource, action) rows of a name-ordered
+// LEFT JOIN into roles. Extracted from FindByNames to keep its cyclomatic
+// complexity within bounds.
+func groupRoleRows(rows *sql.Rows) ([]*domain.Role, error) {
+	var out []*domain.Role
+	for rows.Next() {
+		var roleName string
+		var resource, action *string // nullable due to LEFT JOIN
+		if err := rows.Scan(&roleName, &resource, &action); err != nil {
+			return nil, fmt.Errorf("scanning role row: %w", err)
+		}
+		if len(out) == 0 || out[len(out)-1].Name != roleName {
+			out = append(out, &domain.Role{Name: roleName, Permissions: []domain.Permission{}})
+		}
+		appendNullablePermission(out[len(out)-1], resource, action)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating role rows: %w", err)
+	}
+	return out, nil
 }
 
 // appendNullablePermission appends a domain.Permission to role only when both

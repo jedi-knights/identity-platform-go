@@ -2,9 +2,6 @@ package application
 
 import (
 	"context"
-	"fmt"
-
-	"github.com/jedi-knights/go-platform/apperrors"
 
 	"github.com/ocrosby/identity-platform-go/services/authorization-policy-service/internal/domain"
 )
@@ -42,13 +39,14 @@ func newPermissionSpecification(roleRepo domain.RoleRepository, resource, action
 // continues. Any other repository error is propagated so callers can
 // distinguish infrastructure failures from genuine access denials.
 func (s *permissionSpecification) IsSatisfiedBy(ctx context.Context, roles []string) (string, error) {
+	byName, err := rolesByName(ctx, s.roleRepo, roles)
+	if err != nil {
+		return "", err
+	}
 	for _, roleName := range roles {
-		role, err := s.roleRepo.FindByName(ctx, roleName)
-		if err != nil {
-			if apperrors.IsNotFound(err) {
-				continue
-			}
-			return "", fmt.Errorf("finding role %q: %w", roleName, err)
+		role, ok := byName[roleName]
+		if !ok {
+			continue // role assigned but not defined — skip silently
 		}
 		for _, perm := range role.Permissions {
 			if perm.Resource == s.resource && perm.Action == s.action {
