@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - 'services/**'
-      - 'libs/**'
       - '.semantic-release.yaml'
 
 permissions:
