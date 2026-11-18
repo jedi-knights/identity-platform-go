@@ -26,8 +26,8 @@ Feature: Smoke tests against the real docker-compose stack
       | authorization-policy-service |
       | example-resource-service     |
 
-  Scenario: The seeded test-client obtains a token from the real auth-server image
-    When the seeded test-client requests a token using the client_credentials grant with scope "read"
+  Scenario: A registered client obtains a token from the real auth-server image
+    When the registered smoke client requests a token using the client_credentials grant with scope "read"
     Then the response status is 200
     And the response has a non-empty "access_token"
 
