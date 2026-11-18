@@ -118,7 +118,7 @@ func httpClientProvider(context.Context, *platform.Container) (*http.Client, err
 	// runs, which is the correct behaviour for a no-op TracerProvider.
 	return &http.Client{
 		Timeout:   5 * time.Second,
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
+		Transport: otelhttp.NewTransport(outboundTransport()),
 	}, nil
 }
 
