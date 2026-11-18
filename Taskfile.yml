@@ -88,7 +88,6 @@ tasks:
   build:
     desc: Build all services
     deps:
-      - build:api-gateway
       - build:auth-server
       - build:identity-service
       - build:client-registry-service
@@ -96,92 +95,75 @@ tasks:
       - build:authorization-policy-service
       - build:example-resource-service
 
-  build:api-gateway:
-    desc: Build api-gateway service
-    cmds:
-      - go build -o bin/api-gateway ./services/api-gateway/...
-
   build:auth-server:
     desc: Build auth-server service
     cmds:
-      - go build -o bin/auth-server ./services/auth-server/...
+      - go build -o bin/auth-server ./services/auth-server/cmd
 
   build:identity-service:
     desc: Build identity-service
     cmds:
-      - go build -o bin/identity-service ./services/identity-service/...
+      - go build -o bin/identity-service ./services/identity-service/cmd
 
   build:client-registry-service:
     desc: Build client-registry-service
     cmds:
-      - go build -o bin/client-registry-service ./services/client-registry-service/...
+      - go build -o bin/client-registry-service ./services/client-registry-service/cmd
 
   build:token-introspection-service:
     desc: Build token-introspection-service
     cmds:
-      - go build -o bin/token-introspection-service ./services/token-introspection-service/...
+      - go build -o bin/token-introspection-service ./services/token-introspection-service/cmd
 
   build:authorization-policy-service:
     desc: Build authorization-policy-service
     cmds:
-      - go build -o bin/authorization-policy-service ./services/authorization-policy-service/...
+      - go build -o bin/authorization-policy-service ./services/authorization-policy-service/cmd
 
   build:example-resource-service:
     desc: Build example-resource-service
     cmds:
-      - go build -o bin/example-resource-service ./services/example-resource-service/...
-
-  run:api-gateway:
-    desc: Run api-gateway service
-    cmds:
-      - go run ./services/api-gateway/...
+      - go build -o bin/example-resource-service ./services/example-resource-service/cmd
 
   run:auth-server:
     desc: Run auth-server service
     cmds:
-      - go run ./services/auth-server/...
+      - go run ./services/auth-server/cmd
 
   run:identity-service:
     desc: Run identity-service
     cmds:
-      - go run ./services/identity-service/...
+      - go run ./services/identity-service/cmd
 
   run:client-registry-service:
     desc: Run client-registry-service
     cmds:
-      - go run ./services/client-registry-service/...
+      - go run ./services/client-registry-service/cmd
 
   run:token-introspection-service:
     desc: Run token-introspection-service
     cmds:
-      - go run ./services/token-introspection-service/...
+      - go run ./services/token-introspection-service/cmd
 
   run:authorization-policy-service:
     desc: Run authorization-policy-service
     cmds:
-      - go run ./services/authorization-policy-service/...
+      - go run ./services/authorization-policy-service/cmd
 
   run:example-resource-service:
     desc: Run example-resource-service
     cmds:
-      - go run ./services/example-resource-service/...
+      - go run ./services/example-resource-service/cmd
 
   swagger:
     desc: Generate Swagger docs for all services
     deps:
-      - swagger:api-gateway
       - swagger:auth-server
       - swagger:identity-service
       - swagger:client-registry-service
       - swagger:token-introspection-service
       - swagger:authorization-policy-service
       - swagger:example-resource-service
-
-  swagger:api-gateway:
-    desc: Generate Swagger docs for api-gateway
-    dir: services/api-gateway
-    cmds:
-      - swag init --generalInfo cmd/main.go --dir ./,./internal/adapters/inbound/http,./internal/application,./internal/domain --output ./docs --parseDependency
 
   swagger:auth-server:
     desc: Generate Swagger docs for auth-server
