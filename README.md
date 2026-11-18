@@ -132,7 +132,7 @@ Edit `.env` and set the values below (`openssl rand -hex 32` generates a good ra
 | Variable | Requirement |
 |----------|-------------|
 | `JWT_SIGNING_KEY` | Random string of at least 32 characters, shared by the services that validate tokens |
-| `DEV_CLIENT_SECRET` | Secret for the seeded `dev-client` (any non-empty string works locally) |
+| `DEV_CLIENT_SECRET` | Required by `docker-compose.yml` for interpolation (any non-empty string). It has no effect today: the stack has no seeded client, because auth-server delegates client authentication to client-registry-service |
 | `POSTGRES_PASSWORD` | Password for the Postgres container |
 | `REDIS_PASSWORD` | Password for the Redis container |
 | `LOGIN_UI_SERVICE_TOKEN` | At least 32 characters; shared between `login-ui` and `auth-server`'s `POST /internal/issue-code` (ADR-0011) |
@@ -194,7 +194,19 @@ curl -s -X POST http://localhost:8080/oauth/introspect \
   -u dev-client:dev-secret -d token=$TOKEN         # {"active":false}
 ```
 
-Against the Compose stack, use the host ports from the table above (`9080` instead of `8080`) and your `DEV_CLIENT_SECRET` as the secret.
+The Compose stack has no seeded client (auth-server delegates client authentication to `client-registry-service`, which starts empty). Register one first, then use the host ports from the table above:
+
+```bash
+CLIENT=$(curl -s -X POST http://localhost:9082/clients -H 'Content-Type: application/json' \
+  -d '{"name":"demo","scopes":["read","write"],"grant_types":["client_credentials"]}')
+
+curl -s -X POST http://localhost:9080/oauth/token \
+  -d grant_type=client_credentials -d scope=read \
+  -d client_id=$(echo "$CLIENT" | jq -r .client_id) \
+  -d client_secret=$(echo "$CLIENT" | jq -r .client_secret)
+```
+
+Keep the returned `client_secret`: the registry does not show it again.
 
 > The Compose-specific steps were not executed when this README was last revised, because the Docker host was out of disk space. The single-service steps above were executed.
 
