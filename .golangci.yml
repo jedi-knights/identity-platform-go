@@ -2,6 +2,14 @@ version: "2"
 
 run:
   timeout: 5m
+  # Test files are guarded by these tags (unit/integration for the service
+  # tests, smoke for the compose smoke suite). Without them golangci-lint skips
+  # those files entirely, so they escaped gocyclo, unused, godot and the rest.
+  # This one setting applies to CI, `task lint` and local runs alike.
+  build-tags:
+    - unit
+    - integration
+    - smoke
 
 linters:
   enable:
