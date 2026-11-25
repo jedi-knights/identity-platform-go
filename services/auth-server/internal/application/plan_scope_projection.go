@@ -2,7 +2,6 @@ package application
 
 import (
 	"encoding/json"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -132,15 +131,4 @@ func dedupe(in []string) []string {
 		out = append(out, v)
 	}
 	return out
-}
-
-// sortedKeys returns the keys of m in sorted order. Used by tests
-// that need a deterministic walk; not called from Project*.
-func sortedKeys(m map[string]any) []string { //nolint:unused // reserved for test helper inside this package
-	ks := make([]string, 0, len(m))
-	for k := range m {
-		ks = append(ks, k)
-	}
-	sort.Strings(ks)
-	return ks
 }
