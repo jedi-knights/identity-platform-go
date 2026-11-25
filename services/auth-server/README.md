@@ -43,8 +43,28 @@ Configuration is loaded via [Viper](https://github.com/spf13/viper) from a `conf
 | `log.level`           | `AUTH_LOG_LEVEL`          | `info`                     |
 | `log.format`          | `AUTH_LOG_FORMAT`         | `json`                     |
 | `log.environment`     | `AUTH_LOG_ENVIRONMENT`    | `development`              |
+| `jwt.plan_scope_claim_namespace` | `AUTH_JWT_PLAN_SCOPE_CLAIM_NAMESPACE` | *empty* (opt-in) |
 
 > **Important:** Change `jwt.signing_key` before deploying to production.
+
+### Opt-in: plan_scope claim projection
+
+Set `AUTH_JWT_PLAN_SCOPE_CLAIM_NAMESPACE` to a URI the deploy owns (e.g. `https://thecutline.app/plan_scope`) to project prefixed scope strings into a private JSON claim under that key on every issued token. Recognised prefixes: `tier:`, `sport:`, `div:`, `group:`, `feature:`, `history-depth:`. Empty namespace is a no-op pass-through — every existing deploy stays wire-identical.
+
+Example: a client registered with scopes `tier:pro sport:soccer-women div:d1 group:standings` produces a token whose payload includes:
+
+```json
+{
+  "https://thecutline.app/plan_scope": {
+    "tier": "pro",
+    "sports": ["soccer-women"],
+    "divisions": ["d1"],
+    "endpoint_groups": ["standings"]
+  }
+}
+```
+
+The projection is deliberately narrow and cutline-shaped. A second resource server that wants the same pattern should add its own projection layer rather than generalise this one.
 
 ## Quick Start
 
