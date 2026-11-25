@@ -102,6 +102,16 @@ type Token struct {
 	// same boundary.
 	JKT string
 
+	// AdditionalFields carries RFC 7519 §4.2 private claim names
+	// (URI-prefixed keys such as "https://thecutline.app/plan_scope")
+	// that the issuing deploy needs on the JWT but jwtutil does not
+	// natively model. Lifted onto jwtutil.Claims.AdditionalFields by
+	// RS256TokenGenerator.Generate. Populated upstream by a wrapping
+	// generator (see plan_scope_generator.go) when the deploy opts in
+	// via AUTH_JWT_PLAN_SCOPE_CLAIM_NAMESPACE; empty otherwise, which
+	// is wire-compatible with every pre-change caller.
+	AdditionalFields map[string]json.RawMessage
+
 	ExpiresAt time.Time
 	IssuedAt  time.Time
 	TokenType TokenType

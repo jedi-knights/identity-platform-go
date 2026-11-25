@@ -60,6 +60,7 @@ func (g *RS256TokenGenerator) Generate(_ context.Context, token *domain.Token) (
 		AuthorizationDetails: domain.AuthorizationDetailsToRaw(token.AuthorizationDetails),
 		IssuedAt:             token.IssuedAt,
 		ExpiresAt:            token.ExpiresAt,
+		AdditionalFields:     token.AdditionalFields,
 	})
 	current := g.keys.Current()
 	return jwtutil.SignRS256(claims, current.Private, current.KID)

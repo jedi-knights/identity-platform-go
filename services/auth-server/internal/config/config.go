@@ -152,6 +152,16 @@ type JWTConfig struct {
 	// (5 minutes) per ADR-0010 — ID tokens are meant for immediate
 	// consumption by the relying party, not long-lived API access.
 	IDTokenTTLSeconds int `mapstructure:"id_token_ttl_seconds"` // AUTH_JWT_ID_TOKEN_TTL_SECONDS
+
+	// PlanScopeClaimNamespace, when non-empty, wraps the configured
+	// token generator in PlanScopeProjectionGenerator. Prefixed scope
+	// strings (tier:, sport:, div:, group:, feature:, history-depth:)
+	// on each issued token get projected into a JSON object emitted as
+	// a private claim under this key — the RFC 7519 §4.2 convention is
+	// a URI the deploy owns, e.g. "https://thecutline.app/plan_scope".
+	// Empty disables the projection; unprojected tokens stay wire-
+	// identical to the pre-change release.
+	PlanScopeClaimNamespace string `mapstructure:"plan_scope_claim_namespace"` // AUTH_JWT_PLAN_SCOPE_CLAIM_NAMESPACE
 }
 
 // SigningAlg values.

@@ -43,19 +43,20 @@ func NewJWTTokenGenerator(signingKey []byte, issuer string, audience []string) *
 
 func (g *JWTTokenGenerator) Generate(_ context.Context, token *domain.Token) (string, error) {
 	claims := jwtutil.NewClaims(jwtutil.ClaimsConfig{
-		Issuer:          g.issuer,
-		Subject:         token.Subject,
-		TokenID:         token.ID,
-		ClientID:        token.ClientID,
-		Scope:           strings.Join(token.Scopes, " "),
-		Audience:        g.audience,
-		Roles:           token.Roles,
-		Permissions:     token.Permissions,
-		ActorType:       string(token.ActorType),
-		AgentID:         token.AgentID,
-		ActiveAccountID: token.ActiveAccountID,
-		IssuedAt:        token.IssuedAt,
-		ExpiresAt:       token.ExpiresAt,
+		Issuer:           g.issuer,
+		Subject:          token.Subject,
+		TokenID:          token.ID,
+		ClientID:         token.ClientID,
+		Scope:            strings.Join(token.Scopes, " "),
+		Audience:         g.audience,
+		Roles:            token.Roles,
+		Permissions:      token.Permissions,
+		ActorType:        string(token.ActorType),
+		AgentID:          token.AgentID,
+		ActiveAccountID:  token.ActiveAccountID,
+		IssuedAt:         token.IssuedAt,
+		ExpiresAt:        token.ExpiresAt,
+		AdditionalFields: token.AdditionalFields,
 	})
 	return jwtutil.Sign(claims, g.signingKey)
 }
