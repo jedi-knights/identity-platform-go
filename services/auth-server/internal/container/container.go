@@ -519,11 +519,19 @@ func randomKID(prefix string) (string, error) {
 
 func tokenGeneratorProvider(ctx context.Context, c *platform.Container) (application.TokenGenerator, error) {
 	cfg := platform.MustResolve[*config.Config](ctx, c)
+	var base application.TokenGenerator
 	if resolvedSigningAlg(cfg) == config.SigningAlgRS256 {
 		keys := platform.MustResolve[*domain.KeySet](ctx, c)
-		return application.NewRS256TokenGenerator(keys, cfg.JWT.Issuer, cfg.JWT.Audience), nil
+		base = application.NewRS256TokenGenerator(keys, cfg.JWT.Issuer, cfg.JWT.Audience)
+	} else {
+		base = application.NewJWTTokenGenerator([]byte(cfg.JWT.SigningKey), cfg.JWT.Issuer, cfg.JWT.Audience)
 	}
-	return application.NewJWTTokenGenerator([]byte(cfg.JWT.SigningKey), cfg.JWT.Issuer, cfg.JWT.Audience), nil
+	// Opt-in private-claim projection: when the deploy configures a
+	// namespace (e.g. "https://thecutline.app/plan_scope"), every
+	// token with prefixed scope strings gets a projected JSON object
+	// under that key via AdditionalFields. Empty namespace leaves the
+	// pre-projection pass-through intact.
+	return application.NewPlanScopeProjectionGenerator(base, cfg.JWT.PlanScopeClaimNamespace), nil
 }
 
 func tokenValidatorProvider(ctx context.Context, c *platform.Container) (application.TokenValidator, error) {
