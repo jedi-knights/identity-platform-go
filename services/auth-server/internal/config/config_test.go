@@ -140,6 +140,31 @@ func TestLoad_IDTokenTTLSecondsReadFromEnv(t *testing.T) {
 	}
 }
 
+func TestLoad_PlanScopeClaimNamespaceReadFromEnv(t *testing.T) {
+	// Arrange — same missing-default gap as OIDCIssuer and
+	// IDTokenTTLSeconds (both already covered above): with no
+	// v.SetDefault call for jwt.plan_scope_claim_namespace, viper's
+	// AutomaticEnv silently never surfaced AUTH_JWT_PLAN_SCOPE_CLAIM_NAMESPACE
+	// through Unmarshal, so PlanScopeProjectionGenerator always saw
+	// an empty namespace and pass-through'd — discovered 2026-11-25
+	// when the deployed env var failed to project the cutline
+	// plan_scope claim into issued tokens.
+	t.Setenv("AUTH_JWT_SIGNING_KEY", "")
+	t.Setenv("AUTH_JWT_PLAN_SCOPE_CLAIM_NAMESPACE", "https://thecutline.app/plan_scope")
+
+	// Act
+	cfg, err := config.Load()
+
+	// Assert
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.JWT.PlanScopeClaimNamespace != "https://thecutline.app/plan_scope" {
+		t.Errorf("PlanScopeClaimNamespace = %q, want %q",
+			cfg.JWT.PlanScopeClaimNamespace, "https://thecutline.app/plan_scope")
+	}
+}
+
 func TestLoad_IDTokenTTLSecondsDefaultsTo300(t *testing.T) {
 	// Arrange — no AUTH_JWT_ID_TOKEN_TTL_SECONDS set.
 	t.Setenv("AUTH_JWT_SIGNING_KEY", "")
