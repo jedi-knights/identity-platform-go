@@ -165,6 +165,28 @@ func TestLoad_PlanScopeClaimNamespaceReadFromEnv(t *testing.T) {
 	}
 }
 
+func TestLoad_TokenRateLimitPerMinuteReadFromEnv(t *testing.T) {
+	// Arrange — same missing-default gap this test family already
+	// covers (OIDCIssuer, IDTokenTTLSeconds, PlanScopeClaimNamespace):
+	// without v.SetDefault, viper's AutomaticEnv silently never
+	// surfaces the var and the config field stays zero. Pin that
+	// AUTH_TOKEN_RATE_LIMIT_PER_MINUTE reaches Token.RateLimitPerMinute
+	// so a future refactor can't regress the binding undetected.
+	t.Setenv("AUTH_JWT_SIGNING_KEY", "")
+	t.Setenv("AUTH_TOKEN_RATE_LIMIT_PER_MINUTE", "30")
+
+	// Act
+	cfg, err := config.Load()
+
+	// Assert
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Token.RateLimitPerMinute != 30 {
+		t.Errorf("Token.RateLimitPerMinute = %d, want 30", cfg.Token.RateLimitPerMinute)
+	}
+}
+
 func TestLoad_IDTokenTTLSecondsDefaultsTo300(t *testing.T) {
 	// Arrange — no AUTH_JWT_ID_TOKEN_TTL_SECONDS set.
 	t.Setenv("AUTH_JWT_SIGNING_KEY", "")
