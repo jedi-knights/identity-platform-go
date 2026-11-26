@@ -1,5 +1,8 @@
 # Fly.io config for auth-server. Deploy: fly deploy -c fly.auth-server.toml
-# Private app (no [http_service]/public IP); reached by the gateway over .internal.
+# Public app — external customers fetch access tokens via POST /oauth/token
+# and verify signatures via GET /.well-known/jwks.json. Other apps in the
+# same org still reach it over .internal:8080 when that's cheaper than the
+# public path; both work off the same listener.
 
 app            = "jk-auth-server"
 primary_region = "iad"
@@ -48,15 +51,28 @@ kill_timeout   = "30s"
   # auth-server treats both URLs as nil-safe and falls back to the
   # non-federated paths.
 
-# Machine-level health check (no public routing required).
-[checks]
-  [checks.health]
-    type         = "http"
-    port         = 8080
-    path         = "/health"
+# Public HTTP routing. Phase 1 posture: auto_stop_machines = "stop" keeps
+# the bill at ~$0 during idle windows; auth-server is hit infrequently
+# enough that cold-start latency on the first token request is acceptable.
+# force_https redirects http://jk-auth-server.fly.dev/* → https automatically.
+[http_service]
+  internal_port        = 8080
+  force_https          = true
+  auto_stop_machines   = "stop"
+  auto_start_machines  = true
+  min_machines_running = 0
+  processes            = ["app"]
+
+  # Fly's edge-level HTTP check runs at the same cadence/timeout as the
+  # previous [checks] block; moved under http_service so a failed probe
+  # pulls the machine out of the load balancer in addition to failing
+  # the machine-level health status.
+  [[http_service.checks]]
     interval     = "15s"
     timeout      = "5s"
     grace_period = "10s"
+    method       = "GET"
+    path         = "/health"
 
 [[vm]]
   size   = "shared-cpu-1x"
