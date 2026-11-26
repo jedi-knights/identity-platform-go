@@ -108,6 +108,25 @@ func NewHandler(
 	}
 }
 
+// WithRateLimit replaces the handler's default per-IP rate limiter
+// (20 requests/minute, fixed window) with one tuned to maxReqs per
+// window. Used at the composition root to make the limit configurable
+// via AUTH_TOKEN_RATE_LIMIT_PER_MINUTE rather than baked in.
+//
+// maxReqs <= 0 is treated as "keep the default" — the operator can
+// leave the env var at 0 to retain the pre-change posture. The
+// limiter is per-IP and covers every endpoint that currently calls
+// h.rateLimiter.Allow (/oauth/token, /oauth/authorize, /oauth/introspect
+// per RFC 6819 §4.3.2).
+//
+// Returns the receiver to allow chained construction.
+func (h *Handler) WithRateLimit(maxReqs int, window time.Duration) *Handler {
+	if maxReqs > 0 && window > 0 {
+		h.rateLimiter = newFixedWindowLimiter(maxReqs, window)
+	}
+	return h
+}
+
 // WithAudit configures the handler's audit emitter and service name.
 // Returns the receiver to allow chained construction at the composition
 // root. emitter must be non-nil. service is used as Event.Service on every
