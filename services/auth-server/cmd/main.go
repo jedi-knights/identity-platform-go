@@ -107,11 +107,7 @@ func buildRouter(ctx context.Context, ctr *platform.Container, logger logging.Lo
 	// DeviceAuthorizationHandler is nil-resolved when AUTH_LOGIN_UI_URL is
 	// unset (ADR-0022).
 	deviceAuth := platform.MustResolve[*inboundhttp.DeviceAuthorizationHandler](ctx, ctr)
-	// Per-IP rate limiter on /oauth/token. Nil when AUTH_TOKEN_RATE_LIMIT_PER_MIN=0
-	// or unset — the endpoint runs with no application-level limit then,
-	// appropriate for local dev or when a different layer handles the limit.
-	tokenRateLimit := buildTokenRateLimiter(ctx, ctr, logger)
-	mux := inboundhttp.NewRouter(handler, jwks, userInfo, metadata, deviceAuth, tokenRateLimit, logger)
+	mux := inboundhttp.NewRouter(handler, jwks, userInfo, metadata, deviceAuth, logger)
 	// otelhttp wraps the router so every inbound request becomes a
 	// server span; traceparent headers from the client are honoured by
 	// the W3C TraceContext propagator that go-platform/otel registers.
@@ -121,32 +117,6 @@ func buildRouter(ctx context.Context, ctr *platform.Container, logger logging.Lo
 			return r.Method + " " + r.URL.Path
 		}),
 	)
-}
-
-// buildTokenRateLimiter constructs the per-IP rate limiter for
-// /oauth/token. Returns nil when AUTH_TOKEN_RATE_LIMIT_PER_MIN is 0
-// (the default) — the endpoint runs without an application-level
-// limit, appropriate for local dev or when the deploy handles rate
-// limiting elsewhere. A non-zero value installs the middleware with
-// that per-minute cap; the ClientIPHeader is hardcoded to Fly-Client-IP
-// to match the platform's edge rewrite and fall back to r.RemoteAddr
-// off-platform.
-func buildTokenRateLimiter(ctx context.Context, ctr *platform.Container, logger logging.Logger) func(http.Handler) http.Handler {
-	cfg := platform.MustResolve[*config.Config](ctx, ctr)
-	mw, err := inboundhttp.NewTokenRateLimiter(inboundhttp.TokenRateLimiterConfig{
-		RequestsPerMinute: cfg.Token.RateLimitPerMinute,
-		ClientIPHeader:    "Fly-Client-IP",
-		Logger:            logger,
-	})
-	if err != nil {
-		// Invariant: config validation at Load() guarantees a
-		// non-negative value and the resolved logger is never nil, so
-		// the only way this fires is a programming error. Panic
-		// matches how other builder helpers in this file handle the
-		// same class of failure.
-		panic(fmt.Sprintf("build token rate limiter: %v", err))
-	}
-	return mw
 }
 
 // setupObservability wires traces, metrics, and logs through otel.New and

@@ -711,6 +711,7 @@ func handlerProvider(ctx context.Context, c *platform.Container) (*inboundhttp.H
 	dpopValidator := platform.MustResolve[*application.DPoPValidator](ctx, c)
 	emitter := platform.MustResolve[audit.Emitter](ctx, c)
 	return inboundhttp.NewHandler(issuer, introspector, revoker, cw.authenticator, log, cfg.Introspection.Secret, authorizeCfg, dpopValidator).
+		WithRateLimit(cfg.Token.RateLimitPerMinute, time.Minute).
 		WithAudit(emitter, "auth-server"), nil
 }
 
