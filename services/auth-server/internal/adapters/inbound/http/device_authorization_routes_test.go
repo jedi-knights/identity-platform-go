@@ -22,7 +22,7 @@ func TestNewRouter_DeviceAuthorizationRoute_RegisteredWhenHandlerNonNil(t *testi
 	logger := logging.New(logging.Config{Output: io.Discard})
 	clientAuth := &fakeDeviceClientAuth{client: deviceCapableClient("cli-client")}
 	deviceAuth := authhttp.NewDeviceAuthorizationHandler(clientAuth, &fakeDeviceAuthRepo{}, "https://login-ui.example.com/device", time.Minute, 5, testDeviceServiceToken, logger)
-	router := authhttp.NewRouter(&authhttp.Handler{}, nil, nil, nil, deviceAuth, quietLogger())
+	router := authhttp.NewRouter(&authhttp.Handler{}, nil, nil, nil, deviceAuth, nil, quietLogger())
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 
@@ -42,7 +42,7 @@ func TestNewRouter_DeviceAuthorizationRoute_RegisteredWhenHandlerNonNil(t *testi
 
 func TestNewRouter_DeviceAuthorizationRoute_404WhenHandlerNil(t *testing.T) {
 	// Arrange — AUTH_LOGIN_UI_URL unset: handler resolved as nil, route not registered.
-	router := authhttp.NewRouter(&authhttp.Handler{}, nil, nil, nil, nil, quietLogger())
+	router := authhttp.NewRouter(&authhttp.Handler{}, nil, nil, nil, nil, nil, quietLogger())
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 

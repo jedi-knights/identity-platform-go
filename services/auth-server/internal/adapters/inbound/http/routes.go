@@ -26,10 +26,23 @@ import (
 // deviceAuth may be nil — when nil, POST /device_authorization is not
 // registered (ADR-0022 requires AUTH_LOGIN_UI_URL so the endpoint has a
 // verification page to advertise).
-func NewRouter(h *Handler, jwks *JWKSHandler, userInfo *UserInfoHandler, metadata *MetadataHandler, deviceAuth *DeviceAuthorizationHandler, logger logging.Logger) http.Handler {
+//
+// tokenRateLimit may be nil — when nil, no per-IP rate limit is applied
+// to /oauth/token. Operators opt in by passing a non-nil middleware
+// (configured via AUTH_TOKEN_RATE_LIMIT_PER_MIN in the container).
+func NewRouter(h *Handler, jwks *JWKSHandler, userInfo *UserInfoHandler, metadata *MetadataHandler, deviceAuth *DeviceAuthorizationHandler, tokenRateLimit func(http.Handler) http.Handler, logger logging.Logger) http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("POST /oauth/token", h.Token)
+	// /oauth/token is the password-spray attack surface (an attacker
+	// can enumerate client_ids or brute-force a known client's secret
+	// via repeated POSTs). Apply the per-IP limiter here specifically
+	// — other endpoints either are internal-only, cacheable public
+	// data (JWKS, metadata), or benign (health).
+	tokenHandler := http.Handler(http.HandlerFunc(h.Token))
+	if tokenRateLimit != nil {
+		tokenHandler = tokenRateLimit(tokenHandler)
+	}
+	mux.Handle("POST /oauth/token", tokenHandler)
 	mux.HandleFunc("GET /oauth/authorize", h.Authorize)
 	// /oauth/par is RFC 9126 (ADR-0021); the handler itself returns 501
 	// when the authorize subsystem (AuthorizeConfig) is not configured,

@@ -174,6 +174,14 @@ const (
 type TokenConfig struct {
 	TTLSeconds             int `mapstructure:"ttl_seconds"`
 	RefreshTokenTTLSeconds int `mapstructure:"refresh_token_ttl_seconds"`
+
+	// RateLimitPerMinute caps anonymous POST /oauth/token requests
+	// per client IP. The endpoint is the password-spray surface:
+	// attackers enumerate client_ids or brute-force a known client's
+	// secret via repeated POSTs. 0 disables the limit entirely
+	// (default; appropriate for local dev or when a different layer
+	// handles rate limiting). Negative values are a startup error.
+	RateLimitPerMinute int `mapstructure:"rate_limit_per_minute"` // AUTH_TOKEN_RATE_LIMIT_PER_MINUTE
 }
 
 // AuthorizationCodeConfig holds the lifetime for OAuth 2.1 authorization
@@ -298,6 +306,7 @@ func Load() (*Config, error) {
 	v.SetDefault("jwt.oidc_issuer", "")                // AUTH_JWT_OIDC_ISSUER (ADR-0010) — empty disables OIDC (id_token, /userinfo)
 	v.SetDefault("jwt.id_token_ttl_seconds", 300)      // AUTH_JWT_ID_TOKEN_TTL_SECONDS (ADR-0010)
 	v.SetDefault("jwt.plan_scope_claim_namespace", "") // AUTH_JWT_PLAN_SCOPE_CLAIM_NAMESPACE — empty disables projection
+	v.SetDefault("token.rate_limit_per_minute", 0)     // AUTH_TOKEN_RATE_LIMIT_PER_MINUTE — 0 disables
 	v.SetDefault("token.ttl_seconds", 300)
 	v.SetDefault("token.refresh_token_ttl_seconds", 604800)
 	v.SetDefault("authorization_code.ttl_seconds", 60)            // ADR-0009 §"Authorization code shape"
